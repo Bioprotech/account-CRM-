@@ -76,7 +76,7 @@ export default function CrossSelling({ draft, update }) {
   const statusColor = (s) => {
     switch (s) {
       case '미접촉': return '#94a3b8';
-      case '제안중': return '#3b82f6';
+      case '제안중': return '#2e7d32';
       case '샘플진행': return '#f59e0b';
       case '수주완료': return '#22c55e';
       case '중단': return '#ef4444';

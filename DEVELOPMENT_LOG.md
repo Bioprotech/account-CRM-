@@ -1,0 +1,330 @@
+# Account CRM 개발 이력
+
+> 이 문서는 Account CRM의 개발 과정을 자동으로 기록합니다.
+> 최종 업데이트: 2026-04-05
+
+---
+
+## 프로젝트 정보
+
+| 항목 | 내용 |
+|---|---|
+| 프로젝트명 | Bio Protech Account CRM |
+| 운영 URL | https://bioprotech-account-crm.web.app |
+| Firebase 프로젝트 | bioprotech-crm (파이프라인 CRM과 공유) |
+| 기술 스택 | React 19 + Vite + Firebase Firestore + Custom CSS |
+| 색상 테마 | Green (#2e7d32) — 파이프라인 CRM(Blue)과 구분 |
+
+---
+
+## Phase 1 — 기본 구축 (완료)
+
+### 핵심 기능
+- 고객 목록 + 필터 (지역/품목/담당자/사업형태/Score)
+- 고객 상세카드 9탭: 기본정보, Score, Activity, 수주이력, GAP분석, 가격계약, FCST, 크로스셀링, 유형가이드
+- Intelligence Score 6개 카테고리 체크리스트 (28항목, 가중치 합산 0~100%)
+- Activity Log 타임라인 (이슈유형 12종 + 상태 관리)
+- 대시보드 (KPI + 알람 + Open 이슈 + 긴급 관리 대상)
+
+### 데이터 모델
+- `accounts` — 고객 기본정보 + Intelligence Score 내장
+- `activity_logs` — 활동 로그
+- `orders` — 수주 이력
+- `contracts` — 가격/계약 정보
+- `forecasts` — Forecast 데이터
+- `business_plans` — 사업계획 (월별 목표)
+
+---
+
+## Phase 2 — 고도화 (완료)
+
+### 2-1. 수주이력 관리 (OrderHistory)
+- 수주 등록/수정/삭제
+- Excel 일괄 import (SheetJS)
+- 연도별 필터, 합계 자동 계산
+
+### 2-2. GAP 분석 (GapAnalysis)
+- 사업계획 대비 Gap 자동 계산
+- Gap 원인 태깅 (8개 원인 분류)
+- 기회 파이프라인 (6개 유형 + 확률 + 가중금액)
+- 액션플랜 관리 (체크리스트형)
+- 예산 사이클 / 다음 발주 예측
+
+### 2-3. 가격/계약 관리 (PriceContract)
+- 제품별 단가, 결제조건, 계약기간 관리
+- 계약 만료 알람 (D-30, D-60)
+
+### 2-4. Forecast 관리 (ForecastTrend)
+- 분기/월별 예측 등록
+- FCST vs Actual 비교
+
+### 2-5. 크로스셀링 (CrossSelling)
+- 크로스셀링 기회 등록/관리
+- 파이프라인 상태 (미접촉→제안중→샘플진행→수주완료)
+- 예상/실제 수주금액 추적
+
+### 2-6. 유형가이드 (TypeGuide)
+- 고객 유형별(OEM/Private/Multi/Single/입찰/가격민감) 전략 가이드
+- 유형별 체크리스트 관리
+- 체크리스트 미완료 알람
+
+### 2-7. 진도관리 (Progress)
+- 사업계획 Excel import
+- 월별/분기별 진도 추적
+- 담당자별/품목별/고객별 달성률
+
+---
+
+## Phase 3 — 리포트 & 보고서 기능 (완료)
+
+### 3-1. 종합 리포트 (Report.jsx)
+**주간 리포트 구성:**
+1. Executive Summary KPI (금주수주/활동/이슈/YTD달성률)
+2. 금주 수주 현황 테이블
+3. 금주 활동 요약 (담당자별 컨택/수주활동/크로스셀링)
+4. 사업계획 YTD 진도
+5. 시각적 차트: 담당자별 YTD 달성률 바차트 + 품목별 도넛차트
+6. 담당자별 연간 달성 진도 프로그레스바
+7. 분류별 실적 상세 (담당자/품목/지역/사업구분/고객유형)
+8. Open 이슈 Top 10 + 기한 초과 이슈
+
+**월간 리포트 구성:**
+1. 월간 실적 Summary KPI (당월/YTD 목표·실적·달성률)
+2. 시각적 차트: 담당자별 당월·YTD 바차트 (2열)
+3. 도넛차트: 품목별·지역별 당월 실적 비중 (2열)
+4. 담당자별 연간 달성 진도 프로그레스바
+5. 분류별 실적 상세 테이블
+6. 고객별 당월 실적
+7. Cross-Selling 현황 (파이프라인 + Top 기회)
+8. FCST vs Actual (당분기)
+9. 심층 Gap 분석:
+   - Gap 원인 분석 (원인별 카드 + 영향금액)
+   - 고객별 심층분석 (Gap 상위 고객 + 미비정보 + 액션플랜)
+   - 기회 파이프라인 (유형별 요약 + 상세)
+   - AM별 활동 품질 지표
+
+### 3-2. Excel 다운로드
+**주간 Excel:**
+- Executive Summary + 수주현황 + 활동요약 + YTD진도 + 분류별실적 + 이슈목록
+
+**월간 Excel (다중 시트):**
+- 월간리포트 (실적Summary + 분류별 + 고객별)
+- 크로스셀링 시트
+- FCST vs Actual 시트
+- Gap 원인·고객분석 시트
+- 기회 파이프라인 시트
+- AM 활동 품질 시트
+
+### 3-3. 인쇄 기능
+- 인쇄 버튼 → 브라우저 `window.print()` 호출
+- `@media print` CSS: 사이드바/버튼 숨김, 테이블 전체 표시, 페이지 나눔 최적화
+- 인쇄 시 "Bio Protech 영업본부 주간/월간 리포트" 헤더 자동 표시
+
+### 3-4. 시각적 차트 컴포넌트 (Charts.jsx)
+- `HBarChart` — 수평 바 차트 (목표 vs 실적, 달성률 색상)
+- `DonutChart` — SVG 도넛 차트 (비중 분포 + 범례)
+- `ProgressBars` — 진행률 바 (실적/목표 + % 표시)
+- 외부 라이브러리 없이 순수 SVG + CSS 구현
+
+---
+
+## Phase 3b — 고객카드 Excel Export (완료)
+
+### 기능
+- AccountModal 하단 "Excel 다운로드" 버튼
+- 고객 전체 데이터를 다중 시트 Excel로 다운로드
+
+### Excel 시트 구성
+| 시트 | 내용 |
+|---|---|
+| 기본정보 | 회사명, 국가, 지역, 담당자, 제품군, Key Contacts |
+| Intelligence Score | 6개 카테고리별 항목 + 입력값 |
+| 활동로그 | 전체 활동 이력 (날짜, 유형, 상태, 내용, 다음액션) |
+| 수주이력 | 오더 내역 + 합계 |
+| GAP분석 | 원인, 기회 파이프라인, 액션플랜 |
+| 가격계약 | 단가, 결제조건, 계약기간 |
+| FCST | Forecast 데이터 (있을 경우) |
+| 크로스셀링 | 크로스셀링 기회 (있을 경우) |
+
+---
+
+## Phase 4 — 담당자별 대시보드 (완료)
+
+### 기능
+- 로그인한 담당자는 **본인 담당 고객** 데이터만 대시보드에 표시
+- 관리자(Admin)는 전체 데이터 확인 가능
+- 파이프라인 CRM과 동일한 방식
+
+### 필터링 대상
+| 데이터 | 필터 기준 |
+|---|---|
+| KPI (고객수, Score, 활동, 이슈) | 본인 고객만 |
+| 알람 | 본인 고객 관련만 |
+| Open 이슈 | 본인 고객 관련만 |
+| 수주(orders) | 본인 고객 수주만 |
+| 사업계획(plans) | 본인 담당 계획만 |
+| 지역별/담당자별/사업구분별/품목별 통계 | 필터된 데이터 기준 |
+
+### UI 변경
+- 일반 사용자: "👤 {이름}님의 대시보드 — 담당 고객 기준 데이터" 배너 표시
+- KPI 라벨: "전체 고객" → "내 고객" (일반 사용자)
+
+---
+
+## Phase 5 — 담당자 관리 & 고객 마스터 동기화 (완료)
+
+### 5-1. 담당자 관리 UI (Settings.jsx)
+- 담당자 추가/수정/삭제 기능
+- 수정 시 해당 담당자에게 배정된 고객의 sales_rep도 일괄 변경
+- 삭제 시 배정 고객 수 경고 확인
+- 배정 고객 수 실시간 표시
+- localStorage에 영속 저장 (`TEAM_STORAGE_KEY`)
+- 로그인 화면, 필터, 고객카드 담당자 선택 등 모든 UI에 동적 반영
+
+### 5-2. 팀 멤버 동적 관리 (Context 전환)
+- 기존: `constants.js`의 `TEAM_MEMBERS` 하드코딩 배열
+- 변경: `AccountContext`에서 `teamMembers` 상태로 관리
+- `App.jsx` 로그인 화면 — 동적 사용자 목록
+- `AccountList.jsx` 담당자 필터 — 동적 목록
+- `BasicInfo.jsx` 담당자 선택 — 동적 목록
+- `Report.jsx` 리포트 담당자별 통계 — 동적 목록
+
+### 5-3. 고객 마스터 일괄 동기화 (Settings.jsx)
+- 사업계획 데이터 기준으로 CRM 고객 마스터 동기화
+- **누락 고객 자동 생성**: 사업계획에 있으나 CRM에 없는 고객 → 자동 생성
+- **메타데이터 업데이트**: 담당자(sales_rep), 지역(region), 사업형태(business_type), 국가(country) 일괄 반영
+- **사업계획 재연결**: 미연결 사업계획의 account_id 자동 매핑
+- 미리보기: KPI 카드(신규/업데이트/일치) + 상세 변경 내역 테이블
+
+---
+
+## Phase 6 — 데이터 스냅샷 백업/복원 (완료)
+
+### 기능
+- 현재 **전체 데이터(6개 컬렉션)**를 Firestore에 스냅샷으로 저장
+- 저장되는 데이터: accounts, activityLogs, orders, contracts, forecasts, businessPlans
+- 스냅샷 목록에서 특정 시점으로 **복원** 가능
+- 복원 시 Firestore + localStorage 동시 교체
+- 삭제 확인, 복원 확인(2단계) 안전장치
+
+### 파일
+- `src/lib/snapshots.js` — Firestore `account_snapshots` 컬렉션 CRUD
+- `src/lib/firebase.js` — `uploadAllData()`, `clearAllData()` 추가
+- `src/context/AccountContext.jsx` — `restoreSnapshot()` 추가
+- `src/views/Settings.jsx` — `SnapshotSection` UI 컴포넌트
+
+### 사용 시나리오
+- 대량 import/동기화 전 백업 → 문제 시 복원
+- 버전 관리: 주요 작업 전후 스냅샷으로 이력 추적
+
+---
+
+## 인프라 & 배포
+
+### Firebase 구성
+- 프로젝트: `bioprotech-crm` (파이프라인 CRM과 공유)
+- Hosting 사이트: `bioprotech-account-crm` → https://bioprotech-account-crm.web.app
+- Firestore 컬렉션: accounts, activity_logs, orders, contracts, forecasts, business_plans
+
+### 배포 방법
+```
+cd "C:\Users\haksu\OneDrive\Claude Cowork\Customer CRM\account-crm"
+npm run build
+npx firebase deploy --only hosting
+```
+
+### 색상 테마 (Green)
+파이프라인 CRM(Blue)과 구분하기 위해 Green 테마 적용:
+- `--accent: #2e7d32` / `--accent2: #558b2f`
+- `--bg: #f6f8f5` / `--bg3: #eef2ec`
+- `--text: #1b2e1b` / `--text2: #4a5e4a`
+
+---
+
+## 유형가이드 (TypeGuideView.jsx)
+
+별도 전체 페이지로 구성 (사이드바 메뉴):
+1. 6개 유형 선택 카드 (OEM/Private/Multi/Single/입찰/가격민감)
+2. 전체 비교표 (핵심목표/전략/주의사항)
+3. Intelligence Score 카테고리별 질문 가이드 (6카테고리 × 질문목록)
+4. GAP 원인별 대응 가이드 (8원인 × 확인사항 + 대응방안)
+5. 유형 선택 시 상세 가이드 (정의/특성/목표/전략/리스크/프로세스/체크리스트)
+
+---
+
+## 알람 시스템
+
+### 자동 알람 유형
+| 유형 | 조건 | 레벨 |
+|---|---|---|
+| Score+미접촉 | Score <50% + 30일 미접촉 | danger |
+| 정보 미입력 | Score 0% + 사업계획 고객 | info |
+| 계약 만료 | D-30 이내 | danger/warning |
+| 재구매 임박 | 가중평균/FCST 기반 D-30 | danger/warning |
+| Open 이슈 | 14일 초과 | warning |
+| 유형별 맞춤 | OEM QBR, Single F-up, Multi 리오더 등 | warning/info |
+| 체크리스트 | 유형별 체크리스트 30% 미만 | info |
+
+### 재구매 예측 로직
+- 가중 평균: 최근 gap에 높은 가중치 (2x 최근, 1.5x 그 다음)
+- 계절성 보정: 2년+ 데이터, 현재 분기 과거 주문 없으면 스킵
+- FCST 우선: Forecast 데이터가 있으면 FCST 기반, 트렌드와 차이 표시
+
+---
+
+## 파일 구조
+
+```
+account-crm/src/
+├── App.jsx                          # 메인 앱 + 라우팅
+├── index.css                        # 전체 스타일 (Green 테마 + 차트 + 인쇄)
+├── context/
+│   └── AccountContext.jsx           # 전역 상태 + Firebase 연동
+├── lib/
+│   ├── firebase.js                  # Firebase 설정
+│   ├── constants.js                 # 상수 (팀원, 지역, 제품, Score카테고리, GAP원인 등)
+│   └── utils.js                     # 유틸리티 함수
+├── components/
+│   ├── Sidebar.jsx                  # 사이드바
+│   ├── Topbar.jsx                   # 상단바
+│   ├── Charts.jsx                   # 시각 차트 (HBarChart, DonutChart, ProgressBars)
+│   └── AccountModal/
+│       ├── AccountModal.jsx         # 고객 상세 모달 (9탭 + Excel export)
+│       ├── BasicInfo.jsx            # 기본정보
+│       ├── IntelligenceScore.jsx    # Intelligence Score
+│       ├── ActivityLog.jsx          # Activity Log
+│       ├── OrderHistory.jsx         # 수주이력
+│       ├── GapAnalysis.jsx          # GAP 분석
+│       ├── PriceContract.jsx        # 가격/계약
+│       ├── ForecastTrend.jsx        # FCST
+│       ├── CrossSelling.jsx         # 크로스셀링
+│       └── TypeGuide.jsx            # 유형가이드 (카드 내)
+└── views/
+    ├── Dashboard.jsx                # 대시보드
+    ├── AccountList.jsx              # 고객 목록
+    ├── Report.jsx                   # 종합 리포트 (주간/월간 + 차트 + Excel + 인쇄)
+    ├── Progress.jsx                 # 진도관리
+    ├── TypeGuideView.jsx            # 유형가이드 (전체 페이지)
+    └── Settings.jsx                 # 설정
+```
+
+---
+
+## 배포 이력
+
+| 날짜 | 내용 |
+|---|---|
+| 2026-04-04 | Phase 1~2 초기 배포 (GitHub Pages) |
+| 2026-04-05 | Firebase Hosting 전환 (bioprotech-account-crm.web.app) |
+| 2026-04-05 | 유형가이드 전체 페이지 추가 |
+| 2026-04-05 | Green 테마 적용 + 모바일 반응형 수정 |
+| 2026-04-05 | 고객카드 Excel Export 기능 추가 |
+| 2026-04-05 | 리포트 Excel 강화 (심층 Gap분석 시트 추가) |
+| 2026-04-05 | 리포트 시각화 차트 추가 (바차트, 도넛, 프로그레스바) |
+| 2026-04-05 | 인쇄 기능 추가 (@media print CSS) |
+| 2026-04-05 | 담당자별 대시보드 필터링 (로그인 사용자 기준 데이터 표시) |
+| 2026-04-05 | 담당자 동기화 도구 추가 (사업계획 → 고객카드 sales_rep 일괄 반영) |
+| 2026-04-05 | 담당자 관리 UI 추가 (추가/수정/삭제 + 동적 반영) |
+| 2026-04-05 | 고객 마스터 일괄 동기화 도구 (누락 고객 자동 생성 + 메타데이터 업데이트) |
+| 2026-04-05 | 팀 멤버 동적 관리 (constants → Context 전환, localStorage 영속) |
+| 2026-04-06 | 데이터 스냅샷 백업/복원 기능 추가 (Firestore account_snapshots 컬렉션) |

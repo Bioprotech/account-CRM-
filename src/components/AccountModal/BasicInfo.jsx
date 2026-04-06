@@ -1,4 +1,5 @@
-import { REGIONS, PRODUCTS, TEAM_MEMBERS, BUSINESS_TYPES, CONTRACT_STATUSES } from '../../lib/constants';
+import { REGIONS, PRODUCTS, BUSINESS_TYPES, CONTRACT_STATUSES } from '../../lib/constants';
+import { useAccount } from '../../context/AccountContext';
 
 const TYPE_TRANSITIONS = {
   'Single → Multiple': '재구매 전환 성공',
@@ -8,6 +9,7 @@ const TYPE_TRANSITIONS = {
 };
 
 export default function BasicInfo({ draft, update }) {
+  const { teamMembers } = useAccount();
   const updateContact = (idx, field, value) => {
     const next = [...draft.key_contacts];
     next[idx] = { ...next[idx], [field]: value };
@@ -91,7 +93,7 @@ export default function BasicInfo({ draft, update }) {
           <label>담당자</label>
           <select value={draft.sales_rep || ''} onChange={e => update({ sales_rep: e.target.value })}>
             <option value="">선택</option>
-            {TEAM_MEMBERS.map(t => <option key={t} value={t}>{t}</option>)}
+            {teamMembers.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
         <div className="form-group">

@@ -169,7 +169,7 @@ export default function GapAnalysis({ draft, update }) {
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
                 border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
-                background: selected ? 'rgba(59,130,246,.06)' : 'transparent',
+                background: selected ? 'rgba(46,125,50,.06)' : 'transparent',
                 transition: 'all .15s',
               }}>
                 <input type="checkbox" checked={selected} onChange={() => toggleCause(cause.key)}

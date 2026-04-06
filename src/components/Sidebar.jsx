@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { key: 'accounts', icon: '🏢', label: '고객 목록' },
   { key: 'report', icon: '📋', label: '종합 리포트' },
   { key: 'progress', icon: '📈', label: '진도관리' },
+  { key: 'typeguide', icon: '📖', label: '유형가이드' },
   { key: 'settings', icon: '⚙️', label: '설정', adminOnly: true },
 ];
 

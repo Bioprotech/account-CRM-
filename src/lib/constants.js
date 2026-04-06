@@ -1,5 +1,7 @@
 /* ── 팀원 ── */
-export const TEAM_MEMBERS = ['Iris', 'Rebecca', 'Ian', 'Wendy', 'Dana', '김지희'];
+export const DEFAULT_TEAM_MEMBERS = ['Iris', 'Rebecca', 'Ian', 'Wendy', 'Dana', '김지희'];
+export const TEAM_MEMBERS = DEFAULT_TEAM_MEMBERS; // 하위호환
+export const TEAM_STORAGE_KEY = 'bioprotech_account_crm_team_v1';
 
 /* ── 영업팀 ── */
 export const SALES_TEAMS = ['해외영업', '영업지원', '국내영업'];

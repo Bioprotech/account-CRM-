@@ -80,7 +80,7 @@ export default function TypeGuide({ draft, update }) {
 
       {/* 추천 활동 (B2) */}
       {recommendations.length > 0 && (
-        <div className="card" style={{ marginBottom: 12, background: 'rgba(59,130,246,0.04)', border: '1px solid var(--accent)' }}>
+        <div className="card" style={{ marginBottom: 12, background: 'rgba(46,125,50,0.04)', border: '1px solid var(--accent)' }}>
           <div className="card-title" style={{ color: 'var(--accent)' }}>📌 추천 다음 활동</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {recommendations.map((r, i) => (
@@ -157,7 +157,7 @@ export default function TypeGuide({ draft, update }) {
         <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>체크리스트</span>
           <span className="score-badge" style={{
-            background: checkedCount === totalCount ? 'rgba(22,163,74,.12)' : 'rgba(59,130,246,.08)',
+            background: checkedCount === totalCount ? 'rgba(22,163,74,.12)' : 'rgba(46,125,50,.08)',
             color: checkedCount === totalCount ? 'var(--green)' : 'var(--accent)',
             fontSize: 11,
           }}>

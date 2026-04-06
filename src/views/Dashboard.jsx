@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { REGIONS, CUSTOMER_TYPE_GUIDE } from '../lib/constants';
 import { daysSince, scoreColorClass } from '../lib/utils';
@@ -27,15 +27,53 @@ function pctColor(p) {
 }
 
 export default function Dashboard() {
-  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans } = useAccount();
+  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, currentUser, isAdmin, saveAccount, showToast } = useAccount();
+  const [syncing, setSyncing] = useState(false);
+
+  // ── 담당자별 데이터 필터링 ──
+  // 대시보드는 엄격 필터: sales_rep === currentUser인 고객만 (미배정 고객 제외)
+  // 관리자/미로그인은 전체
+  const myAccounts = useMemo(() => {
+    if (isAdmin || !currentUser) return visibleAccounts;
+    return accounts.filter(a => a.sales_rep === currentUser);
+  }, [accounts, visibleAccounts, isAdmin, currentUser]);
+
+  const myAccountIds = useMemo(() => {
+    return new Set(myAccounts.map(a => a.id));
+  }, [myAccounts]);
+
+  const myActivityLogs = useMemo(() => {
+    if (isAdmin || !currentUser) return activityLogs;
+    return activityLogs.filter(l => myAccountIds.has(l.account_id));
+  }, [activityLogs, myAccountIds, isAdmin, currentUser]);
+
+  const myOpenIssues = useMemo(() => {
+    if (isAdmin || !currentUser) return openIssues;
+    return openIssues.filter(l => myAccountIds.has(l.account_id));
+  }, [openIssues, myAccountIds, isAdmin, currentUser]);
+
+  const myAlarms = useMemo(() => {
+    if (isAdmin || !currentUser) return alarms;
+    return alarms.filter(a => a.account && myAccountIds.has(a.account.id));
+  }, [alarms, myAccountIds, isAdmin, currentUser]);
+
+  const myOrders = useMemo(() => {
+    if (isAdmin || !currentUser) return orders;
+    return orders.filter(o => myAccountIds.has(o.account_id));
+  }, [orders, myAccountIds, isAdmin, currentUser]);
+
+  const myBusinessPlans = useMemo(() => {
+    if (isAdmin || !currentUser) return businessPlans;
+    return businessPlans.filter(p => p.sales_rep === currentUser || myAccountIds.has(p.account_id));
+  }, [businessPlans, myAccountIds, isAdmin, currentUser]);
 
   const customerPlans = useMemo(() =>
-    businessPlans.filter(p => p.year === CURRENT_YEAR && p.type !== 'product'),
-    [businessPlans]
+    myBusinessPlans.filter(p => p.year === CURRENT_YEAR && p.type !== 'product'),
+    [myBusinessPlans]
   );
   const yearOrders = useMemo(() =>
-    orders.filter(o => (o.order_date || '').startsWith(String(CURRENT_YEAR))),
-    [orders]
+    myOrders.filter(o => (o.order_date || '').startsWith(String(CURRENT_YEAR))),
+    [myOrders]
   );
   const hasPlan = customerPlans.length > 0;
 
@@ -58,15 +96,15 @@ export default function Dashboard() {
   };
 
   const stats = useMemo(() => {
-    const total = visibleAccounts.length;
+    const total = myAccounts.length;
     const avgScore = total > 0
-      ? Math.round(visibleAccounts.reduce((s, a) => s + (a.intelligence?.total_score ?? 0), 0) / total)
+      ? Math.round(myAccounts.reduce((s, a) => s + (a.intelligence?.total_score ?? 0), 0) / total)
       : 0;
 
     const now = new Date();
     const thisMonth = now.toISOString().slice(0, 7);
-    const monthActivities = activityLogs.filter(l => (l.date || '').startsWith(thisMonth)).length;
-    const openCount = openIssues.length;
+    const monthActivities = myActivityLogs.filter(l => (l.date || '').startsWith(thisMonth)).length;
+    const openCount = myOpenIssues.length;
 
     // YTD 실적
     const ytdActual = yearOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
@@ -80,21 +118,21 @@ export default function Dashboard() {
     });
 
     return { total, avgScore, monthActivities, openCount, ytdActual, ytdTarget, annualTarget };
-  }, [visibleAccounts, activityLogs, openIssues, yearOrders, customerPlans]);
+  }, [myAccounts, myActivityLogs, myOpenIssues, yearOrders, customerPlans]);
 
   // 긴급 알람
   const urgentAccounts = useMemo(() => {
-    return visibleAccounts.filter(a => {
+    return myAccounts.filter(a => {
       const score = a.intelligence?.total_score ?? 0;
       return score < 50 && daysSince(a.last_contact_date) > 30;
     });
-  }, [visibleAccounts]);
+  }, [myAccounts]);
 
   // 유형별 체크리스트 진행률
   const typeChecklistStats = useMemo(() => {
     const result = [];
     Object.entries(CUSTOMER_TYPE_GUIDE).forEach(([key, guide]) => {
-      const typeAccounts = visibleAccounts.filter(a => a.business_type === key);
+      const typeAccounts = myAccounts.filter(a => a.business_type === key);
       if (typeAccounts.length === 0) return;
       const totalItems = guide.checklist.length;
       let completedSum = 0;
@@ -113,14 +151,14 @@ export default function Dashboard() {
       });
     });
     return result;
-  }, [visibleAccounts]);
+  }, [myAccounts]);
 
   // 지역별 목표 vs 실적
   const regionStats = useMemo(() => {
     const map = {};
     REGIONS.forEach(r => { map[r] = { count: 0, target: 0, actual: 0 }; });
 
-    visibleAccounts.forEach(a => {
+    myAccounts.forEach(a => {
       if (a.region && map[a.region]) map[a.region].count++;
     });
 
@@ -145,9 +183,9 @@ export default function Dashboard() {
     }
 
     return map;
-  }, [visibleAccounts, customerPlans, yearOrders, hasPlan, accounts, planLookup]);
+  }, [myAccounts, customerPlans, yearOrders, hasPlan, accounts, planLookup]);
 
-  // 담당자별 목표 vs 실적
+  // 담당자별 목표 vs 실적 — 관리자만 전체 표시, 일반 사용자는 본인만
   const repStats = useMemo(() => {
     const map = {};
 
@@ -158,7 +196,6 @@ export default function Dashboard() {
         map[rep].target += (p.annual_target || 0);
       });
       yearOrders.forEach(o => {
-        // plan의 담당자 우선 사용 (order의 sales_rep은 다른 이름일 수 있음)
         const plan = findPlanForOrder(o);
         const rep = plan?.sales_rep || '기타';
         if (!map[rep]) map[rep] = { count: 0, target: 0, actual: 0 };
@@ -166,14 +203,13 @@ export default function Dashboard() {
       });
     }
 
-    // 고객 수는 plan에 있는 담당자에만 귀속
-    visibleAccounts.forEach(a => {
+    myAccounts.forEach(a => {
       const rep = a.sales_rep || '미배정';
       if (map[rep]) map[rep].count++;
     });
 
     return map;
-  }, [visibleAccounts, customerPlans, yearOrders, hasPlan, planLookup]);
+  }, [myAccounts, customerPlans, yearOrders, hasPlan, planLookup]);
 
   // 구분(사업형태)별 목표 vs 실적
   const bizTypeStats = useMemo(() => {
@@ -187,25 +223,25 @@ export default function Dashboard() {
     });
     yearOrders.forEach(o => {
       const plan = findPlanForOrder(o);
-      const acc = accounts.find(a => a.id === o.account_id);
+      const acc = myAccounts.find(a => a.id === o.account_id) || accounts.find(a => a.id === o.account_id);
       const biz = plan?.biz_type || acc?.business_type || '기타';
       if (!map[biz]) map[biz] = { count: 0, target: 0, actual: 0 };
       map[biz].actual += (o.order_amount || 0);
     });
 
     // 고객 수
-    accounts.forEach(a => {
+    myAccounts.forEach(a => {
       const biz = a.business_type || '기타';
       if (map[biz]) map[biz].count++;
     });
 
     return map;
-  }, [customerPlans, yearOrders, hasPlan, accounts, planLookup]);
+  }, [customerPlans, yearOrders, hasPlan, myAccounts, accounts, planLookup]);
 
   // 품목별 목표 vs 실적
   const productPlans = useMemo(() =>
-    businessPlans.filter(p => p.year === CURRENT_YEAR && p.type === 'product'),
-    [businessPlans]
+    myBusinessPlans.filter(p => p.year === CURRENT_YEAR && p.type === 'product'),
+    [myBusinessPlans]
   );
 
   const productStats = useMemo(() => {
@@ -236,20 +272,84 @@ export default function Dashboard() {
 
   // Open 이슈
   const recentOpenIssues = useMemo(() => {
-    return openIssues
+    return myOpenIssues
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
       .slice(0, 10)
       .map(log => {
         const account = accounts.find(a => a.id === log.account_id);
         return { ...log, company_name: account?.company_name || '(알 수 없음)' };
       });
-  }, [openIssues, accounts]);
+  }, [myOpenIssues, accounts]);
 
   const maxRegionTarget = Math.max(1, ...Object.values(regionStats).map(v => Math.max(v.target, v.actual, v.count)));
   const maxRepTarget = Math.max(1, ...Object.values(repStats).map(v => Math.max(v.target, v.actual)));
 
+  // ── 담당자 동기화 필요 여부 감지 ──
+  // account_id 또는 customer_name으로 매칭
+  const syncInfo = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const plans = businessPlans.filter(p => p.year === currentYear && p.type !== 'product' && p.sales_rep);
+    const repMap = {};
+
+    plans.forEach(p => {
+      // 1) account_id로 매칭
+      if (p.account_id && !repMap[p.account_id]) {
+        repMap[p.account_id] = p.sales_rep;
+        return;
+      }
+      // 2) customer_name으로 매칭
+      if (p.customer_name) {
+        const name = p.customer_name.toLowerCase().trim();
+        const acc = accounts.find(a => (a.company_name || '').toLowerCase().trim() === name);
+        if (acc && !repMap[acc.id]) {
+          repMap[acc.id] = p.sales_rep;
+        }
+      }
+    });
+
+    const needSync = accounts.filter(a => repMap[a.id] && a.sales_rep !== repMap[a.id]);
+    return { repMap, needSync, total: Object.keys(repMap).length };
+  }, [accounts, businessPlans]);
+
+  const handleSync = async () => {
+    if (!confirm(`${syncInfo.needSync.length}개 고객의 담당자를 사업계획 기준으로 업데이트합니다. 진행하시겠습니까?`)) return;
+    setSyncing(true);
+    try {
+      for (const a of syncInfo.needSync) {
+        await saveAccount({ ...a, sales_rep: syncInfo.repMap[a.id] });
+      }
+      showToast(`${syncInfo.needSync.length}개 고객 담당자 동기화 완료`, 'success');
+    } catch (e) {
+      showToast('동기화 실패: ' + e.message, 'error');
+    }
+    setSyncing(false);
+  };
+
   return (
     <div>
+      {/* 담당자 동기화 필요 알림 (관리자 전용) */}
+      {isAdmin && syncInfo.needSync.length > 0 && (
+        <div className="alert-banner" style={{ background: 'rgba(230,81,0,.06)', border: '1px solid rgba(230,81,0,.3)', marginBottom: 12 }}>
+          <span>⚠️</span>
+          <div style={{ flex: 1 }}>
+            <strong>담당자 미배정 감지:</strong> 사업계획에 담당자가 설정된 고객 중 <strong style={{ color: 'var(--red)' }}>{syncInfo.needSync.length}개사</strong>의 고객카드에 담당자가 반영되지 않았습니다.
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+              동기화하면 각 담당자 로그인 시 본인 고객만 대시보드에 표시됩니다.
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={handleSync} disabled={syncing} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
+            {syncing ? '동기화 중...' : `${syncInfo.needSync.length}개 동기화 실행`}
+          </button>
+        </div>
+      )}
+
+      {/* 담당자 표시 */}
+      {currentUser && !isAdmin && (
+        <div style={{ marginBottom: 12, padding: '8px 14px', background: 'rgba(46,125,50,.06)', borderRadius: 8, border: '1px solid rgba(46,125,50,.15)', fontSize: 12, color: 'var(--text2)' }}>
+          👤 <strong>{currentUser}</strong>님의 대시보드 — 담당 고객 기준 데이터
+        </div>
+      )}
+
       {/* 긴급 알람 */}
       {urgentAccounts.length > 0 && (
         <div className="alert-banner danger">
@@ -262,7 +362,7 @@ export default function Dashboard() {
       {/* KPI Grid */}
       <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)' }}>
         <div className="kpi accent">
-          <div className="kpi-label">전체 고객</div>
+          <div className="kpi-label">{isAdmin || !currentUser ? '전체 고객' : '내 고객'}</div>
           <div className="kpi-value">{stats.total}</div>
         </div>
         <div className={`kpi ${stats.avgScore < 50 ? 'red' : stats.avgScore < 70 ? 'yellow' : 'green'}`}>
@@ -287,11 +387,11 @@ export default function Dashboard() {
       </div>
 
       {/* Alarms */}
-      {alarms.length > 0 && (
+      {myAlarms.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-title">🔔 알람 ({alarms.length}건)</div>
+          <div className="card-title">🔔 알람 ({myAlarms.length}건)</div>
           <div className="issue-list" style={{ maxHeight: 200 }}>
-            {alarms.slice(0, 15).map((alarm, i) => (
+            {myAlarms.slice(0, 15).map((alarm, i) => (
               <div key={i} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(alarm.account)}>
                 <span style={{ fontSize: 14, marginRight: 4 }}>{alarm.level === 'danger' ? '🔴' : alarm.level === 'info' ? '🔵' : '🟡'}</span>
                 <span className="issue-company">{alarm.account?.company_name || '?'}</span>

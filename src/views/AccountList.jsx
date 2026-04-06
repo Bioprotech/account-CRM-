@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useAccount } from '../context/AccountContext';
-import { REGIONS, PRODUCTS, TEAM_MEMBERS, BUSINESS_TYPES, PAGE_SIZE } from '../lib/constants';
+import { REGIONS, PRODUCTS, BUSINESS_TYPES, PAGE_SIZE } from '../lib/constants';
 import { scoreColorClass, fmtDate, daysSince } from '../lib/utils';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -15,7 +15,7 @@ function fmtKRW(n) {
 }
 
 export default function AccountList() {
-  const { visibleAccounts, filters, setFilters, setEditingAccount, getLogsForAccount, activityLogs, businessPlans } = useAccount();
+  const { visibleAccounts, filters, setFilters, setEditingAccount, getLogsForAccount, activityLogs, businessPlans, teamMembers } = useAccount();
   const [page, setPage] = useState(1);
   const [targetSortAsc, setTargetSortAsc] = useState(false); // default: descending
 
@@ -84,7 +84,7 @@ export default function AccountList() {
         </select>
         <select className="filter-select" value={filters.salesRep} onChange={e => { setFilters(f => ({ ...f, salesRep: e.target.value })); setPage(1); }}>
           <option value="">전체 담당자</option>
-          {TEAM_MEMBERS.map(t => <option key={t} value={t}>{t}</option>)}
+          {teamMembers.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         <select className="filter-select" value={filters.businessType} onChange={e => { setFilters(f => ({ ...f, businessType: e.target.value })); setPage(1); }}>
           <option value="">전체 사업형태</option>
@@ -104,6 +104,36 @@ export default function AccountList() {
         {Object.values(filters).some(v => v) && (
           <button className="btn btn-ghost btn-sm" onClick={resetFilters}>필터 초기화</button>
         )}
+        <button className="btn btn-success btn-sm" onClick={async () => {
+          try {
+            const XLSX = await import('xlsx');
+            const wb = XLSX.utils.book_new();
+            const rows = sortedAccounts.map(a => ({
+              '회사명': a.company_name || '',
+              '국가': a.country || '',
+              '지역': a.region || '',
+              '사업형태': a.business_type || '',
+              '담당자': a.sales_rep || '',
+              'Intelligence Score': (a.intelligence?.total_score ?? 0) + '%',
+              '제품군': (a.products || []).join(', '),
+              '계약상태': a.contract_status || '',
+              '최근 컨택일': a.last_contact_date || '',
+              '연간 목표': getTarget(a),
+              'Open 이슈': getOpenIssueCount(a.id),
+              '등록일': a.created_at || '',
+            }));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            ws['!cols'] = [
+              { wch: 30 }, { wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 10 },
+              { wch: 12 }, { wch: 25 }, { wch: 10 }, { wch: 12 }, { wch: 15 },
+              { wch: 10 }, { wch: 12 },
+            ];
+            XLSX.utils.book_append_sheet(wb, ws, '고객목록');
+            XLSX.writeFile(wb, `Account_CRM_고객목록_${new Date().toISOString().slice(0, 10)}.xlsx`);
+          } catch (err) {
+            console.error('다운로드 실패:', err);
+          }
+        }} style={{ marginLeft: 'auto' }}>Excel 다운로드</button>
       </div>
 
       {/* Table */}

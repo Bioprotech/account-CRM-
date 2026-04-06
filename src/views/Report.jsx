@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useAccount } from '../context/AccountContext';
-import { TEAM_MEMBERS, GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES } from '../lib/constants';
+import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES } from '../lib/constants';
 import { daysSince } from '../lib/utils';
+import { HBarChart, DonutChart, ProgressBars } from '../components/Charts';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -134,7 +135,7 @@ function MonthlyBreakdownTable({ title, rows }) {
    REPORT COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function Report() {
-  const { accounts, activityLogs, orders, forecasts, businessPlans, openIssues, alarms } = useAccount();
+  const { accounts, activityLogs, orders, forecasts, businessPlans, openIssues, alarms, teamMembers } = useAccount();
   const [tab, setTab] = useState('weekly');
 
   /* ── Base data ── */
@@ -404,7 +405,7 @@ export default function Report() {
 
     // Activity summary per rep
     const repActivity = {};
-    TEAM_MEMBERS.forEach(t => {
+    teamMembers.forEach(t => {
       repActivity[t] = { contacts: 0, orderActivity: 0, crossSelling: 0, latestContent: '' };
     });
     weekLogs.forEach(l => {
@@ -717,8 +718,8 @@ export default function Report() {
     const amMetrics = {};
     const amReps = new Set();
     customerPlans.forEach(p => { if (p.sales_rep) amReps.add(p.sales_rep); });
-    // Also include TEAM_MEMBERS and account reps
-    TEAM_MEMBERS.forEach(r => amReps.add(r));
+    // Also include teamMembers and account reps
+    teamMembers.forEach(r => amReps.add(r));
     accounts.forEach(a => { if (a.sales_rep) amReps.add(a.sales_rep); });
 
     amReps.forEach(rep => {
@@ -825,6 +826,24 @@ export default function Report() {
           ['[품목별 금주실적]'],
           ['구분', '금주 수주', 'YTD 실적', '연간 목표', '달성률'],
           ...weeklyData.breakdown.prodRows.map(r => [r.label, r.periodActual, r.ytdActual, r.annualTarget, r.annualTarget > 0 ? `${pct(r.ytdActual, r.annualTarget)}%` : '-']),
+          [],
+          ['[지역별 금주실적]'],
+          ['구분', '금주 수주', 'YTD 실적', '연간 목표', '달성률'],
+          ...(weeklyData.breakdown.regRows || []).map(r => [r.label, r.periodActual, r.ytdActual, r.annualTarget, r.annualTarget > 0 ? `${pct(r.ytdActual, r.annualTarget)}%` : '-']),
+          [],
+          ['[Open 이슈 (Top 10)]'],
+          ['고객명', '유형', '상태', '날짜', '내용'],
+          ...openIssues
+            .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+            .slice(0, 10)
+            .map(l => {
+              const acc = accounts.find(a => a.id === l.account_id);
+              return [acc?.company_name || '?', l.issue_type || '', l.status || '', l.date || '', l.content || ''];
+            }),
+          [],
+          ['[기한 초과 이슈 (14일+)]'],
+          ['고객명', '유형', '경과일수', '내용'],
+          ...weeklyData.overdueIssues.slice(0, 10).map(l => [l.company_name || '', l.issue_type || '', `${daysSince(l.date)}일`, l.content || '']),
         ];
         const ws = XLSX.utils.aoa_to_sheet(rows);
         ws['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 15 }];
@@ -863,6 +882,119 @@ export default function Report() {
         const ws = XLSX.utils.aoa_to_sheet(rows);
         ws['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 12 }];
         XLSX.utils.book_append_sheet(wb, ws, '월간리포트');
+
+        // Cross-Selling sheet
+        if (monthlyData.csTopOpps?.length > 0) {
+          const csRows = [
+            ['Cross-Selling 현황'],
+            [],
+            ['상태', '건수', '금액'],
+            ...Object.entries(monthlyData.csStats).map(([st, v]) => [st, v.count, v.amount]),
+            [],
+            ['[Top 기회]'],
+            ['고객명', '타겟 제품', '상태', '예상 금액'],
+            ...monthlyData.csTopOpps.slice(0, 15).map(o => [o.company, o.product, o.status, o.amount]),
+          ];
+          const wcs = XLSX.utils.aoa_to_sheet(csRows);
+          wcs['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 18 }];
+          XLSX.utils.book_append_sheet(wb, wcs, '크로스셀링');
+        }
+
+        // FCST vs Actual sheet
+        if (monthlyData.fcstVsActual?.length > 0) {
+          const fcstRows = [
+            ['FCST vs Actual (당분기)'],
+            [],
+            ['고객명', '예측금액', '실적금액', '차이', '비고'],
+            ...monthlyData.fcstVsActual.map(f => [f.company_name, f.forecast, f.actual, f.diff, f.note || '']),
+          ];
+          const wfc = XLSX.utils.aoa_to_sheet(fcstRows);
+          wfc['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 25 }];
+          XLSX.utils.book_append_sheet(wb, wfc, 'FCST vs Actual');
+        }
+
+        // Deep GAP Analysis sheets
+        if (gapAnalysisData) {
+          // GAP-1: 원인분석 sheet
+          const gapRows = [
+            ['심층 Gap 분석 — 원인분석'],
+            [],
+            ['원인', '건수', '영향금액', '관련 고객'],
+            ...gapAnalysisData.causeRanking.map(c => [
+              `${c.icon} ${c.label}`, c.count, c.totalGap, c.customers.slice(0, 5).join(', ') + (c.customers.length > 5 ? ` 외 ${c.customers.length - 5}` : ''),
+            ]),
+          ];
+          // GAP-2: 고객별 심층분석
+          if (gapAnalysisData.topGapCustomers.length > 0) {
+            gapRows.push([], [], ['[고객별 심층분석 — Gap 상위]']);
+            gapRows.push(['고객명', '담당', 'YTD Gap', '달성률', 'Gap 원인', 'Score', '미비정보', '액션플랜']);
+            gapAnalysisData.topGapCustomers.forEach(cg => {
+              const causes = (cg.gapAnalysis?.causes || []).map(k => GAP_CAUSES.find(c => c.key === k)).filter(Boolean);
+              const missingInfo = gapAnalysisData.getMissingIntelligence(cg.account);
+              const actionPlan = (cg.gapAnalysis?.action_plan || []).filter(a => a.text?.trim());
+              const actionDone = actionPlan.filter(a => a.done).length;
+              gapRows.push([
+                cg.name, cg.rep, cg.ytdGap, `${cg.achieveRate}%`,
+                causes.map(c => c.label).join(', ') || '미분석',
+                `${cg.score}%`,
+                missingInfo.slice(0, 3).map(m => m.category).join(', ') || '완비',
+                actionPlan.length > 0 ? `${actionDone}/${actionPlan.length} 완료` : '미설정',
+              ]);
+            });
+          }
+          const wg1 = XLSX.utils.aoa_to_sheet(gapRows);
+          wg1['!cols'] = [{ wch: 25 }, { wch: 10 }, { wch: 18 }, { wch: 12 }, { wch: 25 }, { wch: 10 }, { wch: 25 }, { wch: 15 }];
+          XLSX.utils.book_append_sheet(wb, wg1, 'Gap 원인·고객분석');
+
+          // GAP-3: 기회 파이프라인 sheet
+          if (gapAnalysisData.allOpportunities.length > 0) {
+            const oppRows = [
+              ['기회 파이프라인 (Gap 만회)', '', '', '', '가중합계:', gapAnalysisData.totalOppWeighted],
+              [],
+              ['[유형별 요약]'],
+              ['유형', '건수', '총 금액', '가중 금액'],
+              ...gapAnalysisData.oppSummary.map(o => [o.label, o.count, o.totalAmount, Math.round(o.weightedAmount)]),
+              [],
+              ['[주요 기회 상세]'],
+              ['고객명', '유형', '품목', '예상금액', '확률', '가중금액', '예상시기'],
+              ...gapAnalysisData.allOpportunities
+                .sort((a, b) => (b.amount * b.probability) - (a.amount * a.probability))
+                .slice(0, 20)
+                .map(opp => {
+                  const typeInfo = OPPORTUNITY_TYPES.find(t => t.key === opp.type);
+                  return [opp.company, typeInfo?.label || opp.type, opp.product || '', opp.amount || 0, `${opp.probability || 0}%`, Math.round((opp.amount || 0) * (opp.probability || 0) / 100), opp.expected_date || ''];
+                }),
+            ];
+            const wg2 = XLSX.utils.aoa_to_sheet(oppRows);
+            wg2['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 12 }];
+            XLSX.utils.book_append_sheet(wb, wg2, '기회 파이프라인');
+          }
+
+          // GAP-4: AM별 활동 품질 sheet
+          const amEntries = Object.entries(gapAnalysisData.amMetrics);
+          if (amEntries.length > 0) {
+            const amRows = [
+              ['AM별 활동 품질 지표'],
+              [],
+              ['담당자', '고객수', '90일 컨택', '고객당 빈도', '평균 Score', '액션 실행률', 'YTD 달성률', '주요 Gap 원인'],
+              ...amEntries
+                .sort((a, b) => b[1].achieveRate - a[1].achieveRate)
+                .map(([rep, m]) => [
+                  rep, m.accountCount, `${m.contactCount90d}건`, m.avgContactFreq,
+                  `${m.avgScore}%`,
+                  m.actionTotal > 0 ? `${m.actionRate}% (${m.actionDone}/${m.actionTotal})` : '미설정',
+                  m.ytdTarget > 0 ? `${m.achieveRate}%` : '-',
+                  m.gapCauses.map(([k, cnt]) => {
+                    const c = GAP_CAUSES.find(gc => gc.key === k);
+                    return `${c?.label || k}(${cnt})`;
+                  }).join(', ') || '-',
+                ]),
+            ];
+            const wg3 = XLSX.utils.aoa_to_sheet(amRows);
+            wg3['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 30 }];
+            XLSX.utils.book_append_sheet(wb, wg3, 'AM 활동 품질');
+          }
+        }
       }
 
       XLSX.writeFile(wb, `Account_CRM_${tab === 'weekly' ? '주간' : '월간'}_리포트_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -882,7 +1014,19 @@ export default function Report() {
           <button className={`topbar-tab ${tab === 'weekly' ? 'active' : ''}`} onClick={() => setTab('weekly')}>주간 리포트</button>
           <button className={`topbar-tab ${tab === 'monthly' ? 'active' : ''}`} onClick={() => setTab('monthly')}>월간 리포트</button>
         </div>
-        <button className="btn btn-success" onClick={handleExcelDownload}>Excel 다운로드</button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="btn btn-ghost" onClick={() => window.print()} style={{ fontSize: 11 }}>인쇄</button>
+          <button className="btn btn-success" onClick={handleExcelDownload}>Excel 다운로드</button>
+        </div>
+      </div>
+
+      {/* Print header (hidden on screen) */}
+      <div className="print-header" style={{ display: 'none' }}>
+        <h1>Bio Protech 영업본부 {tab === 'weekly' ? '주간' : '월간'} 리포트</h1>
+        <div className="print-subtitle">
+          {tab === 'weekly' ? `${weeklyData.weekStart} ~ ${weeklyData.weekEnd}` : monthlyData.thisMonthStr}
+          {' | '}출력일: {new Date().toISOString().slice(0, 10)}
+        </div>
       </div>
 
       {/* ═══════════════════════════════════════════════
@@ -1040,10 +1184,37 @@ export default function Report() {
             </div>
           )}
 
-          {/* Section 5: 주간 담당/품목/지역/사업구분별 실적 */}
+          {/* Section 5: 시각적 차트 */}
+          {hasPlan && weeklyData.breakdown.repRows.length > 0 && (
+            <div className="two-col" style={{ marginBottom: 16 }}>
+              <HBarChart
+                title="담당자별 YTD 달성률"
+                rows={weeklyData.breakdown.repRows.filter(r => r.annualTarget > 0).map(r => ({
+                  label: r.label, target: r.annualTarget, actual: r.ytdActual,
+                }))}
+              />
+              <DonutChart
+                title="품목별 YTD 실적 비중"
+                slices={weeklyData.breakdown.prodRows.filter(r => r.ytdActual > 0).map(r => ({
+                  label: r.label, value: r.ytdActual,
+                }))}
+              />
+            </div>
+          )}
+
+          {hasPlan && weeklyData.breakdown.repRows.length > 0 && (
+            <ProgressBars
+              title="담당자별 연간 목표 달성 진도"
+              items={weeklyData.breakdown.repRows.filter(r => r.annualTarget > 0).map(r => ({
+                label: r.label, value: r.ytdActual, max: r.annualTarget,
+              }))}
+            />
+          )}
+
+          {/* Section 5b: 주간 담당/품목/지역/사업구분별 실적 */}
           {(weeklyData.breakdown.repRows.length > 0 || weeklyData.breakdown.prodRows.length > 0) && (
             <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">주간 분류별 실적</div>
+              <div className="card-title">주간 분류별 실적 (상세)</div>
               <BreakdownTable title="담당자별 금주 실적" rows={weeklyData.breakdown.repRows} periodLabel="금주" showYtd showAnnual={hasPlan} />
               <BreakdownTable title="품목별 금주 실적" rows={weeklyData.breakdown.prodRows} periodLabel="금주" showYtd showAnnual={productPlans.length > 0} />
               <BreakdownTable title="지역별 금주 실적" rows={weeklyData.breakdown.regRows} periodLabel="금주" showYtd showAnnual={hasPlan} />
@@ -1148,10 +1319,54 @@ export default function Report() {
             </div>
           )}
 
-          {/* Section 2: 당월 분류별 실적 */}
+          {/* Section 2: 시각적 차트 */}
+          {monthlyData.repMonthRows.length > 0 && (
+            <div className="two-col" style={{ marginBottom: 16 }}>
+              <HBarChart
+                title="담당자별 당월 목표 vs 실적"
+                rows={monthlyData.repMonthRows.filter(r => r.monthTarget > 0).map(r => ({
+                  label: r.label, target: r.monthTarget, actual: r.monthActual,
+                }))}
+              />
+              <HBarChart
+                title="담당자별 YTD 목표 vs 실적"
+                rows={monthlyData.repMonthRows.filter(r => r.annualTarget > 0).map(r => ({
+                  label: r.label, target: r.annualTarget, actual: r.ytdActual,
+                }))}
+              />
+            </div>
+          )}
+
+          {monthlyData.prodMonthRows.length > 0 && (
+            <div className="two-col" style={{ marginBottom: 16 }}>
+              <DonutChart
+                title="품목별 당월 실적 비중"
+                slices={monthlyData.prodMonthRows.filter(r => r.monthActual > 0).map(r => ({
+                  label: r.label, value: r.monthActual,
+                }))}
+              />
+              <DonutChart
+                title="지역별 당월 실적 비중"
+                slices={(monthlyData.regMonthRows || []).filter(r => r.monthActual > 0).map(r => ({
+                  label: r.label, value: r.monthActual,
+                }))}
+              />
+            </div>
+          )}
+
+          {monthlyData.repMonthRows.length > 0 && (
+            <ProgressBars
+              title="담당자별 연간 달성 진도"
+              items={monthlyData.repMonthRows.filter(r => r.annualTarget > 0).map(r => ({
+                label: r.label, value: r.ytdActual, max: r.annualTarget,
+              }))}
+            />
+          )}
+
+          {/* Section 2b: 당월 분류별 실적 (상세 테이블) */}
           {(monthlyData.repMonthRows.length > 0 || monthlyData.prodMonthRows.length > 0) && (
             <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">당월 분류별 실적</div>
+              <div className="card-title">당월 분류별 실적 (상세)</div>
               <MonthlyBreakdownTable title="담당자별" rows={monthlyData.repMonthRows} />
               <MonthlyBreakdownTable title="품목별" rows={monthlyData.prodMonthRows} />
               <MonthlyBreakdownTable title="지역별" rows={monthlyData.regMonthRows} />

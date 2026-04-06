@@ -205,3 +205,58 @@ export async function uploadAllAccounts(accounts) {
     await batch.commit();
   }
 }
+
+/* ── Snapshot 복원용: 전체 데이터 업로드 ── */
+
+async function batchUpload(colName, items) {
+  const CHUNK = 500;
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const chunk = items.slice(i, i + CHUNK);
+    const batch = writeBatch(db);
+    chunk.forEach(item => batch.set(doc(db, colName, item.id), item));
+    await batch.commit();
+  }
+}
+
+async function clearCollection(colName) {
+  const snap = await getDocs(collection(db, colName));
+  const CHUNK = 500;
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    const chunk = docs.slice(i, i + CHUNK);
+    const batch = writeBatch(db);
+    chunk.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+/**
+ * 전체 컬렉션 초기화 후 스냅샷 데이터 업로드
+ */
+export async function uploadAllData(data) {
+  if (!FIREBASE_ENABLED) throw new Error('Firebase 미설정');
+  // 기존 데이터 삭제
+  await clearAllData();
+  // 새 데이터 업로드
+  if (data.accounts?.length) await batchUpload(ACCOUNTS_COL, data.accounts);
+  if (data.activityLogs?.length) await batchUpload(LOGS_COL, data.activityLogs);
+  if (data.orders?.length) await batchUpload(ORDERS_COL, data.orders);
+  if (data.contracts?.length) await batchUpload(CONTRACTS_COL, data.contracts);
+  if (data.forecasts?.length) await batchUpload(FORECASTS_COL, data.forecasts);
+  if (data.businessPlans?.length) await batchUpload(PLANS_COL, data.businessPlans);
+}
+
+/**
+ * 모든 컬렉션 비우기
+ */
+export async function clearAllData() {
+  if (!FIREBASE_ENABLED) throw new Error('Firebase 미설정');
+  await Promise.all([
+    clearCollection(ACCOUNTS_COL),
+    clearCollection(LOGS_COL),
+    clearCollection(ORDERS_COL),
+    clearCollection(CONTRACTS_COL),
+    clearCollection(FORECASTS_COL),
+    clearCollection(PLANS_COL),
+  ]);
+}

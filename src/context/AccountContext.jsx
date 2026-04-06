@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan } from '../lib/firebase';
-import { STORAGE_KEY, AUTH_KEY } from '../lib/constants';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData } from '../lib/firebase';
+import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
+import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
 
 const Ctx = createContext();
@@ -31,6 +32,21 @@ export default function AccountProvider({ children }) {
     setCurrentUser(null);
     setIsAdmin(false);
     localStorage.removeItem(AUTH_KEY);
+  }, []);
+
+  /* ── Team Members (동적) ── */
+  const [teamMembers, setTeamMembersState] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(TEAM_STORAGE_KEY));
+      if (Array.isArray(saved) && saved.length > 0) return saved;
+    } catch {}
+    return DEFAULT_TEAM_MEMBERS;
+  });
+
+  const saveTeamMembers = useCallback((members) => {
+    const cleaned = members.map(m => m.trim()).filter(Boolean);
+    setTeamMembersState(cleaned);
+    localStorage.setItem(TEAM_STORAGE_KEY, JSON.stringify(cleaned));
   }, []);
 
   /* ── Accounts ── */
@@ -513,6 +529,39 @@ export default function AccountProvider({ children }) {
     return result;
   }, [accounts, contracts, orders, activityLogs, businessPlans, forecasts]);
 
+  /* ── Snapshot 복원 ── */
+  const restoreSnapshot = useCallback(async (snapshotId) => {
+    const snap = await fetchSnapshot(snapshotId);
+    const d = snap.data || {};
+
+    // 로컬 상태 업데이트
+    if (d.accounts) setAccounts(d.accounts);
+    if (d.activityLogs) setActivityLogs(d.activityLogs);
+    if (d.orders) setOrders(d.orders);
+    if (d.contracts) setContracts(d.contracts);
+    if (d.forecasts) setForecasts(d.forecasts);
+    if (d.businessPlans) setBusinessPlans(d.businessPlans);
+
+    // localStorage 백업
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      accounts: d.accounts || [],
+      activityLogs: d.activityLogs || [],
+      orders: d.orders || [],
+      contracts: d.contracts || [],
+      forecasts: d.forecasts || [],
+      businessPlans: d.businessPlans || [],
+    }));
+
+    // Firestore 전체 교체
+    if (FIREBASE_ENABLED) {
+      try { await uploadAllData(d); }
+      catch (e) { console.error('Firestore 복원 실패:', e); }
+    }
+
+    const cnt = d.accounts?.length || 0;
+    showToast(`복원 완료: ${cnt}개사 (${snap.name})`, 'success');
+  }, []);
+
   const value = {
     currentUser, isAdmin, login, logout,
     accounts, filteredAccounts, visibleAccounts,
@@ -530,7 +579,10 @@ export default function AccountProvider({ children }) {
     importBusinessPlans, clearBusinessPlans, getPlansForAccount,
     toast, showToast,
     fbStatus,
+    teamMembers, saveTeamMembers,
+    restoreSnapshot,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
+

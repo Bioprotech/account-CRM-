@@ -1,6 +1,7 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { genId, today } from '../lib/utils';
+import { saveSnapshot, listSnapshots, deleteSnapshot as removeSnapshot } from '../lib/snapshots';
 
 // 엑셀 날짜 시리얼 → YYYY-MM-DD 변환
 function excelDateToStr(serial) {
@@ -37,7 +38,183 @@ function fmtKRW(n) {
 }
 
 export default function Settings() {
-  const { accounts, saveAccount, importOrders, importBusinessPlans, businessPlans, clearBusinessPlans, orders, forecasts, saveForecast, removeForecast, showToast, isAdmin } = useAccount();
+  const { accounts, saveAccount, importOrders, importBusinessPlans, businessPlans, clearBusinessPlans, orders, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers } = useAccount();
+
+  /* ══════════════════════════════════════
+     팀 멤버 관리
+     ══════════════════════════════════════ */
+  const [newMemberName, setNewMemberName] = useState('');
+  const [editingMemberIdx, setEditingMemberIdx] = useState(-1);
+  const [editingMemberName, setEditingMemberName] = useState('');
+
+  const handleAddMember = () => {
+    const name = newMemberName.trim();
+    if (!name) return;
+    if (teamMembers.includes(name)) {
+      showToast(`'${name}'은(는) 이미 등록되어 있습니다`, 'error');
+      return;
+    }
+    saveTeamMembers([...teamMembers, name]);
+    setNewMemberName('');
+    showToast(`담당자 '${name}' 추가 완료`, 'success');
+  };
+
+  const handleRemoveMember = (idx) => {
+    const name = teamMembers[idx];
+    const assignedCount = accounts.filter(a => a.sales_rep === name).length;
+    if (assignedCount > 0 && !confirm(`'${name}' 담당자에게 배정된 고객이 ${assignedCount}개 있습니다. 정말 삭제하시겠습니까?\n(고객 배정은 유지됩니다)`)) return;
+    saveTeamMembers(teamMembers.filter((_, i) => i !== idx));
+    showToast(`담당자 '${name}' 삭제 완료`, 'success');
+  };
+
+  const handleEditMember = (idx) => {
+    setEditingMemberIdx(idx);
+    setEditingMemberName(teamMembers[idx]);
+  };
+
+  const handleSaveEditMember = () => {
+    const name = editingMemberName.trim();
+    if (!name) return;
+    const oldName = teamMembers[editingMemberIdx];
+    if (name !== oldName && teamMembers.includes(name)) {
+      showToast(`'${name}'은(는) 이미 등록되어 있습니다`, 'error');
+      return;
+    }
+    const updated = [...teamMembers];
+    updated[editingMemberIdx] = name;
+    saveTeamMembers(updated);
+    // 고객 카드의 담당자도 일괄 변경
+    if (name !== oldName) {
+      const affected = accounts.filter(a => a.sales_rep === oldName);
+      affected.forEach(a => saveAccount({ ...a, sales_rep: name }));
+      if (affected.length > 0) showToast(`${affected.length}개 고객의 담당자명도 '${name}'으로 변경됨`, 'info');
+    }
+    setEditingMemberIdx(-1);
+    setEditingMemberName('');
+    showToast(`담당자 '${oldName}' → '${name}' 수정 완료`, 'success');
+  };
+
+  /* ══════════════════════════════════════
+     고객 마스터 일괄 동기화
+     (사업계획 기준으로 누락 고객 생성 + 담당자/지역/사업형태 동기화)
+     ══════════════════════════════════════ */
+  const [masterSyncing, setMasterSyncing] = useState(false);
+
+  const masterSyncPreview = useMemo(() => {
+    const year = new Date().getFullYear();
+    const plans = businessPlans.filter(p => p.year === year && p.type !== 'product');
+    if (plans.length === 0) return null;
+
+    const accountMap = {};
+    accounts.forEach(a => {
+      if (a.company_name) accountMap[a.company_name.toLowerCase().trim()] = a;
+    });
+
+    const missing = []; // 신규 생성 필요
+    const needUpdate = []; // 기존 계정 업데이트 필요
+    const alreadyOk = []; // 이미 일치
+
+    plans.forEach(p => {
+      const key = (p.customer_name || '').toLowerCase().trim();
+      if (!key) return;
+
+      const existing = accountMap[key];
+      if (!existing) {
+        missing.push(p);
+      } else {
+        const repDiff = p.sales_rep && p.sales_rep.trim() !== (existing.sales_rep || '').trim();
+        const regionDiff = p.region && p.region !== (existing.region || '');
+        const bizDiff = p.biz_type && p.biz_type !== (existing.business_type || '');
+        const countryDiff = p.country && p.country !== (existing.country || '');
+        if (repDiff || regionDiff || bizDiff || countryDiff) {
+          needUpdate.push({ plan: p, account: existing, repDiff, regionDiff, bizDiff, countryDiff });
+        } else {
+          alreadyOk.push(p);
+        }
+      }
+    });
+
+    return { plans, missing, needUpdate, alreadyOk };
+  }, [businessPlans, accounts]);
+
+  const handleMasterSync = async () => {
+    if (!masterSyncPreview) return;
+    setMasterSyncing(true);
+
+    try {
+      const year = new Date().getFullYear();
+      let created = 0, updated = 0;
+
+      // 1. 누락 고객 생성
+      for (const p of masterSyncPreview.missing) {
+        const newId = 'acc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        await saveAccount({
+          id: newId,
+          company_name: p.customer_name,
+          country: p.country || '',
+          region: p.region || '',
+          business_type: p.biz_type || '',
+          products: [],
+          sales_rep: (p.sales_rep || '').trim(),
+          key_contacts: [],
+          contract_status: '없음',
+          intelligence: { total_score: 0, categories: {}, last_updated: '' },
+          last_contact_date: '',
+          created_at: today(),
+          updated_at: today(),
+        });
+        created++;
+        // 잠시 대기 (ID 충돌 방지)
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      // 2. 기존 고객 업데이트 (담당자, 지역, 사업형태, 국가)
+      for (const item of masterSyncPreview.needUpdate) {
+        const { plan: p, account: a } = item;
+        const changes = {};
+        if (p.sales_rep && p.sales_rep.trim() !== (a.sales_rep || '').trim()) changes.sales_rep = p.sales_rep.trim();
+        if (p.region && p.region !== (a.region || '')) changes.region = p.region;
+        if (p.biz_type && p.biz_type !== (a.business_type || '')) changes.business_type = p.biz_type;
+        if (p.country && p.country !== (a.country || '')) changes.country = p.country;
+        if (Object.keys(changes).length > 0) {
+          await saveAccount({ ...a, ...changes });
+          updated++;
+        }
+      }
+
+      // 3. 사업계획 account_id 재연결
+      const freshAccountMap = {};
+      // re-read accounts after creation
+      const allAccounts = [...accounts];
+      // Also include newly created (won't be in accounts yet from Firestore listener)
+      allAccounts.forEach(a => {
+        if (a.company_name) freshAccountMap[a.company_name.toLowerCase().trim()] = a.id;
+      });
+
+      const unlinked = businessPlans.filter(p => p.year === year && p.type !== 'product' && !p.account_id);
+      if (unlinked.length > 0) {
+        const updatedPlans = [];
+        for (const p of unlinked) {
+          const key = (p.customer_name || '').toLowerCase().trim();
+          const accountId = freshAccountMap[key];
+          if (accountId) {
+            updatedPlans.push({ ...p, id: `plan_${year}_${accountId}`, account_id: accountId });
+          }
+        }
+        if (updatedPlans.length > 0) {
+          const linkedIds = new Set(unlinked.map(p => p.id));
+          const remaining = businessPlans.filter(p => !linkedIds.has(p.id));
+          importBusinessPlans([...remaining.filter(p => p.year === year), ...updatedPlans]);
+        }
+      }
+
+      showToast(`마스터 동기화 완료: 신규 ${created}사 생성, ${updated}사 업데이트`, 'success');
+    } catch (err) {
+      showToast('동기화 실패: ' + err.message, 'error');
+    } finally {
+      setMasterSyncing(false);
+    }
+  };
 
   /* ══════════════════════════════════════════
      영업현황 Import (O sheet — 수주 raw data)
@@ -850,6 +1027,178 @@ export default function Settings() {
     <div>
       <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>설정</h2>
 
+      {/* ── 팀 멤버 관리 ── */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title">👥 담당자 관리</div>
+        <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+          영업 담당자를 추가/수정/삭제합니다. 로그인 화면, 필터, 고객 배정 등에 반영됩니다.
+        </p>
+
+        <div style={{ marginBottom: 12 }}>
+          <table className="data-table" style={{ fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>#</th>
+                <th>담당자명</th>
+                <th style={{ width: 80 }}>배정 고객</th>
+                <th style={{ width: 120 }}>관리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {teamMembers.map((name, idx) => (
+                <tr key={idx}>
+                  <td style={{ textAlign: 'center', color: 'var(--text3)' }}>{idx + 1}</td>
+                  <td>
+                    {editingMemberIdx === idx ? (
+                      <input
+                        type="text"
+                        value={editingMemberName}
+                        onChange={e => setEditingMemberName(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSaveEditMember()}
+                        style={{ padding: '2px 6px', fontSize: 12, width: '100%' }}
+                        autoFocus
+                      />
+                    ) : (
+                      <span style={{ fontWeight: 600 }}>{name}</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span className="score-badge" style={{ background: 'var(--bg3)' }}>
+                      {accounts.filter(a => a.sales_rep === name).length}
+                    </span>
+                  </td>
+                  <td>
+                    {editingMemberIdx === idx ? (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button className="btn btn-primary btn-sm" onClick={handleSaveEditMember}>저장</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setEditingMemberIdx(-1)}>취소</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => handleEditMember(idx)}>수정</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => handleRemoveMember(idx)}>삭제</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            type="text"
+            value={newMemberName}
+            onChange={e => setNewMemberName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAddMember()}
+            placeholder="새 담당자 이름"
+            style={{ flex: 1, padding: '6px 10px', fontSize: 12 }}
+          />
+          <button className="btn btn-primary btn-sm" onClick={handleAddMember} disabled={!newMemberName.trim()}>
+            + 담당자 추가
+          </button>
+        </div>
+      </div>
+
+      {/* ── 고객 마스터 일괄 동기화 ── */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title">🔄 고객 마스터 일괄 동기화</div>
+        <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+          사업계획 데이터를 기준으로 <strong>누락 고객 자동 생성</strong> + <strong>담당자·지역·사업형태 일괄 업데이트</strong>를 수행합니다.<br />
+          사업계획을 먼저 import한 후 실행하세요.
+        </p>
+
+        {masterSyncPreview ? (
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+              <div className="kpi accent" style={{ padding: 10 }}>
+                <div className="kpi-label">사업계획 고객</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{masterSyncPreview.plans.length}사</div>
+              </div>
+              <div className={`kpi ${masterSyncPreview.missing.length > 0 ? 'red' : 'green'}`} style={{ padding: 10 }}>
+                <div className="kpi-label">누락 (신규생성)</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{masterSyncPreview.missing.length}사</div>
+              </div>
+              <div className={`kpi ${masterSyncPreview.needUpdate.length > 0 ? '' : 'green'}`} style={{ padding: 10 }}>
+                <div className="kpi-label">업데이트 필요</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{masterSyncPreview.needUpdate.length}사</div>
+              </div>
+              <div className="kpi green" style={{ padding: 10 }}>
+                <div className="kpi-label">이미 일치</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{masterSyncPreview.alreadyOk.length}사</div>
+              </div>
+            </div>
+
+            {masterSyncPreview.missing.length > 0 && (
+              <details style={{ fontSize: 11, marginBottom: 8 }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--red)', fontWeight: 600 }}>
+                  신규 생성 대상 {masterSyncPreview.missing.length}사
+                </summary>
+                <div style={{ marginTop: 4, maxHeight: 120, overflowY: 'auto' }}>
+                  <table className="data-table" style={{ fontSize: 11 }}>
+                    <thead><tr><th>고객명</th><th>담당자</th><th>지역</th><th>사업형태</th></tr></thead>
+                    <tbody>
+                      {masterSyncPreview.missing.map((p, i) => (
+                        <tr key={i}>
+                          <td style={{ fontWeight: 600 }}>{p.customer_name}</td>
+                          <td>{p.sales_rep || '-'}</td>
+                          <td>{p.region || '-'}</td>
+                          <td>{p.biz_type || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {masterSyncPreview.needUpdate.length > 0 && (
+              <details style={{ fontSize: 11, marginBottom: 8 }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 600 }}>
+                  업데이트 대상 {masterSyncPreview.needUpdate.length}사
+                </summary>
+                <div style={{ marginTop: 4, maxHeight: 150, overflowY: 'auto' }}>
+                  <table className="data-table" style={{ fontSize: 11 }}>
+                    <thead><tr><th>고객명</th><th>항목</th><th>현재값</th><th>→</th><th>변경값</th></tr></thead>
+                    <tbody>
+                      {masterSyncPreview.needUpdate.map((item, i) => {
+                        const rows = [];
+                        if (item.repDiff) rows.push({ field: '담당자', old: item.account.sales_rep || '(비어있음)', next: item.plan.sales_rep });
+                        if (item.regionDiff) rows.push({ field: '지역', old: item.account.region || '(비어있음)', next: item.plan.region });
+                        if (item.bizDiff) rows.push({ field: '사업형태', old: item.account.business_type || '(비어있음)', next: item.plan.biz_type });
+                        if (item.countryDiff) rows.push({ field: '국가', old: item.account.country || '(비어있음)', next: item.plan.country });
+                        return rows.map((r, j) => (
+                          <tr key={`${i}-${j}`}>
+                            {j === 0 && <td rowSpan={rows.length} style={{ fontWeight: 600 }}>{item.account.company_name}</td>}
+                            <td>{r.field}</td>
+                            <td style={{ color: 'var(--text3)' }}>{r.old}</td>
+                            <td style={{ textAlign: 'center' }}>→</td>
+                            <td style={{ color: 'var(--green)', fontWeight: 600 }}>{r.next}</td>
+                          </tr>
+                        ));
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            <button
+              className="btn btn-primary"
+              onClick={handleMasterSync}
+              disabled={masterSyncing || (masterSyncPreview.missing.length === 0 && masterSyncPreview.needUpdate.length === 0)}
+            >
+              {masterSyncing ? '동기화 중...' : masterSyncPreview.missing.length === 0 && masterSyncPreview.needUpdate.length === 0 ? '모두 동기화됨 ✓' : `일괄 동기화 실행 (${masterSyncPreview.missing.length}사 생성 + ${masterSyncPreview.needUpdate.length}사 업데이트)`}
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--text3)', padding: 16, textAlign: 'center' }}>
+            사업계획이 import되지 않았습니다. 아래에서 먼저 사업계획을 import해주세요.
+          </div>
+        )}
+      </div>
+
       {/* ── 영업현황 Import ── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-title">📥 영업현황 Import (수주 데이터)</div>
@@ -859,7 +1208,7 @@ export default function Settings() {
         </p>
 
         {currentOrderImports > 0 && (
-          <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(59,130,246,.08)', borderColor: 'rgba(59,130,246,.3)' }}>
+          <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(46,125,50,.08)', borderColor: 'rgba(46,125,50,.3)' }}>
             <span>📋</span> 영업현황 수주 <strong>{currentOrderImports.toLocaleString()}건</strong> import됨
           </div>
         )}
@@ -1010,7 +1359,7 @@ export default function Settings() {
         </p>
 
         {currentFcstImports > 0 && (
-          <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(59,130,246,.08)', borderColor: 'rgba(59,130,246,.3)' }}>
+          <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(46,125,50,.08)', borderColor: 'rgba(46,125,50,.3)' }}>
             <span>📋</span> FCST 수주예측 <strong>{currentFcstImports.toLocaleString()}건</strong> import됨
           </div>
         )}
@@ -1076,6 +1425,86 @@ export default function Settings() {
         )}
       </div>
 
+      {/* ── 담당자 동기화 ── */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title">👤 사업계획 → 고객 담당자 동기화</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+          사업계획에 설정된 담당자(sales_rep)를 각 고객 카드에 일괄 반영합니다.<br />
+          고객 카드에 담당자가 비어있거나, 사업계획과 다른 경우 업데이트됩니다.
+        </div>
+        {(() => {
+          const currentYear = new Date().getFullYear();
+          const plans = businessPlans.filter(p => p.year === currentYear && p.type !== 'product' && p.sales_rep);
+          // 고객별 담당자 매핑 (account_id 또는 customer_name으로 매칭)
+          const repMap = {};
+          plans.forEach(p => {
+            if (p.account_id && !repMap[p.account_id]) {
+              repMap[p.account_id] = p.sales_rep;
+              return;
+            }
+            if (p.customer_name) {
+              const name = p.customer_name.toLowerCase().trim();
+              const acc = accounts.find(a => (a.company_name || '').toLowerCase().trim() === name);
+              if (acc && !repMap[acc.id]) repMap[acc.id] = p.sales_rep;
+            }
+          });
+          const needSync = accounts.filter(a => repMap[a.id] && a.sales_rep !== repMap[a.id]);
+          const alreadySynced = accounts.filter(a => repMap[a.id] && a.sales_rep === repMap[a.id]);
+
+          return (
+            <>
+              <div style={{ fontSize: 11, marginBottom: 8 }}>
+                사업계획 담당자 정보: <strong>{Object.keys(repMap).length}</strong>개사 |
+                이미 일치: <strong style={{ color: 'var(--green)' }}>{alreadySynced.length}</strong>개사 |
+                업데이트 필요: <strong style={{ color: needSync.length > 0 ? 'var(--red)' : 'var(--green)' }}>{needSync.length}</strong>개사
+              </div>
+              {needSync.length > 0 && (
+                <div style={{ maxHeight: 150, overflowY: 'auto', marginBottom: 10, fontSize: 11 }}>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>고객명</th>
+                        <th>현재 담당자</th>
+                        <th>→</th>
+                        <th>사업계획 담당자</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {needSync.map(a => (
+                        <tr key={a.id}>
+                          <td style={{ fontWeight: 600 }}>{a.company_name}</td>
+                          <td style={{ color: a.sales_rep ? 'var(--text2)' : 'var(--red)' }}>{a.sales_rep || '(비어있음)'}</td>
+                          <td style={{ textAlign: 'center' }}>→</td>
+                          <td style={{ color: 'var(--green)', fontWeight: 600 }}>{repMap[a.id]}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <button
+                className="btn btn-primary"
+                disabled={needSync.length === 0}
+                onClick={async () => {
+                  if (!confirm(`${needSync.length}개 고객의 담당자를 업데이트하시겠습니까?`)) return;
+                  let count = 0;
+                  for (const a of needSync) {
+                    await saveAccount({ ...a, sales_rep: repMap[a.id] });
+                    count++;
+                  }
+                  showToast(`${count}개 고객 담당자 동기화 완료`, 'success');
+                }}
+              >
+                {needSync.length > 0 ? `${needSync.length}개 고객 담당자 동기화 실행` : '모두 동기화됨 ✓'}
+              </button>
+            </>
+          );
+        })()}
+      </div>
+
+      {/* ── 데이터 스냅샷 ── */}
+      <SnapshotSection />
+
       {/* ── 등록 현황 ── */}
       <div className="card">
         <div className="card-title">📊 등록 현황</div>
@@ -1091,6 +1520,166 @@ export default function Settings() {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════
+   데이터 스냅샷 관리 컴포넌트
+   ══════════════════════════════════════ */
+function SnapshotSection() {
+  const { accounts, activityLogs, orders, contracts, forecasts, businessPlans, restoreSnapshot, showToast, fbStatus } = useAccount();
+
+  const [snapName, setSnapName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [list, setList] = useState([]);
+  const [confirmId, setConfirmId] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    try {
+      const items = await listSnapshots();
+      setList(items);
+    } catch (e) {
+      console.error('스냅샷 목록 로드 실패:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (fbStatus === 'connected') loadList();
+  }, [fbStatus, loadList]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await saveSnapshot(snapName || `백업 ${new Date().toLocaleDateString('ko-KR')}`, {
+        accounts, activityLogs, orders, contracts, forecasts, businessPlans,
+      });
+      setSnapName('');
+      showToast('스냅샷 저장 완료', 'success');
+      loadList();
+    } catch (e) {
+      showToast('스냅샷 저장 실패: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRestore = async (id) => {
+    setRestoring(true);
+    try {
+      await restoreSnapshot(id);
+      setConfirmId(null);
+      loadList();
+    } catch (e) {
+      showToast('복원 실패: ' + e.message, 'error');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('이 스냅샷을 삭제하시겠습니까?')) return;
+    try {
+      await removeSnapshot(id);
+      showToast('스냅샷 삭제 완료', 'success');
+      loadList();
+    } catch (e) {
+      showToast('삭제 실패: ' + e.message, 'error');
+    }
+  };
+
+  if (fbStatus !== 'connected') return null;
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-title">💾 데이터 스냅샷</div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+        현재 전체 데이터를 백업하고, 필요 시 특정 시점으로 복원할 수 있습니다.<br />
+        대량 작업(일괄 동기화, import 등) 전에 백업을 권장합니다.
+      </p>
+
+      {/* 저장 폼 */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+        <input
+          type="text"
+          value={snapName}
+          onChange={e => setSnapName(e.target.value)}
+          placeholder="스냅샷 이름 (예: 동기화 전 백업)"
+          style={{ flex: 1, padding: '6px 10px', fontSize: 12 }}
+        />
+        <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+          {saving ? '저장 중...' : '현재 상태 백업'}
+        </button>
+      </div>
+
+      {/* 현재 데이터 요약 */}
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <span>고객 {accounts.length}</span>
+        <span>활동로그 {activityLogs.length}</span>
+        <span>수주 {orders.length}</span>
+        <span>계약 {contracts.length}</span>
+        <span>FCST {forecasts.length}</span>
+        <span>사업계획 {businessPlans.length}</span>
+      </div>
+
+      {/* 스냅샷 목록 */}
+      {loading ? (
+        <div style={{ fontSize: 12, color: 'var(--text3)', padding: 12, textAlign: 'center' }}>로딩 중...</div>
+      ) : list.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--text3)', padding: 12, textAlign: 'center' }}>저장된 스냅샷이 없습니다</div>
+      ) : (
+        <div style={{ maxHeight: 250, overflowY: 'auto' }}>
+          <table className="data-table" style={{ fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th>이름</th>
+                <th>날짜</th>
+                <th>고객</th>
+                <th>수주</th>
+                <th>사업계획</th>
+                <th style={{ width: 120 }}>관리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(s => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.name}</td>
+                  <td>{new Date(s.createdAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                  <td style={{ textAlign: 'center' }}>{s.counts?.accounts || 0}</td>
+                  <td style={{ textAlign: 'center' }}>{s.counts?.orders || 0}</td>
+                  <td style={{ textAlign: 'center' }}>{s.counts?.businessPlans || 0}</td>
+                  <td>
+                    {confirmId === s.id ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <button className="btn btn-danger btn-sm" onClick={() => handleRestore(s.id)} disabled={restoring}>
+                          {restoring ? '복원중...' : '확인'}
+                        </button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setConfirmId(null)}>취소</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button className="btn btn-primary btn-sm" onClick={() => setConfirmId(s.id)}>↩ 복원</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(s.id)}>삭제</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {confirmId && (
+        <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(211,47,47,.08)', borderRadius: 6, fontSize: 11, color: 'var(--red)' }}>
+          ⚠️ 복원하면 현재 데이터가 스냅샷 시점으로 덮어쓰입니다. 위 "확인" 버튼을 눌러주세요.
+        </div>
+      )}
     </div>
   );
 }

@@ -6,19 +6,15 @@ import AccountList from './views/AccountList';
 import Settings from './views/Settings';
 import Report from './views/Report';
 import Progress from './views/Progress';
+import TypeGuideView from './views/TypeGuideView';
 import AccountModal from './components/AccountModal/AccountModal';
 
 function UserSelectScreen() {
-  const { login } = useAccount();
+  const { login, teamMembers } = useAccount();
 
   const users = [
     { name: 'Haksu', admin: true },
-    { name: 'Iris', admin: false },
-    { name: 'Rebecca', admin: false },
-    { name: 'Ian', admin: false },
-    { name: 'Wendy', admin: false },
-    { name: 'Dana', admin: false },
-    { name: '김지희', admin: false },
+    ...teamMembers.map(name => ({ name, admin: false })),
   ];
 
   return (
@@ -48,6 +44,7 @@ function AppContent() {
       case 'accounts': return <AccountList />;
       case 'report': return <Report />;
       case 'progress': return <Progress />;
+      case 'typeguide': return <TypeGuideView />;
       case 'settings': return <Settings />;
       default: return <Dashboard />;
     }
