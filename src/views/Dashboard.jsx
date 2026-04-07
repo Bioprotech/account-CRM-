@@ -468,44 +468,59 @@ export default function Dashboard() {
                   );
                 })()}
                 {/* 해외기타 */}
-                {classification.overseasEtc.actual > 0 && (
-                  <tr>
-                    <td style={{ fontWeight: 600 }}>
-                      🌍 해외기타
-                      <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.overseasEtc.customers.length}개사)</span>
-                    </td>
-                    <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>-</td>
-                    <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(classification.overseasEtc.actual)}</td>
-                    <td style={{ textAlign: 'right', fontSize: 10, color: 'var(--text3)' }}>계획 외</td>
-                    <td />
-                  </tr>
-                )}
+                {(() => {
+                  const target = classification.overseasEtc.target;
+                  const actual = classification.overseasEtc.actual;
+                  const p = pct(actual, target);
+                  return (target > 0 || actual > 0) ? (
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>
+                        🌍 해외기타
+                        {classification.overseasEtc.customers.length > 0 && <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.overseasEtc.customers.length}개사)</span>}
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(target)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(actual)}</td>
+                      <td style={{ textAlign: 'right' }}>{target > 0 ? <span className={`score-badge ${pctColor(p)}`}>{p}%</span> : '-'}</td>
+                      <td>{target > 0 && <div className="score-gauge" style={{ height: 10 }}><div className={`score-gauge-fill ${pctColor(p)}`} style={{ width: `${Math.min(100, p)}%` }} /></div>}</td>
+                    </tr>
+                  ) : null;
+                })()}
                 {/* 국내기타 */}
-                {classification.domesticEtc.actual > 0 && (
-                  <tr>
-                    <td style={{ fontWeight: 600 }}>
-                      🏢 국내기타
-                      <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.domesticEtc.customers.length}개사)</span>
-                    </td>
-                    <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>-</td>
-                    <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(classification.domesticEtc.actual)}</td>
-                    <td style={{ textAlign: 'right', fontSize: 10, color: 'var(--text3)' }}>계획 외</td>
-                    <td />
-                  </tr>
-                )}
+                {(() => {
+                  const target = classification.domesticEtc.target;
+                  const actual = classification.domesticEtc.actual;
+                  const p = pct(actual, target);
+                  return (target > 0 || actual > 0) ? (
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>
+                        🏢 국내기타
+                        {classification.domesticEtc.customers.length > 0 && <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.domesticEtc.customers.length}개사)</span>}
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(target)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(actual)}</td>
+                      <td style={{ textAlign: 'right' }}>{target > 0 ? <span className={`score-badge ${pctColor(p)}`}>{p}%</span> : '-'}</td>
+                      <td>{target > 0 && <div className="score-gauge" style={{ height: 10 }}><div className={`score-gauge-fill ${pctColor(p)}`} style={{ width: `${Math.min(100, p)}%` }} /></div>}</td>
+                    </tr>
+                  ) : null;
+                })()}
                 {/* 신규 */}
-                {classification.newCustomer.actual > 0 && (
-                  <tr style={{ background: 'rgba(33,150,243,.04)' }}>
-                    <td style={{ fontWeight: 600 }}>
-                      🆕 신규
-                      <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.newCustomer.customers.length}개사)</span>
-                    </td>
-                    <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>-</td>
-                    <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--accent)' }}>{fmtKRW(classification.newCustomer.actual)}</td>
-                    <td style={{ textAlign: 'right', fontSize: 10, color: 'var(--accent)' }}>신규매출</td>
-                    <td />
-                  </tr>
-                )}
+                {(() => {
+                  const target = classification.newCustomer.target;
+                  const actual = classification.newCustomer.actual;
+                  const p = pct(actual, target);
+                  return (target > 0 || actual > 0) ? (
+                    <tr style={{ background: 'rgba(33,150,243,.04)' }}>
+                      <td style={{ fontWeight: 600 }}>
+                        🆕 신규
+                        {classification.newCustomer.customers.length > 0 && <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.newCustomer.customers.length}개사)</span>}
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(target)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--accent)' }}>{fmtKRW(actual)}</td>
+                      <td style={{ textAlign: 'right' }}>{target > 0 ? <span className={`score-badge ${pctColor(p)}`}>{p}%</span> : <span style={{ fontSize: 10, color: 'var(--accent)' }}>신규매출</span>}</td>
+                      <td>{target > 0 && <div className="score-gauge" style={{ height: 10 }}><div className={`score-gauge-fill ${pctColor(p)}`} style={{ width: `${Math.min(100, p)}%` }} /></div>}</td>
+                    </tr>
+                  ) : null;
+                })()}
                 {/* 합계 */}
                 <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
                   <td>합계</td>
@@ -527,31 +542,55 @@ export default function Dashboard() {
                 {classification.overseasEtc.customers.length > 0 && (
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 4 }}>🌍 해외기타</div>
-                    {classification.overseasEtc.customers.map((c, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
-                        <span>{c.name}</span><span style={{ fontWeight: 600 }}>{fmtKRW(c.amount)}</span>
-                      </div>
-                    ))}
+                    {classification.overseasEtc.customers.map((c, i) => {
+                      const acc = c.accountId ? accounts.find(a => a.id === c.accountId) : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (c.name || '').toLowerCase().trim());
+                      return (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', cursor: acc ? 'pointer' : 'default', borderRadius: 4 }}
+                          onClick={() => acc && setEditingAccount(acc)}
+                          onMouseOver={e => acc && (e.currentTarget.style.background = 'rgba(33,150,243,.08)')}
+                          onMouseOut={e => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <span style={{ color: acc ? 'var(--accent)' : undefined, textDecoration: acc ? 'underline' : undefined }}>{c.name}</span>
+                          <span style={{ fontWeight: 600 }}>{fmtKRW(c.amount)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {classification.domesticEtc.customers.length > 0 && (
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 4 }}>🏢 국내기타</div>
-                    {classification.domesticEtc.customers.map((c, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
-                        <span>{c.name}</span><span style={{ fontWeight: 600 }}>{fmtKRW(c.amount)}</span>
-                      </div>
-                    ))}
+                    {classification.domesticEtc.customers.map((c, i) => {
+                      const acc = c.accountId ? accounts.find(a => a.id === c.accountId) : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (c.name || '').toLowerCase().trim());
+                      return (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', cursor: acc ? 'pointer' : 'default', borderRadius: 4 }}
+                          onClick={() => acc && setEditingAccount(acc)}
+                          onMouseOver={e => acc && (e.currentTarget.style.background = 'rgba(33,150,243,.08)')}
+                          onMouseOut={e => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <span style={{ color: acc ? 'var(--accent)' : undefined, textDecoration: acc ? 'underline' : undefined }}>{c.name}</span>
+                          <span style={{ fontWeight: 600 }}>{fmtKRW(c.amount)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {classification.newCustomer.customers.length > 0 && (
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--accent)' }}>🆕 신규</div>
-                    {classification.newCustomer.customers.map((c, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
-                        <span>{c.name}</span><span style={{ fontWeight: 600, color: 'var(--accent)' }}>{fmtKRW(c.amount)}</span>
-                      </div>
-                    ))}
+                    {classification.newCustomer.customers.map((c, i) => {
+                      const acc = c.accountId ? accounts.find(a => a.id === c.accountId) : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (c.name || '').toLowerCase().trim());
+                      return (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', cursor: acc ? 'pointer' : 'default', borderRadius: 4 }}
+                          onClick={() => acc && setEditingAccount(acc)}
+                          onMouseOver={e => acc && (e.currentTarget.style.background = 'rgba(33,150,243,.08)')}
+                          onMouseOut={e => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <span style={{ color: acc ? 'var(--accent)' : undefined, textDecoration: acc ? 'underline' : undefined }}>{c.name}</span>
+                          <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{fmtKRW(c.amount)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

@@ -1,0 +1,475 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Bio Protech Account CRM</title><style>
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+  body { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; max-width: 820px; margin: 0 auto; padding: 40px 50px; color: #1a1a2e; font-size: 13.5px; line-height: 1.75; }
+  h1 { font-size: 26px; border-bottom: 3px solid #0f3460; padding-bottom: 12px; margin-top: 44px; color: #0f3460; }
+  h2 { font-size: 20px; color: #0f3460; border-bottom: 1px solid #ccc; padding-bottom: 6px; margin-top: 38px; }
+  h3 { font-size: 16px; color: #16213e; margin-top: 26px; }
+  h4 { font-size: 14px; color: #333; margin-top: 20px; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 12.5px; }
+  th, td { border: 1px solid #d0d0d0; padding: 8px 11px; text-align: left; }
+  th { background: #e8eef4; font-weight: 600; color: #0f3460; }
+  tr:nth-child(even) { background: #f8fafb; }
+  code { background: #eef1f6; padding: 2px 6px; border-radius: 3px; font-size: 12px; font-family: 'Consolas', monospace; }
+  pre { background: #f4f6f9; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; border: 1px solid #e0e0e0; }
+  pre code { background: none; padding: 0; }
+  blockquote { border-left: 4px solid #0f3460; margin: 14px 0; padding: 10px 18px; background: #f5f7ff; color: #444; border-radius: 0 6px 6px 0; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 32px 0; }
+  strong { color: #0f3460; }
+  ul, ol { padding-left: 26px; }
+  li { margin: 4px 0; }
+  @media print { body { padding: 20px; } h1,h2 { page-break-after: avoid; } table,pre { page-break-inside: avoid; } }
+</style></head><body><h1>Bio Protech Account CRM — 개발 컨셉 및 시스템 설계서</h1>
+<blockquote>
+<p><strong>Version</strong>: 1.0 (Pilot) | 2026년 4월
+<strong>접속 URL</strong>: <a href="https://bioprotech-account-crm.web.app">https://bioprotech-account-crm.web.app</a>
+<strong>Pipeline CRM</strong>: <a href="https://bioprotech-crm.web.app">https://bioprotech-crm.web.app</a></p>
+</blockquote>
+<hr>
+<h2>1. 프로젝트 배경 및 목적</h2>
+<h3>1.1 왜 Account CRM이 필요한가?</h3>
+<p>Bio Protech는 이미 <strong>Pipeline CRM</strong>(신규 딜 관리)을 성공적으로 운영하고 있습니다.
+그러나 영업의 매출 중 상당 부분은 <strong>기존 거래 고객의 재구매와 업셀링</strong>에서 발생합니다.</p>
+<p>기존 고객 관리에서 발견된 핵심 과제:</p>
+<ul>
+<li>고객 정보가 개인별로 관리되어 <strong>조직적 지식 축적이 안 됨</strong></li>
+<li>주니어 AM들이 <strong>고객에게 무엇을 물어야 하는지 모름</strong></li>
+<li>사업계획 미달 시 <strong>왜 Gap이 발생했는지</strong> 원인 분석이 부재</li>
+<li>고객 유형별 차별화된 전략 접근이 체계화되지 않음</li>
+</ul>
+<h3>1.2 Account CRM의 핵심 미션</h3>
+<pre><code>&quot;숫자 관리를 넘어, 고객 인텔리전스를 축적하고
+AM이 다음에 무엇을 해야 하는지 가이드하는 시스템&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>기존 방식</th>
+<th>Account CRM</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>엑셀로 고객별 매출만 추적</td>
+<td>매출 + 고객정보 + 활동 + Gap원인을 통합 관리</td>
+</tr>
+<tr>
+<td>Gap 발생 시 &quot;노력하겠다&quot;로 끝</td>
+<td>원인 태깅 → 기회 파이프라인 → 액션 플랜</td>
+</tr>
+<tr>
+<td>AM 역량에 의존</td>
+<td>유형가이드 + Score 체크리스트로 체계적 접근</td>
+</tr>
+<tr>
+<td>월간 보고가 숫자 나열</td>
+<td>원인 분석 + AM 활동 품질 + 기회 전망 포함</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>2. 시스템 아키텍처</h2>
+<h3>2.1 기술 스택</h3>
+<table>
+<thead>
+<tr>
+<th>구분</th>
+<th>기술</th>
+<th>선택 이유</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>프론트엔드</strong></td>
+<td>React 19 + Vite</td>
+<td>Pipeline CRM과 동일, 빠른 개발</td>
+</tr>
+<tr>
+<td><strong>데이터베이스</strong></td>
+<td>Firebase Firestore</td>
+<td>실시간 동기화, 멀티유저, 무료</td>
+</tr>
+<tr>
+<td><strong>로컬 캐시</strong></td>
+<td>localStorage</td>
+<td>오프라인 초기 로드 속도 향상</td>
+</tr>
+<tr>
+<td><strong>호스팅</strong></td>
+<td>Firebase Hosting</td>
+<td>Pipeline CRM과 통합 관리</td>
+</tr>
+<tr>
+<td><strong>스타일</strong></td>
+<td>Custom CSS + CSS Variables</td>
+<td>Tailwind 없이 경량화, 디자인 일관성</td>
+</tr>
+<tr>
+<td><strong>Excel</strong></td>
+<td>SheetJS (xlsx)</td>
+<td>데이터 Import/Export</td>
+</tr>
+</tbody></table>
+<h3>2.2 데이터 아키텍처</h3>
+<pre><code>Firebase 프로젝트: bioprotech-crm (Pipeline CRM과 공유)
+│
+├── [Pipeline CRM 컬렉션]
+│   └── customers          — 신규 딜 파이프라인
+│
+└── [Account CRM 컬렉션]
+    ├── accounts           — 기존 고객 마스터 (Intelligence Score 내장)
+    ├── activity_logs      — 활동 로그
+    ├── orders             — 수주 이력
+    ├── contracts          — 가격/계약 정보
+    ├── forecasts          — 수주 예측
+    └── business_plans     — 사업계획 (연간 목표)
+</code></pre>
+<h3>2.3 데이터 저장 전략</h3>
+<pre><code>Firebase Firestore = 단일 진실 소스 (Single Source of Truth)
+  ↕ 실시간 동기화
+localStorage = 빠른 초기 로드용 캐시
+  → 키: bioprotech_account_crm_v1
+</code></pre>
+<ul>
+<li>앱 시작 시 localStorage에서 먼저 로드 → 즉시 화면 표시</li>
+<li>Firebase에서 최신 데이터 수신 → localStorage 업데이트</li>
+<li>오프라인 시에도 최근 데이터로 조회 가능</li>
+</ul>
+<hr>
+<h2>3. 핵심 설계 컨셉</h2>
+<h3>3.1 Intelligence Score — 고객 이해도 정량화</h3>
+<p><strong>컨셉</strong>: AM이 고객에 대해 &quot;얼마나 알고 있는가&quot;를 수치화</p>
+<p>기존의 스코어링이 주관적 평가에 의존했다면, Intelligence Score는 <strong>구체적 정보 보유 여부</strong>를 체크리스트로 측정합니다.</p>
+<pre><code>6개 카테고리 (가중치 합계 = 100%)
+├── ① 기본정보 완성도  (10%) — 설립연도, 직원수, 매출, DM, 조직구조
+├── ② 시장·채널 이해도  (15%) — 시장규모, 성장률, 유통, 소비량
+├── ③ 경쟁사 파악      (20%) — 경쟁제품, 가격, 점유율, 전환가능성
+├── ④ Pain &amp; Needs    (25%) — Pain Point, 미충족니즈, 구매장벽, 우선순위
+├── ⑤ 거래조건 파악    (20%) — 단가, 결제조건, 계약만료, MOQ, 할인
+└── ⑥ 관계 깊이       (10%) — DM접근, 방문이력, 신뢰도, 다채널
+</code></pre>
+<p><strong>설계 의도</strong>:</p>
+<ul>
+<li>Pain &amp; Needs(25%)와 경쟁사 파악(20%)에 높은 가중치 → <strong>영업에 직접 영향을 주는 정보</strong>를 우선 수집하도록 유도</li>
+<li>단순 체크가 아닌 <strong>텍스트/숫자 입력</strong> → 실제 정보를 기록해야 체크됨</li>
+<li>Score가 낮은 고객 = 아직 파악하지 못한 정보가 많다 → <strong>다음 미팅에서 물어볼 것</strong> 명확화</li>
+</ul>
+<h3>3.2 GAP 분석 — 숫자를 넘어 원인까지</h3>
+<p><strong>컨셉</strong>: &quot;얼마나 부족한가&quot; → &quot;왜 부족한가&quot; → &quot;어떻게 만회할 것인가&quot;</p>
+<pre><code>[사업계획] ←비교→ [수주실적]
+     ↓
+  GAP 발생
+     ↓
+  원인 태깅 (8가지)
+  ├── 수요 감소     — 시장/고객 소비 위축
+  ├── 경쟁 이탈     — 경쟁사 진입/점유율 하락
+  ├── 가격 장벽     — 단가 불만, 예산 제약
+  ├── 채널 문제     — 유통 변화, 재고 적체
+  ├── 인증/규제     — 인증 만료, 규제 변경
+  ├── 관계 약화     — 담당자 교체, 미접촉
+  ├── 시점 차이     — 발주 지연, 예산 이월
+  └── 내부 이슈     — 납기/품질/생산 문제
+     ↓
+  기회 파이프라인 (6유형)
+  ├── 업셀링        — 기존 품목 물량 확대
+  ├── 크로스셀링     — 타 품목 신규 도입
+  ├── 신규 입찰      — 입찰 참여 기회
+  ├── 계약 갱신      — 조건 개선 기회
+  ├── 가격구조 개선   — 볼륨/패키지 딜
+  └── 신규 채널      — 유통 확대
+     ↓
+  가중금액 = 예상금액 × 수주확률
+     ↓
+  월별 액션 플랜 (3~5개)
+</code></pre>
+<p><strong>설계 의도</strong>:</p>
+<ul>
+<li>원인을 태깅함으로써 <strong>조직 차원의 패턴</strong>을 파악 (예: &quot;경쟁 이탈이 전체 Gap의 40%&quot;)</li>
+<li>기회 파이프라인에 <strong>확률을 부여</strong>하여 현실적인 만회 전망 산출</li>
+<li>액션 플랜 실행률을 추적하여 <strong>AM의 활동 품질</strong> 측정</li>
+<li>월간 리포트에서 이 모든 데이터를 자동 집계하여 <strong>깊이 있는 분석 제공</strong></li>
+</ul>
+<h3>3.3 고객 유형 가이드 — AM 코칭 시스템</h3>
+<p><strong>컨셉</strong>: 고객 유형별로 &quot;이렇게 접근하세요&quot;를 체계적으로 안내</p>
+<table>
+<thead>
+<tr>
+<th>유형</th>
+<th>핵심 전략</th>
+<th>리스크 행동</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>OEM/Private Label</strong></td>
+<td>기술 파트너십 구축, 장기 계약</td>
+<td>가격 중심 대화 지양</td>
+</tr>
+<tr>
+<td><strong>Multiple Order</strong></td>
+<td>재구매 주기 관리, 볼륨 확대</td>
+<td>한 품목에만 집중</td>
+</tr>
+<tr>
+<td><strong>Single Order</strong></td>
+<td>재구매 전환, 추가 니즈 발굴</td>
+<td>단건 거래로 끝내기</td>
+</tr>
+<tr>
+<td><strong>입찰형</strong></td>
+<td>입찰 일정 선제 파악, 스펙 반영</td>
+<td>가격만으로 승부</td>
+</tr>
+<tr>
+<td><strong>가격민감형</strong></td>
+<td>가치 제안, 총비용 관점 전환</td>
+<td>무조건 가격 인하</td>
+</tr>
+</tbody></table>
+<p><strong>설계 의도</strong>:</p>
+<ul>
+<li>주니어 AM이 고객 유형에 맞는 전략을 즉시 참고</li>
+<li>유형별 체크리스트(5항목)로 필수 관리 사항 누락 방지</li>
+<li>체크리스트 진행률을 대시보드에서 모니터링</li>
+</ul>
+<h3>3.4 활동 로그 — 모든 고객 접점의 기록</h3>
+<p><strong>컨셉</strong>: 고객과의 모든 접점을 유형화하여 기록, 활동 품질 측정의 기반</p>
+<pre><code>12가지 이슈 유형
+├── 일반컨택 / 영업미팅 / VOC수집 / 시장정보수집
+├── 가격협의 / 계약갱신 / 입찰
+├── 품질클레임 / 샘플요청 / 규제·인증
+├── 수주활동 (세부: 견적발송/오더접수/PO접수/선적완료)
+└── 크로스셀링
+</code></pre>
+<p><strong>설계 의도</strong>:</p>
+<ul>
+<li>유형별 분류로 <strong>어떤 활동에 시간을 쓰고 있는지</strong> 파악</li>
+<li>수주활동에 세부 유형과 예상 금액을 넣어 <strong>파이프라인 가시성</strong> 확보</li>
+<li>Open/진행중/완료 상태 관리로 <strong>후속 조치 누락 방지</strong></li>
+<li>유형가이드와 연계한 <strong>리스크 경고</strong> (예: OEM 고객에게 가격협의 시 경고)</li>
+</ul>
+<hr>
+<h2>4. 화면 구성 및 기능 맵</h2>
+<h3>4.1 전체 메뉴 구조</h3>
+<pre><code>Account CRM
+├── 대시보드        — KPI + 알람 + 현황 요약
+├── 고객 목록       — 필터링 + 테이블 + 상세 모달
+│   └── 고객 상세 모달 (9개 탭)
+│       ├── 기본정보     — 회사/연락처/제품/유형
+│       ├── Score       — Intelligence Score 체크리스트
+│       ├── Activity    — 활동 로그 타임라인
+│       ├── 수주이력     — 확정 수주 기록
+│       ├── GAP분석     — 원인분석 + 기회 파이프라인
+│       ├── 가격·계약    — 제품별 단가/조건
+│       ├── FCST       — 분기 예측 + 트렌드
+│       ├── 크로스셀링   — 추가 제품 기회
+│       └── 유형가이드   — 유형별 전략 + 체크리스트
+├── 리포트          — 주간/월간 종합 + 심층 GAP 분석
+├── 진도관리        — 사업계획 대비 월별 진도
+└── 설정           — 데이터 Import/Export
+</code></pre>
+<h3>4.2 대시보드 설계</h3>
+<table>
+<thead>
+<tr>
+<th>영역</th>
+<th>표시 내용</th>
+<th>목적</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>KPI 카드 (5개)</td>
+<td>전체 고객수, 평균 Score, 월간 활동, Open 이슈, YTD 달성률</td>
+<td>핵심 지표 한눈에 파악</td>
+</tr>
+<tr>
+<td>긴급 알람</td>
+<td>Score &lt;50% + 미접촉 30일</td>
+<td>즉시 대응 필요 고객 식별</td>
+</tr>
+<tr>
+<td>알람 목록</td>
+<td>계약만료, 재구매예상, 유형관리</td>
+<td>선제적 관리 포인트</td>
+</tr>
+<tr>
+<td>유형별 진행률</td>
+<td>체크리스트 달성률 by 유형</td>
+<td>유형 전략 실행 모니터링</td>
+</tr>
+<tr>
+<td>지역/담당/사업형태/품목별</td>
+<td>목표 vs 실적 비교</td>
+<td>다차원 실적 분석</td>
+</tr>
+</tbody></table>
+<h3>4.3 리포트 — 심층 GAP 분석 (월간)</h3>
+<p>월간 리포트에 포함되는 4개 GAP 분석 섹션:</p>
+<table>
+<thead>
+<tr>
+<th>섹션</th>
+<th>내용</th>
+<th>경영 인사이트</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GAP 원인 분석</td>
+<td>원인별 건수/영향금액, TOP 3</td>
+<td>&quot;우리의 핵심 문제는 무엇인가&quot;</td>
+</tr>
+<tr>
+<td>고객별 심층 분석</td>
+<td>Gap 상위 10개사 + Score + 미비정보</td>
+<td>&quot;어디에 집중해야 하는가&quot;</td>
+</tr>
+<tr>
+<td>기회 파이프라인</td>
+<td>유형별 기회 + 가중금액 합계</td>
+<td>&quot;만회 가능성은 얼마인가&quot;</td>
+</tr>
+<tr>
+<td>AM별 활동 품질</td>
+<td>컨택빈도/Score/달성률/액션실행률</td>
+<td>&quot;누가 어떤 지원이 필요한가&quot;</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>5. 권한 및 보안</h2>
+<h3>5.1 사용자 구분</h3>
+<table>
+<thead>
+<tr>
+<th>역할</th>
+<th>사용자</th>
+<th>권한</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>관리자</td>
+<td>Haksu</td>
+<td>전체 고객 편집, 설정 접근, 데이터 Import</td>
+</tr>
+<tr>
+<td>AM</td>
+<td>Iris, Rebecca, Ian 등</td>
+<td>본인 담당 고객만 편집, 전체 조회 가능</td>
+</tr>
+</tbody></table>
+<h3>5.2 데이터 접근 규칙</h3>
+<ul>
+<li>모든 사용자가 전체 고객을 <strong>조회</strong> 가능 (투명성)</li>
+<li><strong>편집</strong>은 본인 담당 고객 또는 담당자 미배정 고객만 가능</li>
+<li>설정 메뉴(데이터 Import/Export)는 관리자만 접근</li>
+</ul>
+<hr>
+<h2>6. Pipeline CRM과의 관계</h2>
+<pre><code>Pipeline CRM                    Account CRM
+(신규 딜 관리)                   (기존 고객 관리)
+─────────────                   ─────────────
+LEAD → Qualification →          계정등록 → 정보축적 →
+Proposal → Evaluation →         활동관리 → GAP분석 →
+Closing → Retention             재구매/업셀링
+         ↓                              ↑
+    신규 딜 수주 완료  ──────→  기존 고객으로 전환
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>구분</th>
+<th>Pipeline CRM</th>
+<th>Account CRM</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>대상</strong></td>
+<td>신규 딜</td>
+<td>기존 거래 고객</td>
+</tr>
+<tr>
+<td><strong>목표</strong></td>
+<td>딜 클로징</td>
+<td>관계 유지, 재구매, 업셀링</td>
+</tr>
+<tr>
+<td><strong>단계</strong></td>
+<td>6단계 파이프라인</td>
+<td>Intelligence Score + GAP 관리</td>
+</tr>
+<tr>
+<td><strong>Firebase</strong></td>
+<td>같은 프로젝트, 컬렉션 분리</td>
+<td>같은 프로젝트, 컬렉션 분리</td>
+</tr>
+<tr>
+<td><strong>공유 데이터</strong></td>
+<td>—</td>
+<td>사업계획 (business_plans)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>7. 향후 확장 방향</h2>
+<h3>Phase 2 (계획)</h3>
+<ul>
+<li>Pipeline CRM → Account CRM 자동 전환 (Retention 단계 연동)</li>
+<li>커스텀 도메인 연결</li>
+<li>알림 기능 (이메일/슬랙)</li>
+<li>고객 세그먼트 분석 (RFM 등)</li>
+</ul>
+<h3>Phase 3 (검토)</h3>
+<ul>
+<li>AI 기반 다음 액션 추천</li>
+<li>자동 리포트 생성 및 이메일 발송</li>
+<li>고객 건강도(Health Score) 예측 모델</li>
+<li>모바일 앱 또는 PWA</li>
+</ul>
+<hr>
+<h2>8. 용어 정의</h2>
+<table>
+<thead>
+<tr>
+<th>용어</th>
+<th>정의</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Intelligence Score</strong></td>
+<td>고객에 대한 정보 파악 수준 (0~100%), 6개 카테고리 가중 합산</td>
+</tr>
+<tr>
+<td><strong>GAP</strong></td>
+<td>사업계획 목표 대비 수주 실적 차이 (부족 금액)</td>
+</tr>
+<tr>
+<td><strong>GAP 원인 태깅</strong></td>
+<td>수주 미달의 근본 원인을 8가지로 분류하여 기록</td>
+</tr>
+<tr>
+<td><strong>기회 파이프라인</strong></td>
+<td>GAP을 만회할 수 있는 잠재 수주 기회 목록</td>
+</tr>
+<tr>
+<td><strong>가중금액</strong></td>
+<td>예상금액 x 수주확률 = 실현 가능 금액 추정치</td>
+</tr>
+<tr>
+<td><strong>액션 플랜</strong></td>
+<td>월간 고객별 구체적 실행 항목 (3~5개)</td>
+</tr>
+<tr>
+<td><strong>유형가이드</strong></td>
+<td>고객 사업형태별 최적 영업 전략 및 체크리스트</td>
+</tr>
+<tr>
+<td><strong>크로스셀링</strong></td>
+<td>기존 거래 품목 외 타 품목을 추가 제안하는 영업 활동</td>
+</tr>
+<tr>
+<td><strong>YTD</strong></td>
+<td>Year-to-Date, 연초~현재까지 누적 기준</td>
+</tr>
+<tr>
+<td><strong>DM</strong></td>
+<td>Decision Maker, 구매 의사결정권자</td>
+</tr>
+<tr>
+<td><strong>KAM</strong></td>
+<td>Key Account Management, 핵심 고객 관리 방법론</td>
+</tr>
+</tbody></table>
+</body></html>

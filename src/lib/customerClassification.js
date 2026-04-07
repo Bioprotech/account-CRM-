@@ -1,14 +1,22 @@
 /**
  * 고객 분류 체계
  *
- * 1. 기존 고객 — 사업계획에 포함된 비병원 고객 (개별 목표 vs 실적)
- * 2. 대학병원 — 고객명에 병원/의료원 포함 → 목표+실적 합산 1행
- * 3. 해외기타 — 계획 외 + 25년 이력 有 + 해외
- * 4. 국내기타 — 계획 외 + 25년 이력 有 + 국내 비병원
- * 5. 신규   — 25년 이력 無 + 26년 첫 수주
+ * 1. 기존 고객 — 사업계획에 포함된 비병원, 비버킷 고객 (개별 목표 vs 실적)
+ * 2. 대학병원 — 직판영업 목표 + 병원명 고객 실적 통합
+ * 3. 해외기타 — "해외기타" 사업계획 목표 + 계획 외 해외 고객 실적
+ * 4. 국내기타 — "국내 기타" 사업계획 목표 + 계획 외 국내 비병원 실적
+ * 5. 신규   — "국내 신규" 사업계획 목표 + 25년 이력 無 고객 실적
  */
 
 const HOSPITAL_KEYWORDS = ['병원', '의료원'];
+
+// 버킷(통합) 카테고리 매핑 — 사업계획 customer_name → 분류 카테고리
+const BUCKET_PLAN_NAMES = {
+  '해외기타': 'overseasEtc',
+  '직판영업': 'hospital',
+  '국내 신규': 'newCustomer',
+  '국내 기타': 'domesticEtc',
+};
 
 // 국내 지역 판별
 const DOMESTIC_REGIONS = ['한국', '국내', 'Korea', 'Domestic', ''];
@@ -20,15 +28,13 @@ export function isHospital(name) {
 }
 
 export function isDomestic(account) {
-  // 국가나 지역에서 국내 여부 판별
   const region = (account.region || '').trim();
   const country = (account.country || '').trim();
 
-  // 명시적 해외 지역이면 해외
-  const overseasRegions = ['북미', '중남미', '유럽', '아시아', '중동', '아프리카', 'CIS'];
+  const overseasRegions = ['북미', '중남미', '유럽', '아시아', '중동', '아프리카', 'CIS',
+    'N.America', 'Latin America', 'Europe', 'Asia', 'Middle East', 'Africa'];
   if (overseasRegions.includes(region)) return false;
 
-  // 한국 명시
   if (DOMESTIC_REGIONS.includes(region) && region) return true;
   if (DOMESTIC_COUNTRIES.includes(country) && country) return true;
 
@@ -39,6 +45,18 @@ export function isDomestic(account) {
 }
 
 /**
+ * 사업계획 customer_name이 버킷 카테고리인지 확인
+ */
+function getBucketCategory(customerName) {
+  if (!customerName) return null;
+  const trimmed = customerName.trim();
+  for (const [name, cat] of Object.entries(BUCKET_PLAN_NAMES)) {
+    if (trimmed === name || trimmed.toLowerCase() === name.toLowerCase()) return cat;
+  }
+  return null;
+}
+
+/**
  * 전체 고객/주문/사업계획을 5개 카테고리로 분류
  *
  * @param {object} params
@@ -46,48 +64,68 @@ export function isDomestic(account) {
  * @param {Array} params.customerPlans - 올해 사업계획 (type !== 'product')
  * @param {Array} params.yearOrders - 올해 수주 목록
  * @param {Set<string>} params.priorYearCustomers - 전년도(2025) 수주 고객명 Set (lowercase trimmed)
- * @returns {object} { existing, hospital, overseasEtc, domesticEtc, newCustomer, hospitalAccounts }
+ * @returns {object} { existing, hospital, overseasEtc, domesticEtc, newCustomer }
  */
 export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYearCustomers }) {
   const priorSet = priorYearCustomers || new Set();
 
-  // 사업계획 고객명 Set
-  const planNameSet = new Set();
+  // ── 버킷 플랜 분리 ──
+  const bucketPlans = { hospital: [], overseasEtc: [], domesticEtc: [], newCustomer: [] };
+  const regularPlans = []; // 기존 고객용 (비버킷, 비병원)
+
   customerPlans.forEach(p => {
-    if (p.customer_name) planNameSet.add(p.customer_name.toLowerCase().trim());
+    const bucket = getBucketCategory(p.customer_name);
+    if (bucket) {
+      bucketPlans[bucket].push(p);
+      return;
+    }
+    // 병원명 고객은 hospital 버킷으로
+    if (isHospital(p.customer_name)) {
+      bucketPlans.hospital.push(p);
+      return;
+    }
+    regularPlans.push(p);
   });
 
-  // 사업계획에 있는 고객 중 병원인 것
-  const hospitalPlanNames = new Set();
-  customerPlans.forEach(p => {
-    if (p.customer_name && isHospital(p.customer_name)) {
-      hospitalPlanNames.add(p.customer_name.toLowerCase().trim());
+  // 사업계획 고객명 Set (버킷 제외, 실제 고객만)
+  const planNameSet = new Set();
+  regularPlans.forEach(p => {
+    if (p.customer_name) planNameSet.add(p.customer_name.toLowerCase().trim());
+  });
+  // 병원 플랜 이름도 추가 (병원 실적 매칭용)
+  bucketPlans.hospital.forEach(p => {
+    if (p.customer_name && !getBucketCategory(p.customer_name)) {
+      planNameSet.add(p.customer_name.toLowerCase().trim());
     }
   });
 
-  // --- 1. 기존 고객 (사업계획 有 + 비병원) ---
-  const existingPlans = customerPlans.filter(p => {
-    const name = (p.customer_name || '').toLowerCase().trim();
-    return !isHospital(p.customer_name);
-  });
+  // ── 버킷별 목표 합산 ──
+  function sumBucketTarget(plans) {
+    return plans.reduce((s, p) => s + (p.annual_target || 0), 0);
+  }
+  function sumBucketMonthTargets(plans) {
+    const mt = {};
+    plans.forEach(p => {
+      if (p.targets) {
+        Object.entries(p.targets).forEach(([m, v]) => {
+          mt[m] = (mt[m] || 0) + v;
+        });
+      }
+    });
+    return mt;
+  }
 
-  // --- 2. 대학병원 (병원명 고객 모두 통합) ---
-  // 병원 계정: 사업계획에 있든 없든 모든 병원
+  // --- 1. 기존 고객 (버킷/병원 제외) ---
+  const existingTarget = regularPlans.reduce((s, p) => s + (p.annual_target || 0), 0);
+
+  // --- 2. 대학병원 ---
+  const hospitalTarget = sumBucketTarget(bucketPlans.hospital);
+  const hospitalMonthTargets = sumBucketMonthTargets(bucketPlans.hospital);
+
+  // 병원 계정 ID
   const hospitalAccountIds = new Set();
   accounts.forEach(a => {
     if (isHospital(a.company_name)) hospitalAccountIds.add(a.id);
-  });
-
-  // 병원 사업계획 합산
-  const hospitalPlans = customerPlans.filter(p => isHospital(p.customer_name));
-  const hospitalTarget = hospitalPlans.reduce((s, p) => s + (p.annual_target || 0), 0);
-  const hospitalMonthTargets = {};
-  hospitalPlans.forEach(p => {
-    if (p.targets) {
-      Object.entries(p.targets).forEach(([m, v]) => {
-        hospitalMonthTargets[m] = (hospitalMonthTargets[m] || 0) + v;
-      });
-    }
   });
 
   // 병원 수주 합산
@@ -97,16 +135,37 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
   });
   const hospitalActual = hospitalOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
 
-  // --- 3~5. 사업계획에 없는 고객 분류 ---
-  // 사업계획에 없는 수주 (비병원)
+  // 병원 고객명 목록
+  const hospitalNames = [...new Set([
+    ...bucketPlans.hospital.filter(p => !getBucketCategory(p.customer_name)).map(p => p.customer_name),
+    ...hospitalOrders.map(o => o.customer_name),
+  ].filter(Boolean))];
+
+  // --- 3. 해외기타 목표 ---
+  const overseasEtcTarget = sumBucketTarget(bucketPlans.overseasEtc);
+  const overseasEtcMonthTargets = sumBucketMonthTargets(bucketPlans.overseasEtc);
+
+  // --- 4. 국내기타 목표 ---
+  const domesticEtcTarget = sumBucketTarget(bucketPlans.domesticEtc);
+  const domesticEtcMonthTargets = sumBucketMonthTargets(bucketPlans.domesticEtc);
+
+  // --- 5. 신규 목표 ---
+  const newCustomerTarget = sumBucketTarget(bucketPlans.newCustomer);
+  const newCustomerMonthTargets = sumBucketMonthTargets(bucketPlans.newCustomer);
+
+  // ── 계획 외 수주 분류 (비병원, 비버킷, 비기존) ──
   const nonPlanOrders = yearOrders.filter(o => {
     const name = (o.customer_name || '').toLowerCase().trim();
+    // 기존 고객 플랜에 매칭되면 제외
     if (planNameSet.has(name)) return false;
+    // 병원이면 이미 hospital에서 처리
     if (isHospital(o.customer_name)) return false;
+    // 버킷 이름이면 제외
+    if (getBucketCategory(o.customer_name)) return false;
     return true;
   });
 
-  // 고객별로 그룹핑
+  // 고객별 그룹핑
   const nonPlanByCustomer = {};
   nonPlanOrders.forEach(o => {
     const name = (o.customer_name || '').toLowerCase().trim();
@@ -141,43 +200,48 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
     if (!isPrior) {
       // 신규
       newCustomerActual += amount;
-      newCustomers.push({ name: info.name, amount });
+      newCustomers.push({ name: info.name, amount, accountId: info.account?.id || null });
     } else if (domestic) {
       // 국내기타
       domesticEtcActual += amount;
-      domesticEtcCustomers.push({ name: info.name, amount });
+      domesticEtcCustomers.push({ name: info.name, amount, accountId: info.account?.id || null });
     } else {
       // 해외기타
       overseasEtcActual += amount;
-      overseasEtcCustomers.push({ name: info.name, amount });
+      overseasEtcCustomers.push({ name: info.name, amount, accountId: info.account?.id || null });
     }
   });
 
   return {
     existing: {
-      plans: existingPlans,
-      // 기존 고객의 수주는 Dashboard에서 개별 매칭하므로 여기서는 합산만
-      target: existingPlans.reduce((s, p) => s + (p.annual_target || 0), 0),
+      plans: regularPlans,
+      target: existingTarget,
     },
     hospital: {
       target: hospitalTarget,
       actual: hospitalActual,
       monthTargets: hospitalMonthTargets,
-      plans: hospitalPlans,
+      plans: bucketPlans.hospital,
       orders: hospitalOrders,
       accountIds: hospitalAccountIds,
-      names: [...new Set([...hospitalPlans.map(p => p.customer_name), ...hospitalOrders.map(o => o.customer_name)].filter(Boolean))],
+      names: hospitalNames,
     },
     overseasEtc: {
+      target: overseasEtcTarget,
       actual: overseasEtcActual,
+      monthTargets: overseasEtcMonthTargets,
       customers: overseasEtcCustomers,
     },
     domesticEtc: {
+      target: domesticEtcTarget,
       actual: domesticEtcActual,
+      monthTargets: domesticEtcMonthTargets,
       customers: domesticEtcCustomers,
     },
     newCustomer: {
+      target: newCustomerTarget,
       actual: newCustomerActual,
+      monthTargets: newCustomerMonthTargets,
       customers: newCustomers,
     },
   };
