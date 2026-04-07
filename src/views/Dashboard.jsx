@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { REGIONS, CUSTOMER_TYPE_GUIDE } from '../lib/constants';
 import { daysSince, scoreColorClass } from '../lib/utils';
+import { classifyCustomers, loadPriorYearCustomers } from '../lib/customerClassification';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -76,6 +77,18 @@ export default function Dashboard() {
     [myOrders]
   );
   const hasPlan = customerPlans.length > 0;
+
+  // 고객 분류 (기존/대학병원/해외기타/국내기타/신규)
+  const priorYearCustomers = useMemo(() => loadPriorYearCustomers(), []);
+  const classification = useMemo(() => {
+    if (!hasPlan && yearOrders.length === 0) return null;
+    return classifyCustomers({
+      accounts: myAccounts.length > 0 ? myAccounts : accounts,
+      customerPlans,
+      yearOrders,
+      priorYearCustomers,
+    });
+  }, [accounts, myAccounts, customerPlans, yearOrders, priorYearCustomers, hasPlan]);
 
   // customer_name → plan 매핑 (account_id가 없는 plans도 매칭하기 위함)
   const planLookup = useMemo(() => {
@@ -385,6 +398,167 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* 매출 분류별 현황 */}
+      {classification && hasPlan && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-title">📊 사업계획 YTD 진도</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div className="kpi accent" style={{ padding: 10 }}>
+              <div className="kpi-label">연간 목표</div>
+              <div className="kpi-value" style={{ fontSize: 16 }}>{fmtKRW(stats.annualTarget)}</div>
+            </div>
+            <div className="kpi" style={{ padding: 10 }}>
+              <div className="kpi-label">YTD 목표</div>
+              <div className="kpi-value" style={{ fontSize: 16 }}>{fmtKRW(stats.ytdTarget)}</div>
+            </div>
+            <div className={`kpi ${pctColor(pct(stats.ytdActual, stats.ytdTarget))}`} style={{ padding: 10 }}>
+              <div className="kpi-label">YTD 실적 ({pct(stats.ytdActual, stats.ytdTarget)}%)</div>
+              <div className="kpi-value" style={{ fontSize: 16 }}>{fmtKRW(stats.ytdActual)}</div>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>구분</th>
+                  <th style={{ textAlign: 'right' }}>연간 목표</th>
+                  <th style={{ textAlign: 'right' }}>YTD 실적</th>
+                  <th style={{ textAlign: 'right' }}>달성률</th>
+                  <th style={{ width: 100 }}>진도</th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* 기존 고객 */}
+                {(() => {
+                  const target = classification.existing.target;
+                  const actual = yearOrders
+                    .filter(o => {
+                      const name = (o.customer_name || '').toLowerCase().trim();
+                      return classification.existing.plans.some(p => (p.customer_name || '').toLowerCase().trim() === name);
+                    })
+                    .filter(o => !classification.hospital.accountIds.has(o.account_id))
+                    .reduce((s, o) => s + (o.order_amount || 0), 0);
+                  const p = pct(actual, target);
+                  return (
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>기존 고객</td>
+                      <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(target)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(actual)}</td>
+                      <td style={{ textAlign: 'right' }}><span className={`score-badge ${pctColor(p)}`}>{p}%</span></td>
+                      <td><div className="score-gauge" style={{ height: 10 }}><div className={`score-gauge-fill ${pctColor(p)}`} style={{ width: `${Math.min(100, p)}%` }} /></div></td>
+                    </tr>
+                  );
+                })()}
+                {/* 대학병원 */}
+                {(() => {
+                  const { target, actual } = classification.hospital;
+                  const p = pct(actual, target);
+                  return (
+                    <tr style={{ background: 'rgba(46,125,50,.04)' }}>
+                      <td style={{ fontWeight: 600 }}>
+                        🏥 대학병원
+                        <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.hospital.names.length}개)</span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(target)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(actual)}</td>
+                      <td style={{ textAlign: 'right' }}>{target > 0 ? <span className={`score-badge ${pctColor(p)}`}>{p}%</span> : '-'}</td>
+                      <td>{target > 0 && <div className="score-gauge" style={{ height: 10 }}><div className={`score-gauge-fill ${pctColor(p)}`} style={{ width: `${Math.min(100, p)}%` }} /></div>}</td>
+                    </tr>
+                  );
+                })()}
+                {/* 해외기타 */}
+                {classification.overseasEtc.actual > 0 && (
+                  <tr>
+                    <td style={{ fontWeight: 600 }}>
+                      🌍 해외기타
+                      <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.overseasEtc.customers.length}개사)</span>
+                    </td>
+                    <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>-</td>
+                    <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(classification.overseasEtc.actual)}</td>
+                    <td style={{ textAlign: 'right', fontSize: 10, color: 'var(--text3)' }}>계획 외</td>
+                    <td />
+                  </tr>
+                )}
+                {/* 국내기타 */}
+                {classification.domesticEtc.actual > 0 && (
+                  <tr>
+                    <td style={{ fontWeight: 600 }}>
+                      🏢 국내기타
+                      <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.domesticEtc.customers.length}개사)</span>
+                    </td>
+                    <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>-</td>
+                    <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(classification.domesticEtc.actual)}</td>
+                    <td style={{ textAlign: 'right', fontSize: 10, color: 'var(--text3)' }}>계획 외</td>
+                    <td />
+                  </tr>
+                )}
+                {/* 신규 */}
+                {classification.newCustomer.actual > 0 && (
+                  <tr style={{ background: 'rgba(33,150,243,.04)' }}>
+                    <td style={{ fontWeight: 600 }}>
+                      🆕 신규
+                      <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>({classification.newCustomer.customers.length}개사)</span>
+                    </td>
+                    <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>-</td>
+                    <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--accent)' }}>{fmtKRW(classification.newCustomer.actual)}</td>
+                    <td style={{ textAlign: 'right', fontSize: 10, color: 'var(--accent)' }}>신규매출</td>
+                    <td />
+                  </tr>
+                )}
+                {/* 합계 */}
+                <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
+                  <td>합계</td>
+                  <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(stats.annualTarget)}</td>
+                  <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(stats.ytdActual)}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <span className={`score-badge ${pctColor(pct(stats.ytdActual, stats.ytdTarget))}`}>{pct(stats.ytdActual, stats.ytdTarget)}%</span>
+                  </td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          {/* 분류 상세 (접기) */}
+          {(classification.overseasEtc.customers.length > 0 || classification.domesticEtc.customers.length > 0 || classification.newCustomer.customers.length > 0) && (
+            <details style={{ marginTop: 8, fontSize: 11 }}>
+              <summary style={{ cursor: 'pointer', color: 'var(--text3)' }}>계획 외/신규 고객 상세 보기</summary>
+              <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
+                {classification.overseasEtc.customers.length > 0 && (
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>🌍 해외기타</div>
+                    {classification.overseasEtc.customers.map((c, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                        <span>{c.name}</span><span style={{ fontWeight: 600 }}>{fmtKRW(c.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {classification.domesticEtc.customers.length > 0 && (
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>🏢 국내기타</div>
+                    {classification.domesticEtc.customers.map((c, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                        <span>{c.name}</span><span style={{ fontWeight: 600 }}>{fmtKRW(c.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {classification.newCustomer.customers.length > 0 && (
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--accent)' }}>🆕 신규</div>
+                    {classification.newCustomer.customers.map((c, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                        <span>{c.name}</span><span style={{ fontWeight: 600, color: 'var(--accent)' }}>{fmtKRW(c.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
 
       {/* Alarms */}
       {myAlarms.length > 0 && (

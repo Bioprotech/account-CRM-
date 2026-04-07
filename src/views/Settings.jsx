@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { genId, today } from '../lib/utils';
 import { saveSnapshot, listSnapshots, deleteSnapshot as removeSnapshot } from '../lib/snapshots';
+import { savePriorYearCustomers, loadPriorYearCustomers } from '../lib/customerClassification';
 
 // 엑셀 날짜 시리얼 → YYYY-MM-DD 변환
 function excelDateToStr(serial) {
@@ -282,8 +283,25 @@ export default function Settings() {
       const matchedNames = [...customerSet].filter(n => accountMap[n.toLowerCase().trim()]);
       const unmatchedNames = [...customerSet].filter(n => !accountMap[n.toLowerCase().trim()]);
 
+      // 전년도(2025) 고객 목록 추출 (고객 분류용 — 수주취소/무상샘플 제외)
+      const priorYear = String(new Date().getFullYear() - 1);
+      const excludeStatuses = ['수주취소'];
+      const excludeTypes = ['무상샘플', '수리출고'];
+      const priorYearNames = [];
+      dataRows.forEach(r => {
+        const dateStr = excelDateToStr(r[colIdx.orderDate]);
+        if (!dateStr.startsWith(priorYear)) return;
+        const status = String(r[colIdx.status] || '').trim();
+        const orderType = String(r[colIdx.orderType] || '').trim();
+        if (excludeStatuses.includes(status) || excludeTypes.includes(orderType)) return;
+        const amt = parseFloat(r[colIdx.orderAmount]) || 0;
+        if (amt <= 0) return;
+        priorYearNames.push(String(r[colIdx.customer] || '').trim());
+      });
+      const priorYearUniqueCount = new Set(priorYearNames.map(n => n.toLowerCase().trim())).size;
+
       // 큰 데이터는 ref에 보관, state에는 요약만
-      parsedDataRef.current = { colIdx, dataRows };
+      parsedDataRef.current = { colIdx, dataRows, priorYearNames };
 
       setPreview({
         fileName: file.name, sheetName,
@@ -291,6 +309,7 @@ export default function Settings() {
         matchedCustomers: matchedNames.length,
         unmatchedCustomers: unmatchedNames.length,
         unmatchedNames: unmatchedNames.slice(0, 30),
+        priorYearUniqueCount,
       });
       showToast(`${file.name} O시트 로드 완료 (${dataRows.length.toLocaleString()}건)`, 'success');
     } catch (err) {
@@ -304,7 +323,12 @@ export default function Settings() {
     setImporting(true);
 
     try {
-      const { dataRows, colIdx } = parsedDataRef.current;
+      const { dataRows, colIdx, priorYearNames } = parsedDataRef.current;
+
+      // 전년도 고객 목록 저장 (고객 분류에 사용)
+      if (priorYearNames && priorYearNames.length > 0) {
+        savePriorYearCustomers(priorYearNames);
+      }
 
       // 기존 계정 매핑
       const accountMap = {};
@@ -1235,7 +1259,7 @@ export default function Settings() {
             </div>
 
             {/* 매칭 현황 */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
               <div className="kpi green" style={{ padding: 10 }}>
                 <div className="kpi-label">매칭 고객</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>{preview.matchedCustomers}사</div>
@@ -1247,6 +1271,10 @@ export default function Settings() {
               <div className="kpi accent" style={{ padding: 10 }}>
                 <div className="kpi-label">{importYear}년 건수</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>{(preview.yearCounts[importYear] || 0).toLocaleString()}</div>
+              </div>
+              <div className="kpi" style={{ padding: 10 }}>
+                <div className="kpi-label">{Number(importYear) - 1}년 고객</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{preview.priorYearUniqueCount || 0}사</div>
               </div>
             </div>
 
