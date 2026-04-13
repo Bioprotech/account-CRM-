@@ -15,51 +15,68 @@ export default function PriceContract({ accountId }) {
     currency: 'USD',
     net_terms: '',
     moq: '',
+    contract_qty: '',
     contract_expiry: '',
   });
 
   const resetForm = () => {
-    setForm({ product_category: '', unit_price: '', currency: 'USD', net_terms: '', moq: '', contract_expiry: '' });
+    setForm({ product_category: '', unit_price: '', currency: 'USD', net_terms: '', moq: '', contract_qty: '', contract_expiry: '' });
     setEditingId(null);
     setShowForm(false);
   };
 
+  // 계약금액 자동 계산
+  const calcContractAmount = (price, qty) => {
+    const p = parseFloat(price) || 0;
+    const q = parseInt(qty) || 0;
+    return p * q;
+  };
+
+  const contractAmount = calcContractAmount(form.unit_price, form.contract_qty);
+
   const handleSave = () => {
     if (!form.product_category) return;
 
+    const price = parseFloat(form.unit_price) || 0;
+    const qty = parseInt(form.contract_qty) || 0;
+
     if (editingId) {
-      // 기존 계약 수정 → 변경 로그 추가
       const existing = allContracts.find(c => c.id === editingId);
       const changeLog = {
         date: today(),
         prev_price: existing?.unit_price,
-        new_price: parseFloat(form.unit_price) || 0,
+        new_price: price,
         prev_terms: existing?.net_terms,
         new_terms: form.net_terms,
+        prev_qty: existing?.contract_qty,
+        new_qty: qty,
         reason: '조건 업데이트',
       };
 
       saveContractItem({
         ...existing,
         product_category: form.product_category,
-        unit_price: parseFloat(form.unit_price) || 0,
+        unit_price: price,
         currency: form.currency,
         net_terms: form.net_terms,
         moq: parseInt(form.moq) || 0,
+        contract_qty: qty,
+        contract_amount: price * qty,
         contract_expiry: form.contract_expiry,
         change_logs: [...(existing?.change_logs || []), changeLog],
         updated_at: today(),
       });
     } else {
-      // 신규 추가
       saveContractItem({
         id: genId('ctr'),
         account_id: accountId,
         product_category: form.product_category,
-        unit_price: parseFloat(form.unit_price) || 0,
+        unit_price: price,
         currency: form.currency,
         net_terms: form.net_terms,
         moq: parseInt(form.moq) || 0,
+        contract_qty: qty,
+        contract_amount: price * qty,
         contract_expiry: form.contract_expiry,
         change_logs: [],
         updated_at: today(),
@@ -75,6 +92,7 @@ export default function PriceContract({ accountId }) {
       currency: c.currency || 'USD',
       net_terms: c.net_terms || '',
       moq: c.moq?.toString() || '',
+      contract_qty: c.contract_qty?.toString() || '',
       contract_expiry: c.contract_expiry || '',
     });
     setEditingId(c.id);
@@ -85,6 +103,12 @@ export default function PriceContract({ accountId }) {
     if (!dateStr) return null;
     return Math.ceil((new Date(dateStr) - new Date()) / 86400000);
   };
+
+  function fmtAmt(currency, amount) {
+    if (!amount) return '-';
+    const sym = currency === 'KRW' ? '₩' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : '$';
+    return `${sym}${amount.toLocaleString()}`;
+  }
 
   return (
     <div>
@@ -115,7 +139,7 @@ export default function PriceContract({ accountId }) {
           <div className="form-row">
             <div className="form-group">
               <label>단가</label>
-              <input type="number" value={form.unit_price} onChange={e => setForm(p => ({ ...p, unit_price: e.target.value }))} placeholder="단가" />
+              <input type="number" step="any" value={form.unit_price} onChange={e => setForm(p => ({ ...p, unit_price: e.target.value }))} placeholder="단가" />
             </div>
             <div className="form-group">
               <label>통화</label>
@@ -129,12 +153,29 @@ export default function PriceContract({ accountId }) {
           </div>
           <div className="form-row">
             <div className="form-group">
+              <label>계약수량 (총 볼륨)</label>
+              <input type="number" value={form.contract_qty} onChange={e => setForm(p => ({ ...p, contract_qty: e.target.value }))} placeholder="연간/계약기간 총 수량" />
+            </div>
+            <div className="form-group">
+              <label>MOQ (1회 최소 주문)</label>
+              <input type="number" value={form.moq} onChange={e => setForm(p => ({ ...p, moq: e.target.value }))} placeholder="1회 최소 주문 수량" />
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
               <label>결제조건 (NET terms)</label>
               <input type="text" value={form.net_terms} onChange={e => setForm(p => ({ ...p, net_terms: e.target.value }))} placeholder="예: NET 30, T/T in advance" />
             </div>
             <div className="form-group">
-              <label>MOQ</label>
-              <input type="number" value={form.moq} onChange={e => setForm(p => ({ ...p, moq: e.target.value }))} placeholder="최소 주문 수량" />
+              <label>계약금액 (자동 계산)</label>
+              <div style={{
+                padding: '8px 12px', background: 'var(--bg3)', borderRadius: 6,
+                fontWeight: 700, fontSize: 14, color: contractAmount > 0 ? 'var(--accent)' : 'var(--text3)',
+              }}>
+                {contractAmount > 0
+                  ? fmtAmt(form.currency, contractAmount)
+                  : '단가 × 계약수량'}
+              </div>
             </div>
           </div>
           <div style={{ textAlign: 'right', marginTop: 8 }}>
@@ -156,12 +197,18 @@ export default function PriceContract({ accountId }) {
           {allContracts.map(c => {
             const daysLeft = getDaysUntilExpiry(c.contract_expiry);
             const isExpiringSoon = daysLeft !== null && daysLeft <= 60;
+            const cAmount = c.contract_amount || (c.unit_price || 0) * (c.contract_qty || 0);
 
             return (
               <div key={c.id} className="card" style={{ marginBottom: 12, border: isExpiringSoon ? `2px solid ${daysLeft <= 30 ? 'var(--red)' : 'var(--yellow)'}` : undefined }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                   <div>
                     <span style={{ fontSize: 13, fontWeight: 700 }}>{c.product_category}</span>
+                    {cAmount > 0 && (
+                      <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>
+                        {fmtAmt(c.currency, cAmount)}
+                      </span>
+                    )}
                     {daysLeft !== null && daysLeft <= 60 && (
                       <span className={`score-badge ${daysLeft <= 30 ? 'red' : 'yellow'}`} style={{ marginLeft: 8 }}>
                         {daysLeft <= 0 ? '만료됨' : `D-${daysLeft}`}
@@ -174,18 +221,22 @@ export default function PriceContract({ accountId }) {
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, fontSize: 12 }}>
                   <div>
                     <div style={{ color: 'var(--text3)', fontSize: 10 }}>단가</div>
-                    <div style={{ fontWeight: 600 }}>{c.currency} {(c.unit_price || 0).toLocaleString()}</div>
+                    <div style={{ fontWeight: 600 }}>{fmtAmt(c.currency, c.unit_price)}</div>
                   </div>
                   <div>
-                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>결제조건</div>
-                    <div>{c.net_terms || '-'}</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>계약수량</div>
+                    <div style={{ fontWeight: 600 }}>{c.contract_qty ? c.contract_qty.toLocaleString() : '-'}</div>
                   </div>
                   <div>
                     <div style={{ color: 'var(--text3)', fontSize: 10 }}>MOQ</div>
                     <div>{c.moq ? c.moq.toLocaleString() : '-'}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>결제조건</div>
+                    <div>{c.net_terms || '-'}</div>
                   </div>
                   <div>
                     <div style={{ color: 'var(--text3)', fontSize: 10 }}>계약 만료</div>
@@ -202,6 +253,9 @@ export default function PriceContract({ accountId }) {
                         <span style={{ color: 'var(--text3)' }}>{log.date}</span>
                         {' | '}
                         단가: {log.prev_price?.toLocaleString()} → <strong>{log.new_price?.toLocaleString()}</strong>
+                        {log.prev_qty !== undefined && log.prev_qty !== log.new_qty && (
+                          <span> | 수량: {(log.prev_qty || 0).toLocaleString()} → <strong>{(log.new_qty || 0).toLocaleString()}</strong></span>
+                        )}
                         {log.prev_terms !== log.new_terms && <span> | 조건: {log.prev_terms} → {log.new_terms}</span>}
                       </div>
                     ))}
