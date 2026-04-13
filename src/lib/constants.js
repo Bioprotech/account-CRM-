@@ -234,6 +234,30 @@ export const OPPORTUNITY_TYPES = [
 /* ── GAP 분석: 예산 사이클 ── */
 export const BUDGET_CYCLES = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월', '분기별', '수시'];
 
+/* ── 전략 등급 ── */
+export const STRATEGIC_TIERS = [
+  { key: 'A', label: 'Key Account', color: '#2e7d32', desc: '연간 수주 상위 20%, 전략 제품 확장 파트너' },
+  { key: 'B', label: 'Growth Target', color: '#1565c0', desc: '현재 거래 규모는 작지만 성장 가능성 높음' },
+  { key: 'C', label: 'Maintain', color: '#f9a825', desc: '안정적 반복 구매, 현상 유지' },
+  { key: 'D', label: 'Watch', color: '#c62828', desc: '감소 추세, 경쟁 침투 감지, 이탈 위험' },
+];
+
+/* ── 비즈니스 건강도 ── */
+export const BIZ_HEALTH_OPTIONS = {
+  revenue_trend: ['성장', '보합', '축소', '불명'],
+  budget_trend: ['증가', '유지', '삭감', '불명'],
+  contact_change: ['변동 있음', '변동 없음'],
+};
+
+/* ── 공급자 지위 ── */
+export const SUPPLIER_POSITIONS = ['단독 공급', '주공급자(70%↑)', '복수 중 하나', '소량 테스트 중'];
+export const COMPETITOR_PRICE_LEVELS = ['높음', '유사', '낮음', '불명'];
+export const SUBSTITUTE_SEARCH = ['탐색 중', '아니오', '불명'];
+
+/* ── 구매결정 구조 ── */
+export const INFLUENCER_ROLES = ['품질', '재무', '현장', '구매', '경영진', '기술', '기타'];
+export const RELATIONSHIP_TEMPS = ['우호적', '중립', '비우호적', '미파악'];
+
 /* ── 페이지네이션 ── */
 export const PAGE_SIZE = 30;
 

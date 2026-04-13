@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
-import { REGIONS, CUSTOMER_TYPE_GUIDE } from '../lib/constants';
+import { REGIONS, CUSTOMER_TYPE_GUIDE, STRATEGIC_TIERS } from '../lib/constants';
 import { daysSince, scoreColorClass } from '../lib/utils';
 import { classifyCustomers, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
 
@@ -168,6 +168,25 @@ export default function Dashboard() {
       });
     });
     return result;
+  }, [myAccounts]);
+
+  // 전략등급별 분포
+  const tierStats = useMemo(() => {
+    const map = {};
+    STRATEGIC_TIERS.forEach(t => { map[t.key] = { count: 0, accounts: [] }; });
+    map['none'] = { count: 0, accounts: [] };
+    myAccounts.forEach(a => {
+      const tier = a.strategic_tier || 'none';
+      if (!map[tier]) map[tier] = { count: 0, accounts: [] };
+      map[tier].count++;
+      map[tier].accounts.push(a);
+    });
+    return map;
+  }, [myAccounts]);
+
+  // D등급 고객 (Watch 알람)
+  const watchAccounts = useMemo(() => {
+    return myAccounts.filter(a => a.strategic_tier === 'D');
   }, [myAccounts]);
 
   // 지역별 목표 vs 실적
@@ -658,6 +677,59 @@ export default function Dashboard() {
                     <span className="issue-company">{a.company_name || '(미입력)'}</span>
                     <span className="score-badge red">{score}%</span>
                     <span style={{ fontSize: 11, color: 'var(--red)' }}>{days === Infinity ? '미접촉' : `${days}일 경과`}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{a.sales_rep}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 전략등급별 분포 + D등급 Watch */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div className="card">
+          <div className="card-title">🎯 전략 등급 분포</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginTop: 8 }}>
+            {STRATEGIC_TIERS.map(t => (
+              <div key={t.key} style={{
+                textAlign: 'center', padding: '10px 4px', borderRadius: 8,
+                background: `${t.color}0F`, border: `1px solid ${t.color}40`,
+              }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: t.color }}>{tierStats[t.key]?.count || 0}</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: t.color }}>{t.key}</div>
+                <div style={{ fontSize: 9, color: 'var(--text3)' }}>{t.label}</div>
+              </div>
+            ))}
+            <div style={{
+              textAlign: 'center', padding: '10px 4px', borderRadius: 8,
+              background: 'var(--bg3)', border: '1px solid var(--border)',
+            }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text3)' }}>{tierStats['none']?.count || 0}</div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)' }}>-</div>
+              <div style={{ fontSize: 9, color: 'var(--text3)' }}>미설정</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">⚠️ Watch 등급 (D) 고객</div>
+          {watchAccounts.length === 0 ? (
+            <div className="empty-state" style={{ padding: '24px 0' }}>
+              <p style={{ color: 'var(--green)' }}>Watch 등급 고객 없음</p>
+            </div>
+          ) : (
+            <div className="issue-list">
+              {watchAccounts.slice(0, 8).map(a => {
+                const score = a.intelligence?.total_score ?? 0;
+                const health = a.customer_insight?.health;
+                const supplier = a.customer_insight?.supplier;
+                return (
+                  <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
+                    <span className="issue-company">{a.company_name}</span>
+                    <span className="score-badge red" style={{ fontSize: 10 }}>{score}%</span>
+                    {health?.revenue_trend === '축소' && <span style={{ fontSize: 9, color: 'var(--red)', fontWeight: 600 }}>📉축소</span>}
+                    {supplier?.substitute_search === '탐색 중' && <span style={{ fontSize: 9, color: 'var(--red)', fontWeight: 600 }}>🔄대체재탐색</span>}
                     <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{a.sales_rep}</span>
                   </div>
                 );

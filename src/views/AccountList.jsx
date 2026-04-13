@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useAccount } from '../context/AccountContext';
-import { REGIONS, PRODUCTS, BUSINESS_TYPES, PAGE_SIZE } from '../lib/constants';
+import { REGIONS, PRODUCTS, BUSINESS_TYPES, PAGE_SIZE, STRATEGIC_TIERS } from '../lib/constants';
 import { scoreColorClass, fmtDate, daysSince } from '../lib/utils';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -66,7 +66,7 @@ export default function AccountList() {
   const paginated = sortedAccounts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const resetFilters = () => {
-    setFilters({ searchQ: '', region: '', salesRep: '', businessType: '', product: '', scoreRange: '' });
+    setFilters({ searchQ: '', region: '', salesRep: '', businessType: '', product: '', scoreRange: '', tier: '' });
     setPage(1);
   };
 
@@ -100,6 +100,11 @@ export default function AccountList() {
           <option value="yellow">🟡 50~70%</option>
           <option value="green">🟢 70% 이상</option>
         </select>
+        <select className="filter-select" value={filters.tier || ''} onChange={e => { setFilters(f => ({ ...f, tier: e.target.value })); setPage(1); }}>
+          <option value="">전체 등급</option>
+          {STRATEGIC_TIERS.map(t => <option key={t.key} value={t.key}>{t.key} — {t.label}</option>)}
+          <option value="none">미설정</option>
+        </select>
         <span className="filter-count">{total}개사</span>
         {Object.values(filters).some(v => v) && (
           <button className="btn btn-ghost btn-sm" onClick={resetFilters}>필터 초기화</button>
@@ -110,6 +115,7 @@ export default function AccountList() {
             const wb = XLSX.utils.book_new();
             const rows = sortedAccounts.map(a => ({
               '회사명': a.company_name || '',
+              '전략등급': a.strategic_tier || '-',
               '국가': a.country || '',
               '지역': a.region || '',
               '사업형태': a.business_type || '',
@@ -149,6 +155,7 @@ export default function AccountList() {
               <thead>
                 <tr>
                   <th>회사명</th>
+                  <th>등급</th>
                   <th>지역</th>
                   <th>담당자</th>
                   <th>사업형태</th>
@@ -171,6 +178,16 @@ export default function AccountList() {
                   return (
                     <tr key={a.id} className={isDanger ? 'row-danger' : ''} onClick={() => setEditingAccount(a)}>
                       <td style={{ fontWeight: 600 }}>{a.company_name || '(미입력)'}</td>
+                      <td>
+                        {a.strategic_tier ? (() => {
+                          const tier = STRATEGIC_TIERS.find(t => t.key === a.strategic_tier);
+                          return tier ? (
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: tier.color, color: '#fff' }}>
+                              {tier.key}
+                            </span>
+                          ) : '-';
+                        })() : <span style={{ color: 'var(--text3)' }}>-</span>}
+                      </td>
                       <td><span className="region-badge">{a.region || '-'}</span></td>
                       <td>{a.sales_rep || '-'}</td>
                       <td>{a.business_type || '-'}</td>

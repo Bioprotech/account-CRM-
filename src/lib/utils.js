@@ -63,6 +63,10 @@ export function getFilteredAccounts(accounts, filters) {
       if (filters.scoreRange === 'yellow' && (s < 50 || s >= 70)) return false;
       if (filters.scoreRange === 'green' && s < 70) return false;
     }
+    if (filters.tier) {
+      if (filters.tier === 'none') { if (a.strategic_tier) return false; }
+      else if (a.strategic_tier !== filters.tier) return false;
+    }
     return true;
   });
 }

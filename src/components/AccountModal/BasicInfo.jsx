@@ -1,4 +1,4 @@
-import { REGIONS, PRODUCTS, BUSINESS_TYPES, CONTRACT_STATUSES } from '../../lib/constants';
+import { REGIONS, PRODUCTS, BUSINESS_TYPES, CONTRACT_STATUSES, STRATEGIC_TIERS } from '../../lib/constants';
 import { useAccount } from '../../context/AccountContext';
 
 const TYPE_TRANSITIONS = {
@@ -110,7 +110,32 @@ export default function BasicInfo({ draft, update }) {
           <label>거래 시작일</label>
           <input type="date" value={draft.trade_start_date || ''} onChange={e => update({ trade_start_date: e.target.value })} />
         </div>
-        <div className="form-group" />
+        <div className="form-group">
+          <label>전략 등급</label>
+          <select value={draft.strategic_tier || ''} onChange={e => update({ strategic_tier: e.target.value })}>
+            <option value="">미설정</option>
+            {STRATEGIC_TIERS.map(t => (
+              <option key={t.key} value={t.key}>{t.key} — {t.label}</option>
+            ))}
+          </select>
+          {draft.strategic_tier && (
+            <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text3)' }}>
+              {STRATEGIC_TIERS.find(t => t.key === draft.strategic_tier)?.desc}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 현재 컨텍스트 메모 */}
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>현재 컨텍스트 메모</label>
+        <textarea
+          value={draft.context_memo || ''}
+          onChange={e => update({ context_memo: e.target.value })}
+          placeholder="이 고객의 현재 상황을 한 줄로 요약 (예: Q2 예산 삭감 중. 하반기 재검토 예정. 단가 인하 압박 있음.)"
+          rows={2}
+          style={{ width: '100%', resize: 'vertical', fontSize: 12 }}
+        />
       </div>
 
       {/* 담당 제품군 */}

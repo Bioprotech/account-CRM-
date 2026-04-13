@@ -326,6 +326,7 @@ account-crm/src/
 │       ├── GapAnalysis.jsx          # GAP 분석
 │       ├── PriceContract.jsx        # 가격/계약
 │       ├── ForecastTrend.jsx        # FCST
+│       ├── CustomerInsight.jsx       # Customer Insight (건강도/공급자/결정구조)
 │       ├── CrossSelling.jsx         # 크로스셀링
 │       └── TypeGuide.jsx            # 유형가이드 (카드 내)
 └── views/
@@ -370,3 +371,7 @@ account-crm/src/
 | 2026-04-13 | 리포트 KPI 카드 (연간목표/확정수주/잔여FCST/달성률/예상달성률) |
 | 2026-04-13 | 리포트 Q1~Q4 분기 전환, 담당자 필터, 고객카드 연결 |
 | 2026-04-13 | 가격·계약 탭: 계약수량(contract_qty) + 계약금액(contract_amount) 자동계산 추가 |
+| 2026-04-13 | Customer Insight 탭 신규 추가 (비즈니스 건강도/공급자 지위/구매결정 구조) |
+| 2026-04-13 | 전략 등급(A/B/C/D) 필드 + 현재 컨텍스트 메모 추가 (기본정보 탭) |
+| 2026-04-13 | 고객 목록: 전략등급 컬럼 + 필터 추가 |
+| 2026-04-13 | 대시보드: 전략등급별 분포 카드 + D등급(Watch) 알람 섹션 추가 |

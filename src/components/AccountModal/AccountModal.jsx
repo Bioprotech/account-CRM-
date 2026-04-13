@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAccount } from '../../context/AccountContext';
-import { SCORE_CATEGORIES, GAP_CAUSES, OPPORTUNITY_TYPES } from '../../lib/constants';
+import { SCORE_CATEGORIES, GAP_CAUSES, OPPORTUNITY_TYPES, STRATEGIC_TIERS } from '../../lib/constants';
 import BasicInfo from './BasicInfo';
 import IntelligenceScore from './IntelligenceScore';
 import ActivityLog from './ActivityLog';
@@ -10,9 +10,11 @@ import ForecastTrend from './ForecastTrend';
 import CrossSelling from './CrossSelling';
 import TypeGuide from './TypeGuide';
 import GapAnalysis from './GapAnalysis';
+import CustomerInsight from './CustomerInsight';
 
 const TABS = [
   { key: 'basic', label: '기본정보' },
+  { key: 'insight', label: 'Insight' },
   { key: 'score', label: 'Score' },
   { key: 'activity', label: 'Activity' },
   { key: 'orders', label: '수주이력' },
@@ -236,6 +238,8 @@ export default function AccountModal() {
     switch (activeTab) {
       case 'basic':
         return <BasicInfo draft={draft} update={update} />;
+      case 'insight':
+        return <CustomerInsight draft={draft} update={update} />;
       case 'score':
         return <IntelligenceScore draft={draft} update={update} />;
       case 'activity':
@@ -265,12 +269,25 @@ export default function AccountModal() {
           <div>
             <h2>{isNew ? '새 고객 등록' : draft.company_name || '(미입력)'}</h2>
             {!isNew && (
-              <div style={{ display: 'flex', gap: 8, marginTop: 4, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                {draft.strategic_tier && (() => {
+                  const tier = STRATEGIC_TIERS.find(t => t.key === draft.strategic_tier);
+                  return tier ? (
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: tier.color, color: '#fff' }}>
+                      {tier.key}
+                    </span>
+                  ) : null;
+                })()}
                 {draft.region && <span className="region-badge">{draft.region}</span>}
                 {draft.sales_rep && <span style={{ fontSize: '11px', color: 'var(--text3)' }}>담당: {draft.sales_rep}</span>}
                 <span className={`score-badge ${score >= 70 ? 'green' : score >= 50 ? 'yellow' : 'red'}`}>
                   Score {score}%
                 </span>
+              </div>
+            )}
+            {!isNew && draft.context_memo && (
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text2)', fontStyle: 'italic', maxWidth: 500 }}>
+                {draft.context_memo}
               </div>
             )}
           </div>
