@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAccount } from '../../context/AccountContext';
 import { SCORE_CATEGORIES, GAP_CAUSES, OPPORTUNITY_TYPES, STRATEGIC_TIERS } from '../../lib/constants';
 import BasicInfo from './BasicInfo';
-import IntelligenceScore from './IntelligenceScore';
+
 import ActivityLog from './ActivityLog';
 import OrderHistory from './OrderHistory';
 import PriceContract from './PriceContract';
@@ -15,7 +15,6 @@ import CustomerInsight from './CustomerInsight';
 const TABS = [
   { key: 'basic', label: '기본정보' },
   { key: 'insight', label: 'Insight' },
-  { key: 'score', label: 'Score' },
   { key: 'activity', label: 'Activity' },
   { key: 'orders', label: '수주이력' },
   { key: 'gap', label: 'GAP분석' },
@@ -240,8 +239,6 @@ export default function AccountModal() {
         return <BasicInfo draft={draft} update={update} />;
       case 'insight':
         return <CustomerInsight draft={draft} update={update} />;
-      case 'score':
-        return <IntelligenceScore draft={draft} update={update} />;
       case 'activity':
         return <ActivityLog accountId={draft.id} draft={draft} />;
       case 'orders':

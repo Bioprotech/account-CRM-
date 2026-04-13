@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AccountProvider, { useAccount } from './context/AccountContext';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
+import { CHANGELOG, CURRENT_VERSION, VERSION_STORAGE_KEY } from './lib/changelog';
 import Dashboard from './views/Dashboard';
 import AccountList from './views/AccountList';
 import Settings from './views/Settings';
@@ -94,8 +95,63 @@ function UserSelectScreen() {
   );
 }
 
+function ChangelogPopup({ onClose }) {
+  const latest = CHANGELOG[0];
+  return (
+    <div className="overlay" onClick={onClose} style={{ zIndex: 9999 }}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520, maxHeight: '80vh' }}>
+        <div className="modal-header">
+          <div>
+            <h2 style={{ fontSize: 16 }}>Account CRM 업데이트</h2>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{latest.version} — {latest.date}</div>
+          </div>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{ padding: '16px 20px' }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: 'var(--accent)' }}>{latest.title}</div>
+          {latest.items.map((item, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: 1.8, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+              {item}
+            </div>
+          ))}
+          {CHANGELOG.length > 1 && (
+            <details style={{ marginTop: 16 }}>
+              <summary style={{ fontSize: 11, color: 'var(--text3)', cursor: 'pointer' }}>이전 업데이트 내역</summary>
+              {CHANGELOG.slice(1).map((log, idx) => (
+                <div key={idx} style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{log.version} — {log.title} <span style={{ fontWeight: 400, color: 'var(--text3)' }}>({log.date})</span></div>
+                  {log.items.map((item, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text2)', padding: '2px 0', paddingLeft: 8 }}>{item}</div>
+                  ))}
+                </div>
+              ))}
+            </details>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-primary" onClick={onClose}>확인</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const { currentUser, currentTab, editingAccount, toast } = useAccount();
+  const [showChangelog, setShowChangelog] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const seen = localStorage.getItem(VERSION_STORAGE_KEY);
+    if (seen !== CURRENT_VERSION) {
+      setShowChangelog(true);
+    }
+  }, [currentUser]);
+
+  const closeChangelog = () => {
+    localStorage.setItem(VERSION_STORAGE_KEY, CURRENT_VERSION);
+    setShowChangelog(false);
+  };
 
   if (!currentUser) return <UserSelectScreen />;
 
@@ -123,6 +179,7 @@ function AppContent() {
       </div>
 
       {editingAccount && <AccountModal />}
+      {showChangelog && <ChangelogPopup onClose={closeChangelog} />}
 
       {toast && (
         <div className="toast-wrap">

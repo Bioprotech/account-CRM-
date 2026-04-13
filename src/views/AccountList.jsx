@@ -120,7 +120,7 @@ export default function AccountList() {
               '지역': a.region || '',
               '사업형태': a.business_type || '',
               '담당자': a.sales_rep || '',
-              'Intelligence Score': (a.intelligence?.total_score ?? 0) + '%',
+              'Insight 진척률': (a.intelligence?.total_score ?? 0) + '%',
               '제품군': (a.products || []).join(', '),
               '계약상태': a.contract_status || '',
               '최근 컨택일': a.last_contact_date || '',
@@ -162,7 +162,7 @@ export default function AccountList() {
                   <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => { setTargetSortAsc(v => !v); setPage(1); }}>
                     연간 목표 {targetSortAsc ? '▲' : '▼'}
                   </th>
-                  <th>Intelligence Score</th>
+                  <th>Insight</th>
                   <th>마지막 컨택</th>
                   <th>Open 이슈</th>
                 </tr>

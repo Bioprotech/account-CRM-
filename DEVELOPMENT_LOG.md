@@ -1,7 +1,7 @@
 # Account CRM 개발 이력
 
 > 이 문서는 Account CRM의 개발 과정을 자동으로 기록합니다.
-> 최종 업데이트: 2026-04-05
+> 최종 업데이트: 2026-04-13
 
 ---
 
@@ -21,7 +21,7 @@
 
 ### 핵심 기능
 - 고객 목록 + 필터 (지역/품목/담당자/사업형태/Score)
-- 고객 상세카드 9탭: 기본정보, Score, Activity, 수주이력, GAP분석, 가격계약, FCST, 크로스셀링, 유형가이드
+- 고객 상세카드 9탭: 기본정보, Insight, Activity, 수주이력, GAP분석, 가격계약, FCST, 크로스셀링, 유형가이드
 - Intelligence Score 6개 카테고리 체크리스트 (28항목, 가중치 합산 0~100%)
 - Activity Log 타임라인 (이슈유형 12종 + 상태 관리)
 - 대시보드 (KPI + 알람 + Open 이슈 + 긴급 관리 대상)
@@ -312,6 +312,7 @@ account-crm/src/
 ├── lib/
 │   ├── firebase.js                  # Firebase 설정
 │   ├── constants.js                 # 상수 (팀원, 지역, 제품, Score카테고리, GAP원인 등)
+│   ├── changelog.js                 # 버전 변경내역 + 업데이트 팝업 데이터
 │   └── utils.js                     # 유틸리티 함수
 ├── components/
 │   ├── Sidebar.jsx                  # 사이드바
@@ -319,14 +320,14 @@ account-crm/src/
 │   ├── Charts.jsx                   # 시각 차트 (HBarChart, DonutChart, ProgressBars)
 │   └── AccountModal/
 │       ├── AccountModal.jsx         # 고객 상세 모달 (9탭 + Excel export)
-│       ├── BasicInfo.jsx            # 기본정보
-│       ├── IntelligenceScore.jsx    # Intelligence Score
+│       ├── BasicInfo.jsx            # 기본정보 + 전략등급 + 컨텍스트 메모
+│       ├── IntelligenceScore.jsx    # Intelligence Score (레거시, Insight에 통합)
 │       ├── ActivityLog.jsx          # Activity Log
 │       ├── OrderHistory.jsx         # 수주이력
 │       ├── GapAnalysis.jsx          # GAP 분석
 │       ├── PriceContract.jsx        # 가격/계약
 │       ├── ForecastTrend.jsx        # FCST
-│       ├── CustomerInsight.jsx       # Customer Insight (건강도/공급자/결정구조)
+│       ├── CustomerInsight.jsx       # Customer Insight 통합 (Score 6카테고리 + 건강도/공급자/결정구조 + 자동감지)
 │       ├── CrossSelling.jsx         # 크로스셀링
 │       └── TypeGuide.jsx            # 유형가이드 (카드 내)
 └── views/
@@ -375,3 +376,8 @@ account-crm/src/
 | 2026-04-13 | 전략 등급(A/B/C/D) 필드 + 현재 컨텍스트 메모 추가 (기본정보 탭) |
 | 2026-04-13 | 고객 목록: 전략등급 컬럼 + 필터 추가 |
 | 2026-04-13 | 대시보드: 전략등급별 분포 카드 + D등급(Watch) 알람 섹션 추가 |
+| 2026-04-13 | Customer Insight 통합: Score 6카테고리를 Insight 탭으로 통합, Score 탭 제거 |
+| 2026-04-13 | 자동 감지: 기본정보/가격계약 데이터 → Insight 진척률 자동 반영 |
+| 2026-04-13 | Watch 알람 확장: D등급 + 진척률 30% 미만 고객 알람 통합 |
+| 2026-04-13 | 업데이트 알림 팝업: 새 버전 배포 시 변경 내역 자동 표시 (changelog.js) |
+| 2026-04-13 | 고객 목록/대시보드: Intelligence Score → Insight 라벨 변경 |

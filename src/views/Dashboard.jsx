@@ -189,6 +189,14 @@ export default function Dashboard() {
     return myAccounts.filter(a => a.strategic_tier === 'D');
   }, [myAccounts]);
 
+  // Insight 진척률 30% 미만 고객
+  const lowInsightAccounts = useMemo(() => {
+    return myAccounts.filter(a => {
+      const score = a.intelligence?.total_score ?? 0;
+      return score > 0 && score < 30;
+    });
+  }, [myAccounts]);
+
   // 지역별 목표 vs 실적
   const regionStats = useMemo(() => {
     const map = {};
@@ -402,7 +410,7 @@ export default function Dashboard() {
           <div className="kpi-value">{stats.total}</div>
         </div>
         <div className={`kpi ${stats.avgScore < 50 ? 'red' : stats.avgScore < 70 ? 'yellow' : 'green'}`}>
-          <div className="kpi-label">평균 Score</div>
+          <div className="kpi-label">평균 Insight</div>
           <div className="kpi-value">{stats.avgScore}%</div>
         </div>
         <div className="kpi">
@@ -713,23 +721,35 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <div className="card-title">⚠️ Watch 등급 (D) 고객</div>
-          {watchAccounts.length === 0 ? (
+          <div className="card-title">⚠️ Watch 알람</div>
+          {watchAccounts.length === 0 && lowInsightAccounts.length === 0 ? (
             <div className="empty-state" style={{ padding: '24px 0' }}>
-              <p style={{ color: 'var(--green)' }}>Watch 등급 고객 없음</p>
+              <p style={{ color: 'var(--green)' }}>Watch 대상 없음</p>
             </div>
           ) : (
             <div className="issue-list">
-              {watchAccounts.slice(0, 8).map(a => {
+              {watchAccounts.slice(0, 6).map(a => {
                 const score = a.intelligence?.total_score ?? 0;
                 const health = a.customer_insight?.health;
                 const supplier = a.customer_insight?.supplier;
                 return (
                   <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
+                    <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#c62828', color: '#fff', fontWeight: 700 }}>D</span>
                     <span className="issue-company">{a.company_name}</span>
                     <span className="score-badge red" style={{ fontSize: 10 }}>{score}%</span>
                     {health?.revenue_trend === '축소' && <span style={{ fontSize: 9, color: 'var(--red)', fontWeight: 600 }}>📉축소</span>}
                     {supplier?.substitute_search === '탐색 중' && <span style={{ fontSize: 9, color: 'var(--red)', fontWeight: 600 }}>🔄대체재탐색</span>}
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{a.sales_rep}</span>
+                  </div>
+                );
+              })}
+              {lowInsightAccounts.filter(a => a.strategic_tier !== 'D').slice(0, 6).map(a => {
+                const score = a.intelligence?.total_score ?? 0;
+                return (
+                  <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
+                    <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--yellow)', color: '#000', fontWeight: 700 }}>!</span>
+                    <span className="issue-company">{a.company_name}</span>
+                    <span className="score-badge red" style={{ fontSize: 10 }}>진척 {score}%</span>
                     <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{a.sales_rep}</span>
                   </div>
                 );
