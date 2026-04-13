@@ -3,7 +3,7 @@ import { useAccount } from '../../context/AccountContext';
 import { PRODUCTS } from '../../lib/constants';
 import { genId, today } from '../../lib/utils';
 
-const PERIODS = ['Q1', 'Q2', 'Q3', 'Q4'];
+const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 const CURRENT_YEAR = new Date().getFullYear();
 
 export default function ForecastTrend({ accountId }) {
@@ -14,35 +14,39 @@ export default function ForecastTrend({ accountId }) {
   const [showForm, setShowForm] = useState(false);
   const [newFcst, setNewFcst] = useState({
     year: CURRENT_YEAR,
-    period: 'Q1',
+    month: 1,
     product_category: '',
     forecast_amount: '',
     currency: 'USD',
+    notes: '',
   });
 
   // Track 분류: forecast 데이터가 있으면 Track A, 없으면 Track B
   const hasForecast = allForecasts.length > 0;
 
-  // ── Track A: FCST vs Actual ──
+  // ── Track A: FCST vs Actual (월별) ──
   const fcstAnalysis = useMemo(() => {
     if (!hasForecast) return [];
     return allForecasts.map(f => {
-      // 해당 기간의 실제 수주 합산
+      const month = f.month || quarterToMonth(f.period);
       const periodOrders = allOrders.filter(o => {
         if (!o.order_date) return false;
         const y = parseInt(o.order_date.slice(0, 4));
-        if (y !== f.year) return false;
         const m = parseInt(o.order_date.slice(5, 7));
-        if (f.period === 'Q1') return m >= 1 && m <= 3;
-        if (f.period === 'Q2') return m >= 4 && m <= 6;
-        if (f.period === 'Q3') return m >= 7 && m <= 9;
-        if (f.period === 'Q4') return m >= 10 && m <= 12;
-        return false;
+        if (f.period) {
+          // 기존 분기 데이터 호환
+          if (y !== f.year) return false;
+          if (f.period === 'Q1') return m >= 1 && m <= 3;
+          if (f.period === 'Q2') return m >= 4 && m <= 6;
+          if (f.period === 'Q3') return m >= 7 && m <= 9;
+          if (f.period === 'Q4') return m >= 10 && m <= 12;
+        }
+        return y === f.year && m === month;
       });
       const actual = periodOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
       const forecast = f.forecast_amount || 0;
       const variance = forecast > 0 ? ((actual - forecast) / forecast) * 100 : 0;
-      return { ...f, actual, variance };
+      return { ...f, month, actual, variance };
     });
   }, [allForecasts, allOrders, hasForecast]);
 
@@ -53,25 +57,17 @@ export default function ForecastTrend({ accountId }) {
   const trendAnalysis = useMemo(() => {
     if (allOrders.length < 2) return null;
 
-    // 분기별 집계
-    const quarterlyMap = {};
+    // 월별 집계
+    const monthlyMap = {};
     allOrders.forEach(o => {
       if (!o.order_date) return;
       const y = parseInt(o.order_date.slice(0, 4));
       const m = parseInt(o.order_date.slice(5, 7));
-      const q = m <= 3 ? 'Q1' : m <= 6 ? 'Q2' : m <= 9 ? 'Q3' : 'Q4';
-      const key = `${y}-${q}`;
-      if (!quarterlyMap[key]) quarterlyMap[key] = { year: y, period: q, amount: 0, count: 0 };
-      quarterlyMap[key].amount += o.order_amount || 0;
-      quarterlyMap[key].count++;
+      const key = `${y}-${String(m).padStart(2, '0')}`;
+      if (!monthlyMap[key]) monthlyMap[key] = { year: y, month: m, amount: 0, count: 0 };
+      monthlyMap[key].amount += o.order_amount || 0;
+      monthlyMap[key].count++;
     });
-
-    const quarters = Object.values(quarterlyMap).sort((a, b) => {
-      if (a.year !== b.year) return a.year - b.year;
-      return a.period.localeCompare(b.period);
-    });
-
-    if (quarters.length < 2) return null;
 
     // 연도별 합계
     const yearlyMap = {};
@@ -84,26 +80,22 @@ export default function ForecastTrend({ accountId }) {
     const yearly = Object.entries(yearlyMap).sort((a, b) => a[0].localeCompare(b[0]));
     const maxYearly = Math.max(1, ...yearly.map(([, v]) => v));
 
-    // 계절성: 같은 분기를 연도별로 비교
-    const seasonality = {};
-    PERIODS.forEach(q => {
-      const vals = quarters.filter(qr => qr.period === q);
-      if (vals.length > 0) {
-        seasonality[q] = {
-          avg: Math.round(vals.reduce((s, v) => s + v.amount, 0) / vals.length),
-          count: vals.length,
-          latest: vals[vals.length - 1]?.amount || 0,
-        };
-      }
+    // 전년 동기 대비 (분기 단위)
+    const quarterlyMap = {};
+    allOrders.forEach(o => {
+      if (!o.order_date) return;
+      const y = parseInt(o.order_date.slice(0, 4));
+      const m = parseInt(o.order_date.slice(5, 7));
+      const q = m <= 3 ? 'Q1' : m <= 6 ? 'Q2' : m <= 9 ? 'Q3' : 'Q4';
+      const key = `${y}-${q}`;
+      if (!quarterlyMap[key]) quarterlyMap[key] = { year: y, period: q, amount: 0 };
+      quarterlyMap[key].amount += o.order_amount || 0;
     });
 
-    // 전년 동기 대비 변화
     const yoyComparison = [];
-    const curYear = CURRENT_YEAR;
-    const prevYear = curYear - 1;
-    PERIODS.forEach(q => {
-      const cur = quarterlyMap[`${curYear}-${q}`];
-      const prev = quarterlyMap[`${prevYear}-${q}`];
+    ['Q1','Q2','Q3','Q4'].forEach(q => {
+      const cur = quarterlyMap[`${CURRENT_YEAR}-${q}`];
+      const prev = quarterlyMap[`${CURRENT_YEAR - 1}-${q}`];
       if (prev) {
         const curAmt = cur?.amount || 0;
         const change = prev.amount > 0 ? ((curAmt - prev.amount) / prev.amount) * 100 : 0;
@@ -111,13 +103,12 @@ export default function ForecastTrend({ accountId }) {
       }
     });
 
-    // 이탈 위험: 최근 2분기 연속 전년대비 20% 이상 감소
+    // 이탈 위험
     const churnRisk = yoyComparison.filter(y => y.change < -20).length >= 2;
 
-    // 평균 발주 주기 & 예상 다음 발주
+    // 평균 발주 주기
     const sortedOrders = allOrders.filter(o => o.order_date).sort((a, b) => a.order_date.localeCompare(b.order_date));
-    let avgGap = null;
-    let expectedNext = null;
+    let avgGap = null, expectedNext = null;
     if (sortedOrders.length >= 2) {
       const gaps = [];
       for (let i = 1; i < sortedOrders.length; i++) {
@@ -131,7 +122,7 @@ export default function ForecastTrend({ accountId }) {
       }
     }
 
-    return { quarters, yearly, maxYearly, seasonality, yoyComparison, churnRisk, avgGap, expectedNext };
+    return { yearly, maxYearly, yoyComparison, churnRisk, avgGap, expectedNext };
   }, [allOrders]);
 
   const handleAddFcst = () => {
@@ -140,15 +131,38 @@ export default function ForecastTrend({ accountId }) {
       id: genId('fcst'),
       account_id: accountId,
       year: parseInt(newFcst.year),
-      period: newFcst.period,
+      month: parseInt(newFcst.month),
       product_category: newFcst.product_category,
       forecast_amount: parseFloat(newFcst.forecast_amount) || 0,
       currency: newFcst.currency,
+      order_month: `${newFcst.year}-${String(newFcst.month).padStart(2, '0')}`,
+      notes: newFcst.notes || '',
       created_at: today(),
     });
-    setNewFcst({ year: CURRENT_YEAR, period: 'Q1', product_category: '', forecast_amount: '', currency: 'USD' });
-    setShowForm(false);
+    setNewFcst({ year: CURRENT_YEAR, month: parseInt(newFcst.month) < 12 ? parseInt(newFcst.month) + 1 : 1, product_category: newFcst.product_category, forecast_amount: '', currency: newFcst.currency, notes: '' });
   };
+
+  // 월별 요약 테이블 (연도별 그룹)
+  const monthlySummary = useMemo(() => {
+    if (!hasForecast) return [];
+    const byYear = {};
+    fcstAnalysis.forEach(f => {
+      const y = f.year;
+      if (!byYear[y]) byYear[y] = {};
+      const m = f.month || 1;
+      if (!byYear[y][m]) byYear[y][m] = { forecast: 0, actual: 0, items: [] };
+      byYear[y][m].forecast += f.forecast_amount || 0;
+      byYear[y][m].actual += f.actual;
+      byYear[y][m].items.push(f);
+    });
+    return Object.entries(byYear).sort((a, b) => b[0] - a[0]);
+  }, [fcstAnalysis, hasForecast]);
+
+  function displayPeriod(f) {
+    if (f.month) return `${f.month}월`;
+    if (f.period) return f.period;
+    return '-';
+  }
 
   return (
     <div>
@@ -164,27 +178,63 @@ export default function ForecastTrend({ accountId }) {
       {/* ═══ Track A: FCST 제공 고객 ═══ */}
       {hasForecast && (
         <>
-          {/* 괴리 알람 */}
           {fcstAlarms.length > 0 && (
             <div className="alert-banner danger" style={{ marginBottom: 16 }}>
               <span>🔴</span>
-              <strong>FCST 괴리 경고:</strong> {fcstAlarms.length}건의 분기에서 ±15% 초과 괴리 발생
+              <strong>FCST 괴리 경고:</strong> {fcstAlarms.length}건에서 ±15% 초과 괴리 발생
             </div>
           )}
 
-          {/* FCST vs Actual 테이블 */}
+          {/* 월별 요약 */}
+          {monthlySummary.map(([year, months]) => (
+            <div key={year} className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">📊 {year}년 월별 FCST vs 실적</div>
+              <div className="table-wrap" style={{ maxHeight: 400 }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>월</th>
+                      <th style={{ textAlign: 'right' }}>Forecast</th>
+                      <th style={{ textAlign: 'right' }}>실적</th>
+                      <th style={{ textAlign: 'right' }}>괴리율</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(months).sort((a, b) => a[0] - b[0]).map(([m, data]) => {
+                      const pct = data.forecast > 0 ? ((data.actual - data.forecast) / data.forecast) * 100 : 0;
+                      return (
+                        <tr key={m}>
+                          <td>{m}월</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>${data.forecast.toLocaleString()}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>${data.actual.toLocaleString()}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <span className={`score-badge ${Math.abs(pct) > 15 ? 'red' : Math.abs(pct) > 10 ? 'yellow' : 'green'}`}>
+                              {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+
+          {/* 상세 항목 */}
           <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">📊 Forecast vs 실적</div>
+            <div className="card-title">📋 FCST 상세 항목</div>
             <div className="table-wrap" style={{ maxHeight: 300 }}>
               <table className="data-table">
                 <thead>
                   <tr>
                     <th>연도</th>
-                    <th>분기</th>
+                    <th>기간</th>
                     <th>제품군</th>
                     <th style={{ textAlign: 'right' }}>Forecast</th>
                     <th style={{ textAlign: 'right' }}>실적</th>
                     <th style={{ textAlign: 'right' }}>괴리율</th>
+                    <th>비고</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -192,7 +242,7 @@ export default function ForecastTrend({ accountId }) {
                   {fcstAnalysis.map(f => (
                     <tr key={f.id}>
                       <td>{f.year}</td>
-                      <td>{f.period}</td>
+                      <td>{displayPeriod(f)}</td>
                       <td>{f.product_category}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>${(f.forecast_amount || 0).toLocaleString()}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>${f.actual.toLocaleString()}</td>
@@ -201,6 +251,7 @@ export default function ForecastTrend({ accountId }) {
                           {f.variance > 0 ? '+' : ''}{f.variance.toFixed(1)}%
                         </span>
                       </td>
+                      <td style={{ fontSize: 11, color: 'var(--text3)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.notes || ''}</td>
                       <td><button className="btn btn-danger btn-sm" onClick={() => removeForecast(f.id)}>삭제</button></td>
                     </tr>
                   ))}
@@ -214,7 +265,6 @@ export default function ForecastTrend({ accountId }) {
       {/* ═══ Track B: 트렌드 분석 ═══ */}
       {!hasForecast && trendAnalysis && (
         <>
-          {/* 이탈 위험 경고 */}
           {trendAnalysis.churnRisk && (
             <div className="alert-banner danger" style={{ marginBottom: 16 }}>
               <span>🔴</span>
@@ -271,28 +321,6 @@ export default function ForecastTrend({ accountId }) {
             </div>
           )}
 
-          {/* 계절성 패턴 */}
-          {Object.keys(trendAnalysis.seasonality).length > 0 && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">🔄 계절성 패턴 (분기별 평균)</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                {PERIODS.map(q => {
-                  const s = trendAnalysis.seasonality[q];
-                  return (
-                    <div key={q} className="kpi" style={{ padding: 12 }}>
-                      <div className="kpi-label">{q}</div>
-                      <div className="kpi-value" style={{ fontSize: 18 }}>
-                        {s ? `$${s.avg.toLocaleString()}` : '-'}
-                      </div>
-                      {s && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>{s.count}회 평균</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* 예상 발주 */}
           {trendAnalysis.avgGap && (
             <div className="alert-banner warning" style={{ marginBottom: 16 }}>
               <span>📅</span>
@@ -310,11 +338,11 @@ export default function ForecastTrend({ accountId }) {
         </div>
       )}
 
-      {/* FCST 입력 (항상 표시 — Track A 전환용) */}
+      {/* FCST 입력 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>Forecast 데이터 ({allForecasts.length}건)</span>
         <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
-          {showForm ? '취소' : '+ Forecast 입력'}
+          {showForm ? '닫기' : '+ Forecast 입력'}
         </button>
       </div>
 
@@ -330,9 +358,9 @@ export default function ForecastTrend({ accountId }) {
               </select>
             </div>
             <div className="form-group">
-              <label>분기 *</label>
-              <select value={newFcst.period} onChange={e => setNewFcst(p => ({ ...p, period: e.target.value }))}>
-                {PERIODS.map(q => <option key={q} value={q}>{q}</option>)}
+              <label>월 *</label>
+              <select value={newFcst.month} onChange={e => setNewFcst(p => ({ ...p, month: e.target.value }))}>
+                {MONTHS.map((label, idx) => <option key={idx + 1} value={idx + 1}>{label}</option>)}
               </select>
             </div>
           </div>
@@ -345,7 +373,7 @@ export default function ForecastTrend({ accountId }) {
               </select>
             </div>
             <div className="form-group">
-              <label>Forecast 금액 *</label>
+              <label>Forecast 금액 (USD) *</label>
               <input type="number" value={newFcst.forecast_amount} onChange={e => setNewFcst(p => ({ ...p, forecast_amount: e.target.value }))} placeholder="예상 수주 금액" />
             </div>
           </div>
@@ -359,12 +387,25 @@ export default function ForecastTrend({ accountId }) {
                 <option value="KRW">KRW</option>
               </select>
             </div>
-            <div className="form-group" style={{ justifyContent: 'flex-end' }}>
-              <button className="btn btn-primary" onClick={handleAddFcst} disabled={!newFcst.product_category || !newFcst.forecast_amount}>추가</button>
+            <div className="form-group">
+              <label>비고</label>
+              <input type="text" value={newFcst.notes} onChange={e => setNewFcst(p => ({ ...p, notes: e.target.value }))} placeholder="메모 (선택)" />
             </div>
+          </div>
+          <div style={{ textAlign: 'right', marginTop: 8 }}>
+            <button className="btn btn-primary" onClick={handleAddFcst} disabled={!newFcst.product_category || !newFcst.forecast_amount}>추가</button>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+/** 기존 분기 데이터 → 월 변환 (호환용) */
+function quarterToMonth(period) {
+  if (period === 'Q1') return 1;
+  if (period === 'Q2') return 4;
+  if (period === 'Q3') return 7;
+  if (period === 'Q4') return 10;
+  return 1;
 }

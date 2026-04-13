@@ -3,8 +3,9 @@ import { useAccount } from '../context/AccountContext';
 const NAV_ITEMS = [
   { key: 'dashboard', icon: '📊', label: '대시보드' },
   { key: 'accounts', icon: '🏢', label: '고객 목록' },
+  { key: 'orderReport', icon: '📈', label: '수주목표관리' },
   { key: 'report', icon: '📋', label: '종합 리포트' },
-  { key: 'progress', icon: '📈', label: '진도관리' },
+  { key: 'progress', icon: '📊', label: '진도관리' },
   { key: 'typeguide', icon: '📖', label: '유형가이드' },
   { key: 'settings', icon: '⚙️', label: '설정', adminOnly: true },
 ];

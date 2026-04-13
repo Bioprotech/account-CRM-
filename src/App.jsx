@@ -6,6 +6,7 @@ import Dashboard from './views/Dashboard';
 import AccountList from './views/AccountList';
 import Settings from './views/Settings';
 import Report from './views/Report';
+import OrderReport from './views/OrderReport';
 import Progress from './views/Progress';
 import TypeGuideView from './views/TypeGuideView';
 import AccountModal from './components/AccountModal/AccountModal';
@@ -102,6 +103,7 @@ function AppContent() {
     switch (currentTab) {
       case 'dashboard': return <Dashboard />;
       case 'accounts': return <AccountList />;
+      case 'orderReport': return <OrderReport />;
       case 'report': return <Report />;
       case 'progress': return <Progress />;
       case 'typeguide': return <TypeGuideView />;

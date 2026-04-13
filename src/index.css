@@ -18,7 +18,10 @@
   --text2: #4a5e4a;
   --text3: #8a9e8a;
   --accent-light: rgba(46,125,50,.08);
+  --accent-bg: rgba(46,125,50,.06);
   --accent-border: rgba(46,125,50,.25);
+  --text4: #bbb;
+  --amber: #e65100;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
