@@ -248,20 +248,43 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
 }
 
 /**
- * 전년도 고객 목록 저장/로드 (localStorage)
+ * 전년도 고객 목록 저장/로드
+ * - Firestore (app_settings/crm_settings 도큐먼트)가 주 저장소
+ * - localStorage는 캐시용 (Firestore 로드 전 빠른 표시)
  */
+import { saveSetting } from './firebase';
+
 const PRIOR_YEAR_KEY = 'bioprotech_account_crm_prior_year_customers';
 
-export function savePriorYearCustomers(names) {
+export async function savePriorYearCustomers(names) {
   const cleaned = [...new Set(names.map(n => n.toLowerCase().trim()).filter(Boolean))];
+  // localStorage 캐시
   localStorage.setItem(PRIOR_YEAR_KEY, JSON.stringify(cleaned));
+  // Firestore 저장 (주 저장소)
+  try {
+    await saveSetting('priorYearCustomers', cleaned);
+  } catch (e) {
+    console.error('[PriorYear] Firestore 저장 실패:', e);
+  }
   return cleaned;
 }
 
 export function loadPriorYearCustomers() {
+  // localStorage 캐시에서 빠르게 로드 (Firestore 구독 데이터가 오기 전까지)
   try {
     const saved = JSON.parse(localStorage.getItem(PRIOR_YEAR_KEY));
     if (Array.isArray(saved)) return new Set(saved);
   } catch {}
   return new Set();
+}
+
+/**
+ * Firestore에서 받은 settings로 localStorage 캐시 동기화
+ */
+export function syncPriorYearFromSettings(settings) {
+  if (settings?.priorYearCustomers && Array.isArray(settings.priorYearCustomers)) {
+    localStorage.setItem(PRIOR_YEAR_KEY, JSON.stringify(settings.priorYearCustomers));
+    return new Set(settings.priorYearCustomers);
+  }
+  return null;
 }

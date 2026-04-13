@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { REGIONS, CUSTOMER_TYPE_GUIDE } from '../lib/constants';
 import { daysSince, scoreColorClass } from '../lib/utils';
-import { classifyCustomers, loadPriorYearCustomers } from '../lib/customerClassification';
+import { classifyCustomers, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -28,7 +28,7 @@ function pctColor(p) {
 }
 
 export default function Dashboard() {
-  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, currentUser, isAdmin, saveAccount, showToast } = useAccount();
+  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, currentUser, isAdmin, saveAccount, showToast, appSettings } = useAccount();
   const [syncing, setSyncing] = useState(false);
 
   // ── 담당자별 데이터 필터링 ──
@@ -79,7 +79,11 @@ export default function Dashboard() {
   const hasPlan = customerPlans.length > 0;
 
   // 고객 분류 (기존/대학병원/해외기타/국내기타/신규)
-  const priorYearCustomers = useMemo(() => loadPriorYearCustomers(), []);
+  // Firestore settings에서 priorYearCustomers가 오면 우선 사용, 아니면 localStorage 캐시
+  const priorYearCustomers = useMemo(() => {
+    const fromFirestore = syncPriorYearFromSettings(appSettings);
+    return fromFirestore || loadPriorYearCustomers();
+  }, [appSettings]);
   const classification = useMemo(() => {
     if (!hasPlan && yearOrders.length === 0) return null;
     return classifyCustomers({

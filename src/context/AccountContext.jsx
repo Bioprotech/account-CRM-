@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData } from '../lib/firebase';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -34,7 +34,7 @@ export default function AccountProvider({ children }) {
     localStorage.removeItem(AUTH_KEY);
   }, []);
 
-  /* ── Team Members (동적) ── */
+  /* ── Team Members (Firestore 동기화) ── */
   const [teamMembers, setTeamMembersState] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(TEAM_STORAGE_KEY));
@@ -43,10 +43,32 @@ export default function AccountProvider({ children }) {
     return DEFAULT_TEAM_MEMBERS;
   });
 
-  const saveTeamMembers = useCallback((members) => {
+  /* ── App Settings (Firestore 구독) ── */
+  const [appSettings, setAppSettings] = useState({});
+
+  useEffect(() => {
+    if (!FIREBASE_ENABLED) return;
+    const unsub = subscribeSettings((data) => {
+      setAppSettings(data);
+      // Firestore의 teamMembers로 동기화
+      if (Array.isArray(data.teamMembers) && data.teamMembers.length > 0) {
+        setTeamMembersState(data.teamMembers);
+        localStorage.setItem(TEAM_STORAGE_KEY, JSON.stringify(data.teamMembers));
+      }
+      // Firestore의 priorYearCustomers로 localStorage 동기화
+      if (Array.isArray(data.priorYearCustomers)) {
+        localStorage.setItem('bioprotech_account_crm_prior_year_customers', JSON.stringify(data.priorYearCustomers));
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const saveTeamMembers = useCallback(async (members) => {
     const cleaned = members.map(m => m.trim()).filter(Boolean);
     setTeamMembersState(cleaned);
     localStorage.setItem(TEAM_STORAGE_KEY, JSON.stringify(cleaned));
+    // Firestore에도 저장
+    try { await saveSetting('teamMembers', cleaned); } catch (e) { console.error('팀멤버 Firestore 저장 실패:', e); }
   }, []);
 
   /* ── Accounts ── */
@@ -580,6 +602,7 @@ export default function AccountProvider({ children }) {
     toast, showToast,
     fbStatus,
     teamMembers, saveTeamMembers,
+    appSettings,
     restoreSnapshot,
   };
 

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import AccountProvider, { useAccount } from './context/AccountContext';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
@@ -11,23 +12,82 @@ import AccountModal from './components/AccountModal/AccountModal';
 
 function UserSelectScreen() {
   const { login, teamMembers } = useAccount();
+  const [showAdminPin, setShowAdminPin] = useState(false);
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
 
-  const users = [
-    { name: 'Haksu', admin: true },
-    ...teamMembers.map(name => ({ name, admin: false })),
-  ];
+  const ADMIN_PASSWORD = '1208';
+
+  const handleAdminSubmit = (e) => {
+    e.preventDefault();
+    if (pin === ADMIN_PASSWORD) {
+      login('Haksu', true);
+    } else {
+      setPinError(true);
+      setPin('');
+      setTimeout(() => setPinError(false), 1500);
+    }
+  };
+
+  if (showAdminPin) {
+    return (
+      <div className="user-select-screen">
+        <form onSubmit={handleAdminSubmit} style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+          background: 'var(--bg2)', padding: 32, borderRadius: 16,
+          border: '1.5px solid var(--accent)', width: 280,
+        }}>
+          <div style={{ fontSize: 32 }}>🔐</div>
+          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>관리자 비밀번호</div>
+          <input
+            type="password"
+            autoFocus
+            value={pin}
+            onChange={e => setPin(e.target.value)}
+            placeholder="비밀번호 입력"
+            style={{
+              width: '100%', padding: '10px 14px', borderRadius: 8,
+              border: `1.5px solid ${pinError ? '#ef4444' : 'var(--border)'}`,
+              background: 'var(--bg)', color: 'var(--text)', fontSize: 16,
+              textAlign: 'center', letterSpacing: 4,
+              outline: 'none', boxSizing: 'border-box',
+            }}
+          />
+          {pinError && (
+            <div style={{ color: '#ef4444', fontSize: 12 }}>비밀번호가 올바르지 않습니다</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+            <button type="button" onClick={() => { setShowAdminPin(false); setPin(''); setPinError(false); }}
+              style={{ flex: 1, padding: 10, borderRadius: 8, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit' }}>
+              취소
+            </button>
+            <button type="submit"
+              style={{ flex: 1, padding: 10, borderRadius: 8, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontFamily: 'inherit', fontWeight: 600 }}>
+              확인
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="user-select-screen">
       <h1>Account CRM</h1>
       <p className="subtitle">Bio Protech 기존고객 관리 시스템</p>
+      <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: -8 }}>담당자를 선택하거나 관리자로 로그인하세요</p>
       <div className="user-grid">
-        {users.map(u => (
-          <div key={u.name} className="user-card" onClick={() => login(u.name, u.admin)}>
-            <div className="name">{u.admin ? '👑' : '👤'} {u.name}</div>
-            <div className="role">{u.admin ? '관리자' : '담당자'}</div>
+        {teamMembers.map(name => (
+          <div key={name} className="user-card" onClick={() => login(name, false)}>
+            <div className="name">👤 {name}</div>
+            <div className="role">내 고객만 편집</div>
           </div>
         ))}
+        <div className="user-card admin" onClick={() => setShowAdminPin(true)}
+          style={{ borderColor: 'var(--accent)', background: 'rgba(46,125,50,.06)' }}>
+          <div className="name" style={{ color: 'var(--accent)' }}>👑 관리자</div>
+          <div className="role" style={{ color: 'var(--accent)', opacity: 0.7 }}>전체 관리</div>
+        </div>
       </div>
     </div>
   );

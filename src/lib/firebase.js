@@ -246,6 +246,26 @@ export async function uploadAllData(data) {
   if (data.businessPlans?.length) await batchUpload(PLANS_COL, data.businessPlans);
 }
 
+/* ── CRM Settings (Firestore 단일 도큐먼트) ── */
+
+const SETTINGS_DOC = 'crm_settings';
+const SETTINGS_COLLECTION = 'app_settings';
+
+export function subscribeSettings(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  const ref = doc(db, SETTINGS_COLLECTION, SETTINGS_DOC);
+  return onSnapshot(ref,
+    (snap) => callback(snap.exists() ? snap.data() : {}),
+    (err) => console.error('[Firebase] settings onSnapshot 오류:', err)
+  );
+}
+
+export async function saveSetting(key, value) {
+  if (!FIREBASE_ENABLED) return;
+  const ref = doc(db, SETTINGS_COLLECTION, SETTINGS_DOC);
+  await setDoc(ref, { [key]: value }, { merge: true });
+}
+
 /**
  * 모든 컬렉션 비우기
  */
