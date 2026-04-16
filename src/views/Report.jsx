@@ -1,11 +1,15 @@
 import { useState, useMemo } from 'react';
 import { useAccount } from '../context/AccountContext';
-import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES } from '../lib/constants';
+import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES, SALES_TEAMS } from '../lib/constants';
 import { daysSince } from '../lib/utils';
 import { HBarChart, DonutChart, ProgressBars } from '../components/Charts';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
+
+/* ── 팀 표시명 매핑 ── */
+const TEAM_DISPLAY = { '해외영업': '해외(본사)', '영업지원': 'BPU', '국내영업': '국내' };
+const TEAM_ORDER = ['해외영업', '영업지원', '국내영업'];
 
 /* ── helpers ── */
 function fmtKRW(n) {
@@ -16,26 +20,55 @@ function fmtKRW(n) {
   if (abs >= 10000) return sign + Math.round(abs / 10000).toLocaleString() + '만';
   return n.toLocaleString();
 }
+/** 백만원 단위 포맷 (리포트 테이블용) */
+function fmtM(n) {
+  if (!n) return '-';
+  return Math.round(n / 1000000).toLocaleString();
+}
 function pct(actual, target) {
   if (!target) return 0;
   return Math.round((actual / target) * 100);
 }
 function pctColor(p) {
-  if (p >= 90) return 'green';
-  if (p >= 70) return 'yellow';
+  if (p >= 100) return 'blue';
+  if (p >= 80) return '';
   return 'red';
+}
+/** 달성률 스타일 (스펙: ≥100% 파랑, 80~99% 검정, <80% 빨강) */
+function achieveStyle(p) {
+  if (p >= 100) return { color: 'var(--blue, #2563eb)', fontWeight: 700 };
+  if (p >= 80) return { color: 'var(--text)', fontWeight: 600 };
+  return { color: 'var(--red)', fontWeight: 700 };
 }
 
 /* ── date range helpers ── */
-function getWeekRange() {
+/** 주차 범위 계산 (월~일 기준, offset=0 이번주, -1 지난주 등) */
+function getWeekRangeByOffset(offset = 0) {
   const now = new Date();
-  const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - now.getDay()); // Sunday
-  weekStart.setHours(0, 0, 0, 0);
+  const day = now.getDay(); // 0=Sun
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1) + (offset * 7));
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
   return {
-    start: weekStart.toISOString().slice(0, 10),
-    end: now.toISOString().slice(0, 10),
+    start: monday.toISOString().slice(0, 10),
+    end: sunday.toISOString().slice(0, 10),
+    monday,
+    sunday,
   };
+}
+/** N월 N주차 라벨 */
+function getWeekLabel(mondayDate) {
+  const m = mondayDate.getMonth() + 1;
+  const firstMon = new Date(mondayDate.getFullYear(), mondayDate.getMonth(), 1);
+  const firstDay = firstMon.getDay();
+  const firstMonday = firstDay <= 1 ? firstMon.getDate() + (1 - firstDay) : firstMon.getDate() + (8 - firstDay);
+  const weekNum = Math.ceil(((mondayDate.getDate() - firstMonday) / 7) + 1);
+  return `${m}월 ${weekNum > 0 ? weekNum : 1}주차`;
+}
+function getWeekRange() {
+  return getWeekRangeByOffset(0);
 }
 function getMonthStr() {
   return new Date().toISOString().slice(0, 7);
@@ -137,6 +170,7 @@ function MonthlyBreakdownTable({ title, rows }) {
 export default function Report() {
   const { accounts, activityLogs, orders, forecasts, businessPlans, openIssues, alarms, teamMembers } = useAccount();
   const [tab, setTab] = useState('weekly');
+  const [weekOffset, setWeekOffset] = useState(0);
 
   /* ── Base data ── */
   const customerPlans = useMemo(() =>
@@ -450,6 +484,88 @@ export default function Report() {
       breakdown,
     };
   }, [activityLogs, orders, accounts, openIssues, yearOrders, customerPlans, productPlans, planLookup]);
+
+  /* ══════════════════════════════
+     SECTION A — 매출·수주 현황 (팀별)
+     ══════════════════════════════ */
+  const sectionAData = useMemo(() => {
+    const { start: wkStart, end: wkEnd, monday } = getWeekRangeByOffset(weekOffset);
+    const wkMonth = monday.getMonth() + 1;
+    const wkYear = monday.getFullYear();
+    const monthStr = `${wkYear}-${String(wkMonth).padStart(2, '0')}`;
+    const monthKey = String(wkMonth).padStart(2, '0');
+
+    // 전주 끝 = 이번주 월요일 전날 (일요일)
+    const prevWeekEnd = new Date(monday);
+    prevWeekEnd.setDate(monday.getDate() - 1);
+    const prevWeekEndStr = prevWeekEnd.toISOString().slice(0, 10);
+    const monthStartStr = `${monthStr}-01`;
+
+    // 주문 → 팀 매핑 함수
+    const getTeamForOrder = (o) => {
+      const plan = findPlanForOrder(o);
+      return plan?.team || '기타';
+    };
+
+    // 당월 전체 주문
+    const monthOrders = orders.filter(o => (o.order_date || '').startsWith(monthStr));
+    // 금주 주문
+    const thisWeekOrders = monthOrders.filter(o => (o.order_date || '') >= wkStart && (o.order_date || '') <= wkEnd);
+    // 전주까지 누적 (당월 시작 ~ 금주 시작 전날)
+    const prevWeekOrders = monthOrders.filter(o => (o.order_date || '') >= monthStartStr && (o.order_date || '') < wkStart);
+
+    // 팀별 집계
+    const teamData = {};
+    TEAM_ORDER.forEach(team => {
+      teamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+    });
+    teamData['기타'] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+
+    prevWeekOrders.forEach(o => {
+      const team = getTeamForOrder(o);
+      if (!teamData[team]) teamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+      teamData[team].prevCum += (o.order_amount || 0);
+      teamData[team].monthCum += (o.order_amount || 0);
+    });
+
+    thisWeekOrders.forEach(o => {
+      const team = getTeamForOrder(o);
+      if (!teamData[team]) teamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+      teamData[team].thisWeek += (o.order_amount || 0);
+      teamData[team].monthCum += (o.order_amount || 0);
+    });
+
+    // 당월 목표 (사업계획 팀별)
+    customerPlans.forEach(p => {
+      const team = p.team || '기타';
+      if (!teamData[team]) teamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+      teamData[team].monthTarget += (p.targets?.[monthKey] || 0);
+    });
+
+    // 합계 행
+    const total = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+    Object.values(teamData).forEach(d => {
+      total.prevCum += d.prevCum;
+      total.thisWeek += d.thisWeek;
+      total.monthCum += d.monthCum;
+      total.monthTarget += d.monthTarget;
+    });
+
+    // 표시할 팀 목록 (TEAM_ORDER + 기타가 있으면)
+    const displayTeams = [...TEAM_ORDER];
+    if (teamData['기타'] && (teamData['기타'].prevCum > 0 || teamData['기타'].thisWeek > 0 || teamData['기타'].monthTarget > 0)) {
+      displayTeams.push('기타');
+    }
+
+    return {
+      wkStart, wkEnd, monday,
+      weekLabel: getWeekLabel(monday),
+      monthStr,
+      teamData,
+      displayTeams,
+      total,
+    };
+  }, [orders, customerPlans, weekOffset, planLookup]);
 
   /* ══════════════════════════════
      MONTHLY DATA
@@ -1032,7 +1148,76 @@ export default function Report() {
          ═══════════════════════════════════════════════ */}
       {tab === 'weekly' && (
         <div>
-          <div className="report-section-title">주간 리포트 ({weeklyData.weekStart} ~ {weeklyData.weekEnd})</div>
+          {/* ── 주차 네비게이터 ── */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16,
+            marginBottom: 16, padding: '10px 0',
+          }}>
+            <button className="btn btn-ghost" onClick={() => setWeekOffset(w => w - 1)} style={{ fontSize: 13, padding: '6px 12px' }}>◀ 이전 주</button>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', minWidth: 200, textAlign: 'center' }}>
+              {sectionAData.weekLabel} ({sectionAData.wkStart} ~ {sectionAData.wkEnd})
+            </div>
+            <button className="btn btn-ghost" onClick={() => setWeekOffset(w => w + 1)} style={{ fontSize: 13, padding: '6px 12px' }} disabled={weekOffset >= 0}>다음 주 ▶</button>
+            {weekOffset !== 0 && (
+              <button className="btn btn-ghost" onClick={() => setWeekOffset(0)} style={{ fontSize: 11, padding: '4px 8px', color: 'var(--text3)' }}>이번 주로</button>
+            )}
+          </div>
+
+          {/* ══ 섹션 A — 매출·수주 현황 ══ */}
+          {hasPlan && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>■ 1. 수주 현황</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[단위: 백만원 / %]</span>
+              </div>
+              <div className="table-wrap">
+                <table className="data-table" style={{ fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 90 }}>구분</th>
+                      <th style={{ textAlign: 'right' }}>전주 누적</th>
+                      <th style={{ textAlign: 'right' }}>금주 신규</th>
+                      <th style={{ textAlign: 'right' }}>당월 누적</th>
+                      <th style={{ textAlign: 'right' }}>당월 목표</th>
+                      <th style={{ textAlign: 'right' }}>달성률</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sectionAData.displayTeams.map(team => {
+                      const d = sectionAData.teamData[team];
+                      const rate = pct(d.monthCum, d.monthTarget);
+                      return (
+                        <tr key={team}>
+                          <td style={{ fontWeight: 600 }}>{TEAM_DISPLAY[team] || team}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtM(d.prevCum)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: d.thisWeek > 0 ? 'var(--accent)' : undefined }}>{fmtM(d.thisWeek)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(d.monthCum)}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(d.monthTarget)}</td>
+                          <td style={{ textAlign: 'right', ...achieveStyle(rate) }}>{d.monthTarget > 0 ? `${rate}%` : '-'}</td>
+                        </tr>
+                      );
+                    })}
+                    {/* 합계 행 */}
+                    <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
+                      <td>합계</td>
+                      <td style={{ textAlign: 'right' }}>{fmtM(sectionAData.total.prevCum)}</td>
+                      <td style={{ textAlign: 'right', color: sectionAData.total.thisWeek > 0 ? 'var(--accent)' : undefined }}>{fmtM(sectionAData.total.thisWeek)}</td>
+                      <td style={{ textAlign: 'right' }}>{fmtM(sectionAData.total.monthCum)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(sectionAData.total.monthTarget)}</td>
+                      <td style={{ textAlign: 'right', ...achieveStyle(pct(sectionAData.total.monthCum, sectionAData.total.monthTarget)) }}>
+                        {sectionAData.total.monthTarget > 0 ? `${pct(sectionAData.total.monthCum, sectionAData.total.monthTarget)}%` : '-'}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                ※ 수주: Import 실적 기준 / 목표: 사업계획 Import 고정값 / 전주 누적: 당월 1일 ~ 금주 시작 전일
+              </div>
+            </div>
+          )}
+
+          <div className="report-section-title" style={{ marginTop: 8 }}>주간 리포트 ({weeklyData.weekStart} ~ {weeklyData.weekEnd})</div>
 
           {/* Section 1: Executive Summary */}
           <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)' }}>
