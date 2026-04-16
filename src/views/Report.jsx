@@ -568,6 +568,107 @@ export default function Report() {
   }, [orders, customerPlans, weekOffset, planLookup]);
 
   /* ══════════════════════════════
+     SECTION B — 이슈사항 자동 집계
+     ══════════════════════════════ */
+  // 이슈 유형 → 리포트 카테고리 매핑
+  const ISSUE_CATEGORY_MAP = {
+    '수주활동': '영업이슈', '가격협의': '영업이슈', '입찰': '영업이슈', '계약갱신': '영업이슈', '영업미팅': '영업이슈',
+    '샘플요청': '고객지원', '규제·인증': '고객지원',
+    '품질클레임': '품질이슈', 'VOC수집': '품질이슈',
+  };
+  const ISSUE_CAT_ORDER = ['영업이슈', '고객지원', '품질이슈', '기타'];
+  const ISSUE_CAT_LABELS = {
+    '영업이슈': '영업이슈 (수주관련)', '고객지원': '고객지원 (유관부서 협조필요)',
+    '품질이슈': '품질이슈', '기타': '기타',
+  };
+  const TEAM_SHORT = { '해외영업': '해외', '영업지원': '지원', '국내영업': '국내' };
+
+  // account → team 매핑 함수
+  const getTeamForAccount = (accountId) => {
+    const plan = planLookup.byAccountId[accountId];
+    if (plan?.team) return plan.team;
+    const acc = accounts.find(a => a.id === accountId);
+    if (acc) {
+      const namePlan = planLookup.byName[(acc.company_name || '').toLowerCase().trim()];
+      if (namePlan?.team) return namePlan.team;
+      if (acc.region === '한국') return '국내영업';
+    }
+    return '해외영업';
+  };
+
+  const sectionBData = useMemo(() => {
+    const { wkStart, wkEnd } = sectionAData;
+    const weekLogs = activityLogs.filter(l => (l.date || '') >= wkStart && (l.date || '') <= wkEnd);
+
+    // 카테고리별 + 팀별 그룹핑
+    const grouped = {};
+    ISSUE_CAT_ORDER.forEach(cat => { grouped[cat] = []; });
+
+    weekLogs.forEach(l => {
+      const cat = ISSUE_CATEGORY_MAP[l.issue_type] || '기타';
+      const team = getTeamForAccount(l.account_id);
+      const acc = accounts.find(a => a.id === l.account_id);
+      grouped[cat].push({
+        team,
+        teamShort: TEAM_SHORT[team] || team,
+        company: acc?.company_name || '?',
+        content: l.content || '-',
+        rep: l.sales_rep || '-',
+        status: l.status || 'Open',
+        issueType: l.issue_type,
+        date: l.date,
+      });
+    });
+
+    // 각 카테고리 내에서 팀 순서 정렬
+    Object.keys(grouped).forEach(cat => {
+      grouped[cat].sort((a, b) => {
+        const ti = TEAM_ORDER.indexOf(a.team === '해외영업' ? '해외영업' : a.team);
+        const tj = TEAM_ORDER.indexOf(b.team === '해외영업' ? '해외영업' : b.team);
+        return ti - tj;
+      });
+    });
+
+    return { grouped, totalCount: weekLogs.length };
+  }, [sectionAData, activityLogs, accounts, planLookup]);
+
+  /* ══════════════════════════════
+     SECTION C — 다음 주 예정 액션
+     ══════════════════════════════ */
+  const sectionCData = useMemo(() => {
+    const { monday } = sectionAData;
+    const nextMonday = new Date(monday);
+    nextMonday.setDate(monday.getDate() + 7);
+    const nextSunday = new Date(nextMonday);
+    nextSunday.setDate(nextMonday.getDate() + 6);
+    const nStart = nextMonday.toISOString().slice(0, 10);
+    const nEnd = nextSunday.toISOString().slice(0, 10);
+
+    // due_date가 다음 주 범위 내인 Open/In Progress 로그
+    const actions = activityLogs
+      .filter(l => l.next_action && l.status !== 'Closed' && l.due_date && l.due_date >= nStart && l.due_date <= nEnd)
+      .map(l => {
+        const acc = accounts.find(a => a.id === l.account_id);
+        const team = getTeamForAccount(l.account_id);
+        return {
+          teamShort: TEAM_SHORT[team] || team,
+          company: acc?.company_name || '?',
+          action: l.next_action,
+          dueDate: l.due_date,
+          rep: l.sales_rep || '-',
+        };
+      })
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+
+    // 재구매 임박 고객 (D-14 이내)
+    const reorderAlarms = alarms
+      .filter(a => a.type === 'reorder' && a.level === 'danger')
+      .slice(0, 5);
+
+    return { actions, nextWeekLabel: `${nStart} ~ ${nEnd}`, reorderAlarms };
+  }, [sectionAData, activityLogs, accounts, alarms, planLookup]);
+
+  /* ══════════════════════════════
      MONTHLY DATA
      ══════════════════════════════ */
   const monthlyData = useMemo(() => {
@@ -1217,7 +1318,118 @@ export default function Report() {
             </div>
           )}
 
-          <div className="report-section-title" style={{ marginTop: 8 }}>주간 리포트 ({weeklyData.weekStart} ~ {weeklyData.weekEnd})</div>
+          {/* ══ 섹션 B — 이슈사항 자동 집계 ══ */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>■ 2. 영업본부 주간 이슈사항</span>
+              <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>{sectionBData.totalCount}건</span>
+            </div>
+            {sectionBData.totalCount === 0 ? (
+              <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>해당 주 등록된 이슈 없음</div>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table" style={{ fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 110 }}>구분</th>
+                      <th style={{ minWidth: 40 }}>팀</th>
+                      <th style={{ minWidth: 80 }}>고객명</th>
+                      <th>주요 내용</th>
+                      <th style={{ minWidth: 50 }}>담당</th>
+                      <th style={{ minWidth: 60 }}>상태</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ISSUE_CAT_ORDER.map(cat => {
+                      const rows = sectionBData.grouped[cat];
+                      if (rows.length === 0) {
+                        return (
+                          <tr key={cat} style={{ background: 'var(--bg2)' }}>
+                            <td style={{ fontWeight: 600, color: 'var(--text2)' }}>{ISSUE_CAT_LABELS[cat]}</td>
+                            <td colSpan={5} style={{ color: 'var(--text4)', fontSize: 11 }}>—</td>
+                          </tr>
+                        );
+                      }
+                      return rows.map((r, i) => (
+                        <tr key={`${cat}-${i}`}>
+                          {i === 0 && (
+                            <td rowSpan={rows.length} style={{ fontWeight: 600, verticalAlign: 'top', background: 'var(--bg2)', borderRight: '1px solid var(--border)' }}>
+                              {ISSUE_CAT_LABELS[cat]}
+                            </td>
+                          )}
+                          <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.teamShort}</td>
+                          <td style={{ fontWeight: 600, fontSize: 11 }}>{r.company}</td>
+                          <td style={{ fontSize: 11, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ color: 'var(--text3)', marginRight: 4 }}>[{r.issueType}]</span>
+                            {r.content.length > 60 ? r.content.slice(0, 60) + '...' : r.content}
+                          </td>
+                          <td style={{ fontSize: 11 }}>{r.rep}</td>
+                          <td>
+                            <span className={`status-badge ${r.status === 'Open' ? 'open' : r.status === 'In Progress' ? 'in-progress' : 'closed'}`} style={{ fontSize: 10 }}>
+                              {r.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ));
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* ══ 섹션 C — 다음 주 예정 액션 ══ */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>■ 3. 다음 주 예정 액션</span>
+              <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>({sectionCData.nextWeekLabel})</span>
+            </div>
+            {sectionCData.actions.length === 0 && sectionCData.reorderAlarms.length === 0 ? (
+              <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>예정된 액션 없음</div>
+            ) : (
+              <>
+                {sectionCData.actions.length > 0 && (
+                  <div className="table-wrap" style={{ marginBottom: sectionCData.reorderAlarms.length > 0 ? 12 : 0 }}>
+                    <table className="data-table" style={{ fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ minWidth: 40 }}>팀</th>
+                          <th style={{ minWidth: 80 }}>고객명</th>
+                          <th>액션 내용</th>
+                          <th style={{ minWidth: 50 }}>담당</th>
+                          <th style={{ minWidth: 80 }}>기한</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sectionCData.actions.map((a, i) => (
+                          <tr key={i}>
+                            <td style={{ fontSize: 11, color: 'var(--text2)' }}>{a.teamShort}</td>
+                            <td style={{ fontWeight: 600, fontSize: 11 }}>{a.company}</td>
+                            <td style={{ fontSize: 11 }}>{a.action}</td>
+                            <td style={{ fontSize: 11 }}>{a.rep}</td>
+                            <td style={{ fontSize: 11, fontWeight: 600 }}>{a.dueDate}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {sectionCData.reorderAlarms.length > 0 && (
+                  <div style={{ padding: '8px 0' }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--red)', marginBottom: 6 }}>🔴 재구매 임박 고객 (D-14 이내)</div>
+                    {sectionCData.reorderAlarms.map((a, i) => (
+                      <div key={i} style={{ fontSize: 11, padding: '3px 0', color: 'var(--text2)' }}>
+                        • <strong>{a.account?.company_name}</strong> — {a.msg}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── 기존 상세 분석 ── */}
+          <div className="report-section-title" style={{ marginTop: 8 }}>상세 분석 ({weeklyData.weekStart} ~ {weeklyData.weekEnd})</div>
 
           {/* Section 1: Executive Summary */}
           <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)' }}>
