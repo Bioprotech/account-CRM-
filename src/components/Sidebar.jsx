@@ -1,4 +1,5 @@
 import { useAccount } from '../context/AccountContext';
+import { CURRENT_VERSION } from '../lib/changelog';
 
 const NAV_ITEMS = [
   { key: 'dashboard', icon: '📊', label: '대시보드' },
@@ -8,6 +9,7 @@ const NAV_ITEMS = [
   { key: 'progress', icon: '📊', label: '진도관리' },
   { key: 'typeguide', icon: '📖', label: '유형가이드' },
   { key: 'settings', icon: '⚙️', label: '설정', adminOnly: true },
+  { key: 'changelog', icon: '📝', label: '업데이트 내역' },
 ];
 
 export default function Sidebar() {
@@ -48,6 +50,9 @@ export default function Sidebar() {
               )}
               {item.key === 'dashboard' && alarms.length > 0 && (
                 <span className="nav-badge" style={{ background: 'rgba(220,38,38,.12)', color: 'var(--red)' }}>{alarms.length}</span>
+              )}
+              {item.key === 'changelog' && (
+                <span className="nav-badge" style={{ background: 'rgba(46,125,50,.12)', color: 'var(--accent)' }}>{CURRENT_VERSION}</span>
               )}
             </div>
           ))}

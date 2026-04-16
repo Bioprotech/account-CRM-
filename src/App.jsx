@@ -136,6 +136,30 @@ function ChangelogPopup({ onClose }) {
   );
 }
 
+function ChangelogView() {
+  return (
+    <div style={{ maxWidth: 700 }}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 18 }}>📝 업데이트 내역</h2>
+      {CHANGELOG.map((log, idx) => (
+        <div key={idx} className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 12, background: idx === 0 ? 'var(--accent)' : 'var(--bg3)', color: idx === 0 ? '#fff' : 'var(--text2)' }}>
+              {log.version}
+            </span>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>{log.title}</span>
+            <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>{log.date}</span>
+          </div>
+          {log.items.map((item, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: 1.8, padding: '4px 0', borderBottom: i < log.items.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              {item}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AppContent() {
   const { currentUser, currentTab, editingAccount, toast } = useAccount();
   const [showChangelog, setShowChangelog] = useState(false);
@@ -164,6 +188,7 @@ function AppContent() {
       case 'progress': return <Progress />;
       case 'typeguide': return <TypeGuideView />;
       case 'settings': return <Settings />;
+      case 'changelog': return <ChangelogView />;
       default: return <Dashboard />;
     }
   };
