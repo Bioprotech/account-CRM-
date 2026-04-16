@@ -224,13 +224,15 @@ export default function AccountProvider({ children }) {
 
   /* ── Contracts ── */
   const saveContractItem = useCallback(async (contract) => {
+    // undefined 값 제거 (Firestore는 undefined를 거부함)
+    const clean = JSON.parse(JSON.stringify(contract));
     setContracts(prev => {
-      const idx = prev.findIndex(c => c.id === contract.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = contract; return next; }
-      return [...prev, contract];
+      const idx = prev.findIndex(c => c.id === clean.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
+      return [...prev, clean];
     });
     if (FIREBASE_ENABLED) {
-      try { await fbSaveContract(contract); } catch (e) { console.error('계약 저장 실패:', e); }
+      try { await fbSaveContract(clean); } catch (e) { console.error('계약 저장 실패:', e); }
     }
   }, []);
 

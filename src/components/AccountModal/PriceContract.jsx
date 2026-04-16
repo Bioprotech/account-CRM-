@@ -44,11 +44,11 @@ export default function PriceContract({ accountId }) {
       const existing = allContracts.find(c => c.id === editingId);
       const changeLog = {
         date: today(),
-        prev_price: existing?.unit_price,
+        prev_price: existing?.unit_price ?? 0,
         new_price: price,
-        prev_terms: existing?.net_terms,
-        new_terms: form.net_terms,
-        prev_qty: existing?.contract_qty,
+        prev_terms: existing?.net_terms || '',
+        new_terms: form.net_terms || '',
+        prev_qty: existing?.contract_qty ?? 0,
         new_qty: qty,
         reason: '조건 업데이트',
       };
