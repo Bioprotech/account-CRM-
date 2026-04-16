@@ -1001,68 +1001,69 @@ export default function Report() {
       const wb = XLSX.utils.book_new();
 
       if (tab === 'weekly') {
+        const wkLabel = sectionAData.weekLabel;
+        const wkShort = `${sectionAData.monday.getMonth() + 1}월${Math.ceil(sectionAData.monday.getDate() / 7)}W`;
+
         const rows = [
-          ['주간 리포트', `${weeklyData.weekStart} ~ ${weeklyData.weekEnd}`],
+          ['영업본부 주간회의 보고자료', '', '', '', '', ''],
+          [`${wkLabel} (${sectionAData.wkStart} ~ ${sectionAData.wkEnd})`, '', '', '', '', `출력일: ${new Date().toISOString().slice(0, 10)}`],
           [],
-          ['[Executive Summary]'],
-          ['금주 수주', weeklyData.weekOrderTotal],
-          ['금주 활동', weeklyData.weekActivityCount],
-          ['Open 이슈', weeklyData.openIssueCount],
-          ...(planSummary ? [['YTD 달성률', `${pct(planSummary.ytdActual, planSummary.ytdTarget)}%`]] : []),
+          // ── 섹션 A: 수주 현황 ──
+          ['■ 1. 수주 현황', '', '', '', '', '[단위: 백만원 / %]'],
+          ['구분', '전주 누적', '금주 신규', '당월 누적', '당월 목표', '달성률'],
+          ...sectionAData.displayTeams.map(team => {
+            const d = sectionAData.teamData[team];
+            const rate = d.monthTarget > 0 ? `${pct(d.monthCum, d.monthTarget)}%` : '-';
+            return [TEAM_DISPLAY[team] || team, Math.round(d.prevCum / 1e6), Math.round(d.thisWeek / 1e6), Math.round(d.monthCum / 1e6), Math.round(d.monthTarget / 1e6), rate];
+          }),
+          ['합계', Math.round(sectionAData.total.prevCum / 1e6), Math.round(sectionAData.total.thisWeek / 1e6), Math.round(sectionAData.total.monthCum / 1e6), Math.round(sectionAData.total.monthTarget / 1e6), sectionAData.total.monthTarget > 0 ? `${pct(sectionAData.total.monthCum, sectionAData.total.monthTarget)}%` : '-'],
           [],
-          ['[금주 수주 현황]'],
+          // ── 섹션 B: 이슈사항 ──
+          ['■ 2. 영업본부 주간 이슈사항'],
+          ['구분', '팀', '고객명', '주요 내용', '담당', '상태'],
+          ...ISSUE_CAT_ORDER.flatMap(cat => {
+            const catRows = sectionBData.grouped[cat];
+            if (catRows.length === 0) return [[ISSUE_CAT_LABELS[cat], '', '', '—', '', '']];
+            return catRows.map((r, i) => [i === 0 ? ISSUE_CAT_LABELS[cat] : '', r.teamShort, r.company, `[${r.issueType}] ${r.content}`, r.rep, r.status]);
+          }),
+          [],
+          // ── 섹션 C: 다음 주 예정 액션 ──
+          ['■ 3. 다음 주 예정 액션', `(${sectionCData.nextWeekLabel})`],
+          ['팀', '고객명', '액션 내용', '담당', '기한'],
+          ...(sectionCData.actions.length > 0
+            ? sectionCData.actions.map(a => [a.teamShort, a.company, a.action, a.rep, a.dueDate])
+            : [['', '', '예정된 액션 없음', '', '']]),
+          ...(sectionCData.reorderAlarms.length > 0
+            ? [[], ['※ 재구매 임박 고객 (D-14 이내)'], ...sectionCData.reorderAlarms.map(a => ['', a.account?.company_name || '', a.msg, '', ''])]
+            : []),
+          [],
+          // ── 부록: 상세 실적 ──
+          ['[부록] 금주 수주 상세'],
           ['고객명', '제품군', '수주금액', '담당자', '오더일'],
           ...weeklyData.weekOrders.map(o => {
             const acc = accounts.find(a => a.id === o.account_id);
             return [o.customer_name || acc?.company_name || '?', o.product_category || '', o.order_amount || 0, o.sales_rep || '', o.order_date || ''];
           }),
+          ...(weeklyData.weekOrders.length === 0 ? [['', '', '금주 수주 없음', '', '']] : []),
           [],
-          ['[금주 활동 요약]'],
+          ['[부록] 담당자별 활동 요약'],
           ['담당자', '컨택건수', '수주활동', '크로스셀링', '주요 내용'],
           ...Object.entries(weeklyData.repActivity)
             .filter(([, v]) => v.contacts > 0)
             .map(([rep, v]) => [rep, v.contacts, v.orderActivity, v.crossSelling, v.latestContent]),
           [],
           ...(planSummary ? [
-            ['[사업계획 YTD 진도]'],
-            ['연간목표', planSummary.annualTarget],
-            ['YTD목표', planSummary.ytdTarget],
-            ['YTD실적', planSummary.ytdActual],
-            ['YTD달성률', `${pct(planSummary.ytdActual, planSummary.ytdTarget)}%`],
-            [],
+            ['[부록] 사업계획 YTD 진도'],
             ['담당자', 'YTD목표', 'YTD실적', '달성률'],
-            ...Object.entries(planSummary.byRep).map(([rep, v]) => [rep, v.ytdTarget, v.ytdActual, v.ytdTarget > 0 ? `${pct(v.ytdActual, v.ytdTarget)}%` : '-']),
+            ...Object.entries(planSummary.byRep)
+              .filter(([, v]) => v.ytdTarget > 0 || v.ytdActual > 0)
+              .map(([rep, v]) => [rep, v.ytdTarget, v.ytdActual, v.ytdTarget > 0 ? `${pct(v.ytdActual, v.ytdTarget)}%` : '-']),
           ] : []),
-          [],
-          ['[담당자별 금주실적]'],
-          ['구분', '금주 수주', 'YTD 실적', '연간 목표', '달성률'],
-          ...weeklyData.breakdown.repRows.map(r => [r.label, r.periodActual, r.ytdActual, r.annualTarget, r.annualTarget > 0 ? `${pct(r.ytdActual, r.annualTarget)}%` : '-']),
-          [],
-          ['[품목별 금주실적]'],
-          ['구분', '금주 수주', 'YTD 실적', '연간 목표', '달성률'],
-          ...weeklyData.breakdown.prodRows.map(r => [r.label, r.periodActual, r.ytdActual, r.annualTarget, r.annualTarget > 0 ? `${pct(r.ytdActual, r.annualTarget)}%` : '-']),
-          [],
-          ['[지역별 금주실적]'],
-          ['구분', '금주 수주', 'YTD 실적', '연간 목표', '달성률'],
-          ...(weeklyData.breakdown.regRows || []).map(r => [r.label, r.periodActual, r.ytdActual, r.annualTarget, r.annualTarget > 0 ? `${pct(r.ytdActual, r.annualTarget)}%` : '-']),
-          [],
-          ['[Open 이슈 (Top 10)]'],
-          ['고객명', '유형', '상태', '날짜', '내용'],
-          ...openIssues
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-            .slice(0, 10)
-            .map(l => {
-              const acc = accounts.find(a => a.id === l.account_id);
-              return [acc?.company_name || '?', l.issue_type || '', l.status || '', l.date || '', l.content || ''];
-            }),
-          [],
-          ['[기한 초과 이슈 (14일+)]'],
-          ['고객명', '유형', '경과일수', '내용'],
-          ...weeklyData.overdueIssues.slice(0, 10).map(l => [l.company_name || '', l.issue_type || '', `${daysSince(l.date)}일`, l.content || '']),
         ];
         const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 15 }];
-        XLSX.utils.book_append_sheet(wb, ws, '주간리포트');
+        ws['!cols'] = [{ wch: 28 }, { wch: 14 }, { wch: 28 }, { wch: 50 }, { wch: 10 }, { wch: 12 }];
+        // 합계 행 강조 (merge 불가하므로 볼드 처리는 뷰어에서)
+        XLSX.utils.book_append_sheet(wb, ws, `주간종합_(${wkShort})`);
 
       } else {
         const rows = [
@@ -1212,7 +1213,11 @@ export default function Report() {
         }
       }
 
-      XLSX.writeFile(wb, `Account_CRM_${tab === 'weekly' ? '주간' : '월간'}_리포트_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const fileName = tab === 'weekly'
+        ? `영업본부_주간회의_보고자료_${sectionAData.weekLabel}_v1_${dateStr}.xlsx`
+        : `월간자료_${CURRENT_YEAR}년_${String(CURRENT_MONTH).padStart(2, '0')}월_영업본부_v1_${dateStr}.xlsx`;
+      XLSX.writeFile(wb, fileName);
     } catch (err) {
       console.error('Excel 다운로드 실패:', err);
     }
