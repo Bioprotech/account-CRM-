@@ -249,17 +249,20 @@ export default function Report() {
         else repMap[rep].annualTarget += (p.annual_target || 0);
       });
     }
+    const tmSet = new Set(teamMembers);
     periodOrders.forEach(o => {
       const plan = findPlanForOrder(o);
       const rep = plan?.sales_rep || o.sales_rep || '기타';
-      if (!repMap[rep]) repMap[rep] = { periodActual: 0, ytdActual: 0, annualTarget: 0 };
-      repMap[rep].periodActual += (o.order_amount || 0);
+      const validRep = tmSet.has(rep) ? rep : (repMap[rep] ? rep : '기타');
+      if (!repMap[validRep]) repMap[validRep] = { periodActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMap[validRep].periodActual += (o.order_amount || 0);
     });
     yearOrders.forEach(o => {
       const plan = findPlanForOrder(o);
       const rep = plan?.sales_rep || o.sales_rep || '기타';
-      if (!repMap[rep]) repMap[rep] = { periodActual: 0, ytdActual: 0, annualTarget: 0 };
-      repMap[rep].ytdActual += (o.order_amount || 0);
+      const validRep = tmSet.has(rep) ? rep : (repMap[rep] ? rep : '기타');
+      if (!repMap[validRep]) repMap[validRep] = { periodActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMap[validRep].ytdActual += (o.order_amount || 0);
     });
     const repRows = Object.entries(repMap)
       .filter(([, v]) => v.periodActual > 0 || v.ytdActual > 0 || v.annualTarget > 0)
@@ -410,10 +413,7 @@ export default function Report() {
     });
     weekLogs.forEach(l => {
       const rep = l.sales_rep;
-      if (!rep || !repActivity[rep]) {
-        if (rep) repActivity[rep] = { contacts: 0, orderActivity: 0, crossSelling: 0, latestContent: '' };
-        else return;
-      }
+      if (!rep || !repActivity[rep]) return; // teamMembers에 없는 담당자는 무시
       repActivity[rep].contacts++;
       if (l.issue_type === '수주활동') repActivity[rep].orderActivity++;
       if (l.issue_type === '크로스셀링') repActivity[rep].crossSelling++;
@@ -717,10 +717,8 @@ export default function Report() {
     // 6. AM별 활동 품질 지표 — plan sales_rep 기준
     const amMetrics = {};
     const amReps = new Set();
-    customerPlans.forEach(p => { if (p.sales_rep) amReps.add(p.sales_rep); });
-    // Also include teamMembers and account reps
+    // teamMembers만 사용 (불필요한 담당자 제외)
     teamMembers.forEach(r => amReps.add(r));
-    accounts.forEach(a => { if (a.sales_rep) amReps.add(a.sales_rep); });
 
     amReps.forEach(rep => {
       const repAccounts = accounts.filter(a => a.sales_rep === rep);
