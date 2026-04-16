@@ -24,7 +24,7 @@ function pct(a, b) {
 }
 
 export default function OrderReport() {
-  const { accounts, orders, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast } = useAccount();
+  const { accounts, orders, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts } = useAccount();
 
   const [viewYear] = useState(CURRENT_YEAR);
   const [viewMode, setViewMode] = useState('customer'); // 'customer' | 'team' | 'product'
@@ -179,12 +179,12 @@ export default function OrderReport() {
     return [start, start + 1, start + 2];
   }, [displayQ]);
 
-  // ── 담당자 목록 ──
+  // ── 담당자 목록 (팀 멤버 기준) ──
   const repList = useMemo(() => {
-    const set = new Set();
-    Object.values(customerData).forEach(d => { if (d.salesRep) set.add(d.salesRep); });
-    return [...set].sort();
-  }, [customerData]);
+    return teamMembers.filter(name =>
+      Object.values(customerData).some(d => d.salesRep === name)
+    );
+  }, [customerData, teamMembers]);
 
   // ── FCST 인라인 편집 ──
   const handleCellClick = useCallback((accountId, month) => {
@@ -215,7 +215,7 @@ export default function OrderReport() {
         month: month,
         product_category: '',
         forecast_amount: amount,
-        currency: 'USD',
+        currency: 'KRW',
         order_month: `${viewYear}-${String(month).padStart(2, '0')}`,
         notes: '',
         created_at: today(),
@@ -308,15 +308,16 @@ export default function OrderReport() {
                 <th style={{ position: 'sticky', left: 0, background: 'var(--bg3)', zIndex: 2, minWidth: 140 }}>고객사</th>
                 <th style={{ minWidth: 50 }}>담당</th>
                 {displayMonths.map(m => (
-                  <th key={m} colSpan={3} style={{ textAlign: 'center', borderLeft: '2px solid var(--border)' }}>
+                  <th key={m} colSpan={4} style={{ textAlign: 'center', borderLeft: '2px solid var(--border)' }}>
                     {m}월 {m === CURRENT_MONTH && <span style={{ color: 'var(--accent)', fontSize: 9 }}>●</span>}
                   </th>
                 ))}
-                <th colSpan={3} style={{ textAlign: 'center', borderLeft: '2px solid var(--accent)', background: 'var(--accent-bg)' }}>
+                <th colSpan={4} style={{ textAlign: 'center', borderLeft: '2px solid var(--accent)', background: 'var(--accent-bg)' }}>
                   Q{displayQ} 합계
                 </th>
                 <th style={{ borderLeft: '2px solid var(--border)', textAlign: 'center' }}>연간목표</th>
                 <th style={{ textAlign: 'center' }}>연간실적</th>
+                <th style={{ textAlign: 'center' }}>GAP</th>
                 <th style={{ textAlign: 'center' }}>달성률</th>
               </tr>
               <tr style={{ background: 'var(--bg2)', fontSize: 10 }}>
@@ -328,8 +329,10 @@ export default function OrderReport() {
                 <th style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)', color: 'var(--text3)' }}>목표</th>
                 <th style={{ textAlign: 'right', color: 'var(--text3)' }}>확정</th>
                 <th style={{ textAlign: 'right', color: 'var(--text3)' }}>FCST</th>
+                <th style={{ textAlign: 'right', color: 'var(--red)' }}>GAP</th>
                 <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', color: 'var(--text3)' }}>목표</th>
                 <th style={{ textAlign: 'right', color: 'var(--text3)' }}>확정</th>
+                <th style={{ textAlign: 'right', color: 'var(--red)' }}>GAP</th>
                 <th style={{ textAlign: 'right', color: 'var(--text3)' }}>%</th>
               </tr>
             </thead>
@@ -364,14 +367,22 @@ export default function OrderReport() {
                 {displayMonths.map(m => (
                   <TotalCells key={m} month={m} totals={totals} />
                 ))}
-                <td style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)', fontWeight: 700 }}>{fmtAmt(qSum(totals.targets, displayMonths))}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtAmt(qSum(totals.actuals, displayMonths))}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtAmt(qSum(totals.fcsts, displayMonths))}</td>
-                <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtAmt(totals.annualTarget)}</td>
-                <td style={{ textAlign: 'right' }}>{fmtAmt(annualSum(totals.actuals))}</td>
-                <td style={{ textAlign: 'right', color: cellColor(annualSum(totals.actuals), totals.annualTarget) }}>
-                  {pct(annualSum(totals.actuals), totals.annualTarget)}%
-                </td>
+                {(() => {
+                  const qT = qSum(totals.targets, displayMonths), qA = qSum(totals.actuals, displayMonths), qF = qSum(totals.fcsts, displayMonths), qG = qT - qA - qF;
+                  const yrA = annualSum(totals.actuals), yrF = annualSum(totals.fcsts), yrG = totals.annualTarget - yrA - yrF;
+                  return (<>
+                    <td style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)', fontWeight: 700 }}>{fmtAmt(qT)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtAmt(qA)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtAmt(qF)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: qG > 0 ? 'var(--red)' : 'var(--green)' }}>{qG !== 0 ? fmtAmt(qG) : '-'}</td>
+                    <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtAmt(totals.annualTarget)}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtAmt(yrA)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: yrG > 0 ? 'var(--red)' : 'var(--green)' }}>{yrG !== 0 ? fmtAmt(yrG) : '-'}</td>
+                    <td style={{ textAlign: 'right', color: cellColor(yrA, totals.annualTarget) }}>
+                      {pct(yrA, totals.annualTarget)}%
+                    </td>
+                  </>);
+                })()}
               </tr>
             </tbody>
           </table>
@@ -408,16 +419,19 @@ function SubHeaders({ month }) {
       <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', color: 'var(--text3)' }}>목표</th>
       <th style={{ textAlign: 'right', color: 'var(--text3)' }}>확정</th>
       <th style={{ textAlign: 'right', color: 'var(--accent)', cursor: 'help' }} title="클릭하여 편집">FCST</th>
+      <th style={{ textAlign: 'right', color: 'var(--red)', fontSize: 9 }}>GAP</th>
     </>
   );
 }
 
 function TotalCells({ month, totals }) {
+  const gap = (totals.targets[month] || 0) - (totals.actuals[month] || 0) - (totals.fcsts[month] || 0);
   return (
     <>
       <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtAmt(totals.targets[month] || 0)}</td>
       <td style={{ textAlign: 'right' }}>{fmtAmt(totals.actuals[month] || 0)}</td>
       <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtAmt(totals.fcsts[month] || 0)}</td>
+      <td style={{ textAlign: 'right', color: gap > 0 ? 'var(--red)' : 'var(--green)', fontSize: 10 }}>{gap !== 0 ? fmtAmt(gap) : '-'}</td>
     </>
   );
 }
@@ -466,17 +480,28 @@ function CustomerRow({ data: d, displayMonths, displayQ, editingCell, editValue,
       <td style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)', background: 'var(--accent-bg)', fontSize: 11 }}>{fmtAmt(qTarget)}</td>
       <td style={{ textAlign: 'right', background: 'var(--accent-bg)', fontSize: 11, fontWeight: 600 }}>{fmtAmt(qActual)}</td>
       <td style={{ textAlign: 'right', background: 'var(--accent-bg)', fontSize: 11, color: 'var(--accent)' }}>{fmtAmt(qFcst)}</td>
+      {(() => { const qGap = qTarget - qActual - qFcst; return (
+        <td style={{ textAlign: 'right', background: 'var(--accent-bg)', fontSize: 10, color: qTarget > 0 && qGap > 0 ? 'var(--red)' : qGap < 0 ? 'var(--green)' : 'var(--text4)', fontWeight: 600 }}>
+          {qTarget > 0 && qGap !== 0 ? fmtAmt(qGap) : '-'}
+        </td>
+      ); })()}
       {/* 연간 */}
-      <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', fontSize: 11 }}>{fmtAmt(d.annualTarget)}</td>
-      <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtAmt(yrActual)}</td>
-      <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: cellColor(yrActual, d.annualTarget) }}>
-        {d.annualTarget > 0 ? `${yrPct}%` : '-'}
-      </td>
+      {(() => { const yrFcst = annualSum(d.fcsts); const yrGap = d.annualTarget - yrActual - yrFcst; return (<>
+        <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', fontSize: 11 }}>{fmtAmt(d.annualTarget)}</td>
+        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtAmt(yrActual)}</td>
+        <td style={{ textAlign: 'right', fontSize: 10, color: d.annualTarget > 0 && yrGap > 0 ? 'var(--red)' : yrGap < 0 ? 'var(--green)' : 'var(--text4)', fontWeight: 600 }}>
+          {d.annualTarget > 0 && yrGap !== 0 ? fmtAmt(yrGap) : '-'}
+        </td>
+        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: cellColor(yrActual, d.annualTarget) }}>
+          {d.annualTarget > 0 ? `${yrPct}%` : '-'}
+        </td>
+      </>); })()}
     </tr>
   );
 }
 
 function MonthCells({ month, target, actual, fcst, isEditing, editValue, setEditValue, onCellClick, onCellSave, onCellKeyDown, isPast, isCurrent }) {
+  const gap = target - actual - fcst;
   return (
     <>
       <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', fontSize: 10, color: 'var(--text3)' }}>
@@ -516,6 +541,9 @@ function MonthCells({ month, target, actual, fcst, isEditing, editValue, setEdit
         ) : (
           fcst ? fmtAmt(fcst) : <span style={{ color: 'var(--text4)', fontSize: 9 }}>+</span>
         )}
+      </td>
+      <td style={{ textAlign: 'right', fontSize: 9, color: target > 0 && gap > 0 ? 'var(--red)' : gap < 0 ? 'var(--green)' : 'var(--text4)' }}>
+        {target > 0 && gap !== 0 ? fmtAmt(gap) : '-'}
       </td>
     </>
   );

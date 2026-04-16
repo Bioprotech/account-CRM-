@@ -28,7 +28,7 @@ function pctColor(p) {
 }
 
 export default function Dashboard() {
-  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, currentUser, isAdmin, saveAccount, showToast, appSettings } = useAccount();
+  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, forecasts, contracts, currentUser, isAdmin, saveAccount, showToast, appSettings } = useAccount();
   const [syncing, setSyncing] = useState(false);
 
   // ── 담당자별 데이터 필터링 ──
@@ -196,6 +196,46 @@ export default function Dashboard() {
       return score > 0 && score < 30;
     });
   }, [myAccounts]);
+
+  // ── 계약상태 모니터링 (GREEN/YELLOW/RED) ──
+  const contractStatusList = useMemo(() => {
+    if (!hasPlan) return [];
+    const planAccountIds = new Set(customerPlans.map(p => p.account_id).filter(Boolean));
+    return myAccounts
+      .filter(a => planAccountIds.has(a.id))
+      .map(a => {
+        const acctContracts = contracts.filter(c => c.account_id === a.id);
+        const hasContract = acctContracts.some(c => c.contract_expiry || c.unit_price);
+        const acctForecasts = forecasts.filter(f => f.account_id === a.id && f.year === CURRENT_YEAR);
+        const hasFcst = acctForecasts.length > 0;
+        // GREEN: 계약체결, YELLOW: 미체결이지만 FCST 협의, RED: 미체결+FCST없음
+        let status = 'red';
+        if (hasContract) status = 'green';
+        else if (hasFcst) status = 'yellow';
+        return { ...a, contractStatus: status, hasContract, hasFcst };
+      });
+  }, [myAccounts, contracts, forecasts, customerPlans, hasPlan]);
+
+  // ── 목표미달 고객 경고 (연간 확정+FCST < 목표) ──
+  const gapWarningAccounts = useMemo(() => {
+    if (!hasPlan) return [];
+    const result = [];
+    customerPlans.forEach(p => {
+      if (!p.account_id) return;
+      const acc = myAccounts.find(a => a.id === p.account_id);
+      if (!acc) return;
+      const target = p.annual_target || 0;
+      if (target <= 0) return;
+      const actual = yearOrders.filter(o => o.account_id === p.account_id).reduce((s, o) => s + (o.order_amount || 0), 0);
+      const fcst = forecasts.filter(f => f.account_id === p.account_id && f.year === CURRENT_YEAR).reduce((s, f) => s + (f.forecast_amount || 0), 0);
+      const gap = target - actual - fcst;
+      if (gap > 0) {
+        result.push({ account: acc, target, actual, fcst, gap, pct: Math.round(((actual + fcst) / target) * 100) });
+      }
+    });
+    result.sort((a, b) => b.gap - a.gap);
+    return result;
+  }, [customerPlans, yearOrders, forecasts, myAccounts, hasPlan]);
 
   // 지역별 목표 vs 실적
   const regionStats = useMemo(() => {
@@ -785,6 +825,73 @@ export default function Dashboard() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* 계약상태 모니터링 + 목표미달 경고 */}
+      {hasPlan && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+          {/* 계약상태 */}
+          <div className="card">
+            <div className="card-title">📋 계약 체결 현황</div>
+            {contractStatusList.length === 0 ? (
+              <div className="empty-state" style={{ padding: '24px 0' }}><p>사업계획 고객 없음</p></div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  {['green', 'yellow', 'red'].map(s => {
+                    const cnt = contractStatusList.filter(a => a.contractStatus === s).length;
+                    const label = s === 'green' ? '계약체결' : s === 'yellow' ? 'FCST협의' : '미체결';
+                    const color = s === 'green' ? 'var(--green)' : s === 'yellow' ? '#f59e0b' : 'var(--red)';
+                    return (
+                      <div key={s} style={{ flex: 1, textAlign: 'center', padding: '8px 4px', borderRadius: 8, background: `${color}12`, border: `1px solid ${color}40` }}>
+                        <div style={{ fontSize: 20, fontWeight: 800, color }}>{cnt}</div>
+                        <div style={{ fontSize: 10, color }}>{label}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="issue-list" style={{ maxHeight: 180 }}>
+                  {contractStatusList
+                    .filter(a => a.contractStatus !== 'green')
+                    .sort((a, b) => (a.contractStatus === 'red' ? 0 : 1) - (b.contractStatus === 'red' ? 0 : 1))
+                    .slice(0, 10)
+                    .map(a => (
+                      <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
+                        <span style={{ fontSize: 10, width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
+                          background: a.contractStatus === 'red' ? 'var(--red)' : '#f59e0b' }} />
+                        <span className="issue-company">{a.company_name}</span>
+                        <span style={{ fontSize: 10, color: a.contractStatus === 'red' ? 'var(--red)' : '#f59e0b' }}>
+                          {a.contractStatus === 'red' ? '미체결' : 'FCST 협의 중'}
+                        </span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{a.sales_rep}</span>
+                      </div>
+                    ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* 목표미달 GAP 경고 */}
+          <div className="card">
+            <div className="card-title">⚠️ 목표 미달 고객 (확정+FCST &lt; 목표)</div>
+            {gapWarningAccounts.length === 0 ? (
+              <div className="empty-state" style={{ padding: '24px 0' }}>
+                <p style={{ color: 'var(--green)' }}>모든 고객이 목표 달성 궤도</p>
+              </div>
+            ) : (
+              <div className="issue-list" style={{ maxHeight: 220 }}>
+                {gapWarningAccounts.slice(0, 12).map(w => (
+                  <div key={w.account.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(w.account)}>
+                    <span className="issue-company">{w.account.company_name}</span>
+                    <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 600 }}>GAP {fmtKRW(w.gap)}</span>
+                    <span className={`score-badge ${w.pct >= 70 ? 'yellow' : 'red'}`} style={{ fontSize: 9 }}>{w.pct}%</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{w.account.sales_rep}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -6,6 +6,15 @@ import { genId, today } from '../../lib/utils';
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 const CURRENT_YEAR = new Date().getFullYear();
 
+function fmtKRW(n) {
+  if (!n) return '-';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 100000000) return sign + (abs / 100000000).toFixed(1) + '억';
+  if (abs >= 10000) return sign + Math.round(abs / 10000).toLocaleString() + '만';
+  return sign + Math.round(abs).toLocaleString();
+}
+
 export default function ForecastTrend({ accountId }) {
   const { getForecastsForAccount, saveForecast, removeForecast, getOrdersForAccount } = useAccount();
   const allForecasts = getForecastsForAccount(accountId);
@@ -17,7 +26,7 @@ export default function ForecastTrend({ accountId }) {
     month: 1,
     product_category: '',
     forecast_amount: '',
-    currency: 'USD',
+    currency: 'KRW',
     notes: '',
   });
 
@@ -205,8 +214,8 @@ export default function ForecastTrend({ accountId }) {
                       return (
                         <tr key={m}>
                           <td>{m}월</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>${data.forecast.toLocaleString()}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>${data.actual.toLocaleString()}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(data.forecast)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(data.actual)}</td>
                           <td style={{ textAlign: 'right' }}>
                             <span className={`score-badge ${Math.abs(pct) > 15 ? 'red' : Math.abs(pct) > 10 ? 'yellow' : 'green'}`}>
                               {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
@@ -244,8 +253,8 @@ export default function ForecastTrend({ accountId }) {
                       <td>{f.year}</td>
                       <td>{displayPeriod(f)}</td>
                       <td>{f.product_category}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>${(f.forecast_amount || 0).toLocaleString()}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>${f.actual.toLocaleString()}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(f.forecast_amount || 0)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(f.actual)}</td>
                       <td style={{ textAlign: 'right' }}>
                         <span className={`score-badge ${Math.abs(f.variance) > 15 ? 'red' : Math.abs(f.variance) > 10 ? 'yellow' : 'green'}`}>
                           {f.variance > 0 ? '+' : ''}{f.variance.toFixed(1)}%
@@ -282,7 +291,7 @@ export default function ForecastTrend({ accountId }) {
                   <div className="dist-bar-wrap" style={{ height: 14 }}>
                     <div className="dist-bar" style={{ width: `${(amt / trendAnalysis.maxYearly) * 100}%`, background: 'var(--accent)' }} />
                   </div>
-                  <span className="dist-count" style={{ width: 'auto', minWidth: 80 }}>${amt.toLocaleString()}</span>
+                  <span className="dist-count" style={{ width: 'auto', minWidth: 80 }}>{fmtKRW(amt)}</span>
                 </div>
               ))}
             </div>
@@ -306,8 +315,8 @@ export default function ForecastTrend({ accountId }) {
                     {trendAnalysis.yoyComparison.map(y => (
                       <tr key={y.period}>
                         <td>{y.period}</td>
-                        <td style={{ textAlign: 'right' }}>${y.previous.toLocaleString()}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600 }}>${y.current.toLocaleString()}</td>
+                        <td style={{ textAlign: 'right' }}>{fmtKRW(y.previous)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(y.current)}</td>
                         <td style={{ textAlign: 'right' }}>
                           <span className={`score-badge ${y.change < -20 ? 'red' : y.change < 0 ? 'yellow' : 'green'}`}>
                             {y.change > 0 ? '+' : ''}{y.change.toFixed(1)}%
@@ -373,7 +382,7 @@ export default function ForecastTrend({ accountId }) {
               </select>
             </div>
             <div className="form-group">
-              <label>Forecast 금액 (USD) *</label>
+              <label>Forecast 금액 (원) *</label>
               <input type="number" value={newFcst.forecast_amount} onChange={e => setNewFcst(p => ({ ...p, forecast_amount: e.target.value }))} placeholder="예상 수주 금액" />
             </div>
           </div>
@@ -381,10 +390,10 @@ export default function ForecastTrend({ accountId }) {
             <div className="form-group">
               <label>통화</label>
               <select value={newFcst.currency} onChange={e => setNewFcst(p => ({ ...p, currency: e.target.value }))}>
+                <option value="KRW">KRW (원)</option>
                 <option value="USD">USD</option>
                 <option value="EUR">EUR</option>
                 <option value="GBP">GBP</option>
-                <option value="KRW">KRW</option>
               </select>
             </div>
             <div className="form-group">
