@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting } from '../lib/firebase';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -75,6 +75,7 @@ export default function AccountProvider({ children }) {
   const [accounts, setAccounts] = useState([]);
   const [activityLogs, setActivityLogs] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [sales, setSales] = useState([]);
   const [contracts, setContracts] = useState([]);
   const [forecasts, setForecasts] = useState([]);
   const [businessPlans, setBusinessPlans] = useState([]);
@@ -87,6 +88,7 @@ export default function AccountProvider({ children }) {
         if (saved?.accounts) setAccounts(saved.accounts);
         if (saved?.activityLogs) setActivityLogs(saved.activityLogs);
         if (saved?.orders) setOrders(saved.orders);
+        if (saved?.sales) setSales(saved.sales);
         if (saved?.contracts) setContracts(saved.contracts);
         if (saved?.forecasts) setForecasts(saved.forecasts);
         if (saved?.businessPlans) setBusinessPlans(saved.businessPlans);
@@ -103,16 +105,17 @@ export default function AccountProvider({ children }) {
     const unsub4 = subscribeContracts((data) => setContracts(data));
     const unsub5 = subscribeForecasts((data) => setForecasts(data));
     const unsub6 = subscribeBusinessPlans((data) => setBusinessPlans(data));
+    const unsub7 = subscribeSales((data) => setSales(data));
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); };
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); };
   }, []);
 
   // localStorage 백업
   useEffect(() => {
-    if (accounts.length || activityLogs.length || orders.length || contracts.length || forecasts.length || businessPlans.length) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ accounts, activityLogs, orders, contracts, forecasts, businessPlans }));
+    if (accounts.length || activityLogs.length || orders.length || sales.length || contracts.length || forecasts.length || businessPlans.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ accounts, activityLogs, orders, sales, contracts, forecasts, businessPlans }));
     }
-  }, [accounts, activityLogs, orders, contracts, forecasts, businessPlans]);
+  }, [accounts, activityLogs, orders, sales, contracts, forecasts, businessPlans]);
 
   /* ── Save / Delete ── */
   const saveAccount = useCallback(async (account) => {
@@ -221,6 +224,46 @@ export default function AccountProvider({ children }) {
   const getOrdersForAccount = useCallback((accountId) => {
     return orders.filter(o => o.account_id === accountId).sort((a, b) => (b.order_date || '').localeCompare(a.order_date || ''));
   }, [orders]);
+
+  /* ── Sales (매출, B/L date 기준) ── */
+  const saveSaleItem = useCallback(async (sale) => {
+    setSales(prev => {
+      const idx = prev.findIndex(s => s.id === sale.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = sale; return next; }
+      return [...prev, sale];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveSale(sale); } catch (e) { console.error('매출 저장 실패:', e); }
+    }
+  }, []);
+
+  const removeSale = useCallback(async (id) => {
+    setSales(prev => prev.filter(s => s.id !== id));
+    if (FIREBASE_ENABLED) { try { await fbDeleteSale(id); } catch {} }
+  }, []);
+
+  const importSales = useCallback(async (newSales, replaceSource) => {
+    const toRemoveIds = replaceSource
+      ? sales.filter(s => s.source === replaceSource).map(s => s.id)
+      : [];
+
+    setSales(prev => {
+      const filtered = replaceSource ? prev.filter(s => s.source !== replaceSource) : prev;
+      return [...filtered, ...newSales];
+    });
+
+    if (FIREBASE_ENABLED) {
+      for (const id of toRemoveIds) {
+        try { await fbDeleteSale(id); } catch {}
+      }
+      try { await batchSaveSales(newSales); } catch (e) { console.error('일괄 매출 import 실패:', e); }
+    }
+    showToast(`${newSales.length}건 매출이력 import 완료`, 'success');
+  }, [sales]);
+
+  const getSalesForAccount = useCallback((accountId) => {
+    return sales.filter(s => s.account_id === accountId).sort((a, b) => (b.sale_date || '').localeCompare(a.sale_date || ''));
+  }, [sales]);
 
   /* ── Contracts ── */
   const saveContractItem = useCallback(async (contract) => {
@@ -367,8 +410,64 @@ export default function AccountProvider({ children }) {
         }
       });
 
-      // 재구매 임박 알람 (가중 평균 + FCST + 계절성 기반)
-      const acctOrders = orders.filter(o => o.account_id === a.id && o.order_date).sort((a, b) => a.order_date.localeCompare(b.order_date));
+      // ══════════════════════════════════════════════
+      // 재구매 임박 알람 (3유형 병행: FCST / 사업계획 / 트렌드)
+      // - 각 유형은 독립적으로 알람 생성 (한 고객에 3개 다 뜰 수 있음)
+      // - 소스(source) 필드로 구분: 'fcst' | 'plan' | 'trend'
+      // ══════════════════════════════════════════════
+      const acctOrders = orders.filter(o => o.account_id === a.id && o.order_date).sort((x, y) => x.order_date.localeCompare(y.order_date));
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
+
+      // ── ① FCST 기반 알람 (🔵 고객 FCST) ──
+      const acctForecasts = forecasts.filter(f => f.account_id === a.id && f.order_month);
+      for (const f of acctForecasts) {
+        let d = null;
+        if (f.order_month.length === 7) d = new Date(f.order_month + '-15');
+        else if (f.order_month.length <= 2) d = new Date(`${currentYear}-${f.order_month.padStart(2, '0')}-15`);
+        if (!d || isNaN(d.getTime())) continue;
+        const daysUntil = Math.round((d - now) / 86400000);
+        const monthStr = d.toISOString().slice(0, 7);
+        // 해당 월에 이미 주문이 있으면 스킵 (발주 완료)
+        const hasOrder = acctOrders.some(o => (o.order_date || '').startsWith(monthStr));
+        if (hasOrder) continue;
+        if (daysUntil <= 0 && daysUntil > -30) {
+          result.push({ type: 'reorder', source: 'fcst', level: 'danger', account: a, msg: `🔵 [FCST] 예상월(${monthStr}) 경과 ${Math.abs(daysUntil)}일` });
+        } else if (daysUntil > 0 && daysUntil <= 14) {
+          result.push({ type: 'reorder', source: 'fcst', level: 'danger', account: a, msg: `🔵 [FCST] 재구매 예상 D-${daysUntil}` });
+        } else if (daysUntil > 14 && daysUntil <= 30) {
+          result.push({ type: 'reorder', source: 'fcst', level: 'warning', account: a, msg: `🔵 [FCST] 재구매 예상 D-${daysUntil}` });
+        }
+      }
+
+      // ── ② 사업계획 기반 알람 (🟢 사업계획 타겟) ──
+      const acctPlans = businessPlans.filter(p => p.account_id === a.id && p.year === currentYear);
+      acctPlans.forEach(p => {
+        if (!p.targets) return;
+        Object.entries(p.targets).forEach(([monthKey, amount]) => {
+          if (!amount || amount <= 0) return;
+          const mNum = parseInt(monthKey, 10);
+          if (isNaN(mNum) || mNum < 1 || mNum > 12) return;
+          // 해당 월 중간(15일) 기준으로 D-day 계산
+          const targetDate = new Date(`${currentYear}-${monthKey}-15`);
+          const daysUntil = Math.round((targetDate - now) / 86400000);
+          const monthStr = `${currentYear}-${monthKey}`;
+          // 해당 월에 이미 주문이 있으면 스킵 (달성 완료)
+          const monthActual = acctOrders
+            .filter(o => (o.order_date || '').startsWith(monthStr))
+            .reduce((s, o) => s + (o.order_amount || 0), 0);
+          if (monthActual >= amount * 0.8) return; // 80% 이상 달성 시 해제
+          if (daysUntil <= 0 && daysUntil > -30 && monthActual < amount) {
+            result.push({ type: 'reorder', source: 'plan', level: 'danger', account: a, msg: `🟢 [사업계획] ${mNum}월 타겟 경과 (실적 ${Math.round((monthActual / amount) * 100)}%)` });
+          } else if (daysUntil > 0 && daysUntil <= 14) {
+            result.push({ type: 'reorder', source: 'plan', level: 'danger', account: a, msg: `🟢 [사업계획] ${mNum}월 타겟 D-${daysUntil}` });
+          } else if (daysUntil > 14 && daysUntil <= 30) {
+            result.push({ type: 'reorder', source: 'plan', level: 'warning', account: a, msg: `🟢 [사업계획] ${mNum}월 타겟 D-${daysUntil}` });
+          }
+        });
+      });
+
+      // ── ③ 트렌드 기반 알람 (🟡 주문 트렌드) ──
       if (acctOrders.length >= 2) {
         const lastOrder = acctOrders[acctOrders.length - 1];
         const gaps = [];
@@ -377,10 +476,9 @@ export default function AccountProvider({ children }) {
           if (d > 0) gaps.push(d);
         }
         if (gaps.length > 0) {
-          // 가중 평균: 최근 gap에 높은 가중치 (2x 최근, 1.5x 그 다음, 1x 나머지)
           let weightedSum = 0, weightTotal = 0;
           gaps.forEach((g, idx) => {
-            const distFromEnd = gaps.length - 1 - idx; // 0=가장 최근
+            const distFromEnd = gaps.length - 1 - idx;
             const w = distFromEnd === 0 ? 2 : distFromEnd === 1 ? 1.5 : 1;
             weightedSum += g * w;
             weightTotal += w;
@@ -388,71 +486,29 @@ export default function AccountProvider({ children }) {
           const weightedAvgGap = weightedSum / weightTotal;
           const daysSinceLast = (now - new Date(lastOrder.order_date)) / 86400000;
           const trendDaysUntilNext = Math.round(weightedAvgGap - daysSinceLast);
-          const trendPredictedDate = new Date(new Date(lastOrder.order_date).getTime() + weightedAvgGap * 86400000);
 
-          // 계절성 체크: 2년+ 데이터 있을 때, 현재 분기에 과거 주문 이력 없으면 알람 스킵
-          const currentQ = Math.ceil((now.getMonth() + 1) / 3);
+          // 계절성 체크
+          const currentQ = Math.ceil(currentMonth / 3);
           const orderYears = [...new Set(acctOrders.map(o => new Date(o.order_date).getFullYear()))];
           let skipSeasonal = false;
           if (orderYears.length >= 2) {
-            const pastYears = orderYears.filter(y => y < now.getFullYear());
+            const pastYears = orderYears.filter(y => y < currentYear);
             if (pastYears.length >= 2) {
               const qOrders = acctOrders.filter(o => {
                 const d = new Date(o.order_date);
-                return d.getFullYear() < now.getFullYear() && Math.ceil((d.getMonth() + 1) / 3) === currentQ;
+                return d.getFullYear() < currentYear && Math.ceil((d.getMonth() + 1) / 3) === currentQ;
               });
               if (qOrders.length === 0) skipSeasonal = true;
             }
           }
 
-          // FCST 확인: 해당 account에 향후 order_month가 있는 forecast
-          const acctForecasts = forecasts.filter(f =>
-            f.account_id === a.id && f.order_month
-          );
-          let fcstDate = null;
-          let fcstForecast = null;
-          if (acctForecasts.length > 0) {
-            // order_month 형식: "YYYY-MM" 또는 "MM" 등 → 날짜로 변환
-            for (const f of acctForecasts) {
-              let d = null;
-              if (f.order_month.length === 7) { // "YYYY-MM"
-                d = new Date(f.order_month + '-15');
-              } else if (f.order_month.length <= 2) { // "MM" → 올해
-                d = new Date(`${now.getFullYear()}-${f.order_month.padStart(2, '0')}-15`);
-              }
-              if (d && d >= now && (!fcstDate || d < fcstDate)) {
-                fcstDate = d;
-                fcstForecast = f;
-              }
-            }
-          }
-
           if (!skipSeasonal) {
-            if (fcstDate) {
-              // FCST 기반 알람
-              const fcstDaysUntil = Math.round((fcstDate - now) / 86400000);
-              const fcstMonth = fcstDate.toISOString().slice(0, 7);
-              // 트렌드와 FCST 비교
-              const trendFcstDiff = Math.abs(Math.round((fcstDate - trendPredictedDate) / 86400000));
-              let note = 'FCST 기반';
-              if (trendFcstDiff > 30) {
-                note += ` (트렌드와 ${trendFcstDiff}일 차이)`;
-              }
-              const level = fcstDaysUntil <= 14 ? 'danger' : fcstDaysUntil <= 30 ? 'warning' : null;
-              if (fcstDaysUntil <= 0) {
-                result.push({ type: 'reorder', level: 'danger', account: a, msg: `재구매 예상월(${fcstMonth}) 경과 [${note}]` });
-              } else if (level) {
-                result.push({ type: 'reorder', level, account: a, msg: `재구매 예상 D-${fcstDaysUntil} [${note}]` });
-              }
-            } else {
-              // 트렌드 기반 알람 (가중 평균)
-              if (trendDaysUntilNext <= 14 && trendDaysUntilNext > 0) {
-                result.push({ type: 'reorder', level: 'danger', account: a, msg: `재구매 예상 D-${trendDaysUntilNext} (가중평균)` });
-              } else if (trendDaysUntilNext <= 30 && trendDaysUntilNext > 14) {
-                result.push({ type: 'reorder', level: 'warning', account: a, msg: `재구매 예상 D-${trendDaysUntilNext} (가중평균)` });
-              } else if (trendDaysUntilNext <= 0) {
-                result.push({ type: 'reorder', level: 'danger', account: a, msg: `재구매 예상일 ${Math.abs(trendDaysUntilNext)}일 경과 (가중평균)` });
-              }
+            if (trendDaysUntilNext <= 14 && trendDaysUntilNext > 0) {
+              result.push({ type: 'reorder', source: 'trend', level: 'danger', account: a, msg: `🟡 [트렌드] 재구매 예상 D-${trendDaysUntilNext} (가중평균)` });
+            } else if (trendDaysUntilNext <= 30 && trendDaysUntilNext > 14) {
+              result.push({ type: 'reorder', source: 'trend', level: 'warning', account: a, msg: `🟡 [트렌드] 재구매 예상 D-${trendDaysUntilNext} (가중평균)` });
+            } else if (trendDaysUntilNext <= 0 && trendDaysUntilNext > -30) {
+              result.push({ type: 'reorder', source: 'trend', level: 'danger', account: a, msg: `🟡 [트렌드] 예상일 ${Math.abs(trendDaysUntilNext)}일 경과 (가중평균)` });
             }
           }
         }
@@ -562,6 +618,7 @@ export default function AccountProvider({ children }) {
     if (d.accounts) setAccounts(d.accounts);
     if (d.activityLogs) setActivityLogs(d.activityLogs);
     if (d.orders) setOrders(d.orders);
+    if (d.sales) setSales(d.sales);
     if (d.contracts) setContracts(d.contracts);
     if (d.forecasts) setForecasts(d.forecasts);
     if (d.businessPlans) setBusinessPlans(d.businessPlans);
@@ -571,6 +628,7 @@ export default function AccountProvider({ children }) {
       accounts: d.accounts || [],
       activityLogs: d.activityLogs || [],
       orders: d.orders || [],
+      sales: d.sales || [],
       contracts: d.contracts || [],
       forecasts: d.forecasts || [],
       businessPlans: d.businessPlans || [],
@@ -590,7 +648,7 @@ export default function AccountProvider({ children }) {
     currentUser, isAdmin, login, logout,
     accounts, filteredAccounts, visibleAccounts,
     activityLogs, openIssues,
-    orders, contracts, forecasts, businessPlans, alarms,
+    orders, sales, contracts, forecasts, businessPlans, alarms,
     filters, setFilters,
     currentTab, setCurrentTab,
     editingAccount, setEditingAccount,
@@ -598,6 +656,7 @@ export default function AccountProvider({ children }) {
     saveAccount, removeAccount,
     saveLog, removeLog, getLogsForAccount,
     saveOrder, removeOrder, importOrders, getOrdersForAccount,
+    saveSaleItem, removeSale, importSales, getSalesForAccount,
     saveContractItem, removeContract, getContractsForAccount,
     saveForecast, removeForecast, getForecastsForAccount,
     importBusinessPlans, clearBusinessPlans, getPlansForAccount,

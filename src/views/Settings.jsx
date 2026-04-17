@@ -39,7 +39,7 @@ function fmtKRW(n) {
 }
 
 export default function Settings() {
-  const { accounts, saveAccount, importOrders, importBusinessPlans, businessPlans, clearBusinessPlans, orders, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers } = useAccount();
+  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers } = useAccount();
 
   /* ══════════════════════════════════════
      팀 멤버 관리
@@ -228,6 +228,36 @@ export default function Settings() {
   // 파일 데이터를 ref로 보관 (React state에 13k 행 넣지 않음)
   const parsedDataRef = useRef(null);
 
+  // 공통 헤더 매핑 함수 (O/S 시트 공용)
+  const mapHeadersToColIdx = (headers, isOSheet = true) => {
+    return {
+      status: headers.indexOf('진행상태'),
+      orderNo: headers.indexOf('수주번호'),
+      customer: headers.indexOf('고객명'),
+      productGroup: headers.indexOf('제품군'),
+      // O 시트는 '오더일', S 시트는 'B/L date'/'B/L 날짜'/'출하일' 등 변종 시도
+      orderDate: isOSheet
+        ? headers.indexOf('오더일')
+        : (() => {
+            const candidates = ['B/L date', 'B/L Date', 'BL Date', 'B/L DATE', 'B/L 날짜', 'B/L일', '매출일', '출하일', 'BL date', 'bl_date'];
+            for (const c of candidates) {
+              const i = headers.findIndex(h => h.toLowerCase() === c.toLowerCase());
+              if (i >= 0) return i;
+            }
+            // 부분 매칭 시도
+            return headers.findIndex(h => /b\s*\/?\s*l/i.test(h) && /date|날짜|일/.test(h));
+          })(),
+      quantity: headers.indexOf('수량'),
+      unitPrice: headers.indexOf('단가'),
+      currency: headers.indexOf('통화'),
+      region: headers.indexOf('지역'),
+      country: headers.indexOf('국가'),
+      salesRep: headers.indexOf('영업담당'),
+      orderAmount: headers.indexOf('수주금액') >= 0 ? headers.indexOf('수주금액') : headers.indexOf('매출금액'),
+      orderType: headers.indexOf('오더 구분'),
+    };
+  };
+
   const handleFileSelect = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -239,79 +269,97 @@ export default function Settings() {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data);
 
-      // O 시트 찾기 (수주 raw data)
-      const sheetName = wb.SheetNames.find(s => s === 'O') || wb.SheetNames[0];
-      const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      // ── O 시트 (수주) ──
+      const oSheetName = wb.SheetNames.find(s => s === 'O') || wb.SheetNames[0];
+      const oWs = wb.Sheets[oSheetName];
+      const oRows = XLSX.utils.sheet_to_json(oWs, { header: 1 });
+      if (oRows.length < 2) { showToast('O시트 데이터가 없습니다', 'error'); return; }
 
-      if (rows.length < 2) { showToast('데이터가 없습니다', 'error'); return; }
+      const oHeaders = oRows[0].map(c => String(c || '').trim());
+      const oColIdx = mapHeadersToColIdx(oHeaders, true);
+      const oDataRows = oRows.slice(1).filter(r => r && r[oColIdx.customer]);
 
-      const headers = rows[0].map(c => String(c || '').trim());
-
-      // 컬럼 인덱스 매핑
-      const colIdx = {
-        status: headers.indexOf('진행상태'),
-        orderNo: headers.indexOf('수주번호'),
-        customer: headers.indexOf('고객명'),
-        productGroup: headers.indexOf('제품군'),
-        orderDate: headers.indexOf('오더일'),
-        quantity: headers.indexOf('수량'),
-        unitPrice: headers.indexOf('단가'),
-        currency: headers.indexOf('통화'),
-        region: headers.indexOf('지역'),
-        country: headers.indexOf('국가'),
-        salesRep: headers.indexOf('영업담당'),
-        orderAmount: headers.indexOf('수주금액'),
-        orderType: headers.indexOf('오더 구분'),
-      };
-
-      const dataRows = rows.slice(1).filter(r => r && r[colIdx.customer]);
-
-      // 연도별 분포
-      const yearCounts = {};
-      dataRows.forEach(r => {
-        const dateVal = r[colIdx.orderDate];
+      // 연도별 분포 (수주)
+      const oYearCounts = {};
+      oDataRows.forEach(r => {
+        const dateVal = r[oColIdx.orderDate];
         if (!dateVal) return;
         const year = excelDateToStr(dateVal).slice(0, 4);
-        if (year && year.startsWith('20')) yearCounts[year] = (yearCounts[year] || 0) + 1;
+        if (year && year.startsWith('20')) oYearCounts[year] = (oYearCounts[year] || 0) + 1;
       });
 
-      // 고객 매칭
+      // ── S 시트 (매출) ──
+      const sSheetName = wb.SheetNames.find(s => s === 'S');
+      let sDataRows = [];
+      let sColIdx = null;
+      let sYearCounts = {};
+      let sHasValidDateColumn = false;
+      if (sSheetName) {
+        const sWs = wb.Sheets[sSheetName];
+        const sRows = XLSX.utils.sheet_to_json(sWs, { header: 1 });
+        if (sRows.length >= 2) {
+          const sHeaders = sRows[0].map(c => String(c || '').trim());
+          sColIdx = mapHeadersToColIdx(sHeaders, false);
+          sHasValidDateColumn = sColIdx.orderDate >= 0;
+          sDataRows = sRows.slice(1).filter(r => r && r[sColIdx.customer]);
+          sDataRows.forEach(r => {
+            const dateVal = r[sColIdx.orderDate];
+            if (!dateVal) return;
+            const year = excelDateToStr(dateVal).slice(0, 4);
+            if (year && year.startsWith('20')) sYearCounts[year] = (sYearCounts[year] || 0) + 1;
+          });
+        }
+      }
+
+      // 고객 매칭 (O+S 모두 대상)
       const accountMap = {};
       accounts.forEach(a => { if (a.company_name) accountMap[a.company_name.toLowerCase().trim()] = true; });
-      const customerSet = new Set(dataRows.map(r => String(r[colIdx.customer] || '').trim()).filter(Boolean));
+      const customerSet = new Set([
+        ...oDataRows.map(r => String(r[oColIdx.customer] || '').trim()),
+        ...sDataRows.map(r => String(r[sColIdx?.customer] || '').trim()),
+      ].filter(Boolean));
       const matchedNames = [...customerSet].filter(n => accountMap[n.toLowerCase().trim()]);
       const unmatchedNames = [...customerSet].filter(n => !accountMap[n.toLowerCase().trim()]);
 
-      // 전년도(2025) 고객 목록 추출 (고객 분류용 — 수주취소/무상샘플 제외)
+      // 전년도 고객 목록 (O 시트 수주 기준)
       const priorYear = String(new Date().getFullYear() - 1);
       const excludeStatuses = ['수주취소'];
       const excludeTypes = ['무상샘플', '수리출고'];
       const priorYearNames = [];
-      dataRows.forEach(r => {
-        const dateStr = excelDateToStr(r[colIdx.orderDate]);
+      oDataRows.forEach(r => {
+        const dateStr = excelDateToStr(r[oColIdx.orderDate]);
         if (!dateStr.startsWith(priorYear)) return;
-        const status = String(r[colIdx.status] || '').trim();
-        const orderType = String(r[colIdx.orderType] || '').trim();
+        const status = String(r[oColIdx.status] || '').trim();
+        const orderType = String(r[oColIdx.orderType] || '').trim();
         if (excludeStatuses.includes(status) || excludeTypes.includes(orderType)) return;
-        const amt = parseFloat(r[colIdx.orderAmount]) || 0;
+        const amt = parseFloat(r[oColIdx.orderAmount]) || 0;
         if (amt <= 0) return;
-        priorYearNames.push(String(r[colIdx.customer] || '').trim());
+        priorYearNames.push(String(r[oColIdx.customer] || '').trim());
       });
       const priorYearUniqueCount = new Set(priorYearNames.map(n => n.toLowerCase().trim())).size;
 
-      // 큰 데이터는 ref에 보관, state에는 요약만
-      parsedDataRef.current = { colIdx, dataRows, priorYearNames };
+      parsedDataRef.current = {
+        oColIdx, oDataRows,
+        sColIdx, sDataRows,
+        priorYearNames,
+      };
 
       setPreview({
-        fileName: file.name, sheetName,
-        totalRows: dataRows.length, yearCounts,
+        fileName: file.name,
+        oSheetName, sSheetName: sSheetName || null,
+        oTotalRows: oDataRows.length,
+        sTotalRows: sDataRows.length,
+        sHasValidDateColumn,
+        oYearCounts, sYearCounts,
         matchedCustomers: matchedNames.length,
         unmatchedCustomers: unmatchedNames.length,
         unmatchedNames: unmatchedNames.slice(0, 30),
         priorYearUniqueCount,
       });
-      showToast(`${file.name} O시트 로드 완료 (${dataRows.length.toLocaleString()}건)`, 'success');
+      const msg = sSheetName
+        ? `로드 완료: O시트 ${oDataRows.length.toLocaleString()}건 + S시트 ${sDataRows.length.toLocaleString()}건`
+        : `로드 완료: O시트 ${oDataRows.length.toLocaleString()}건 (S시트 없음)`;
+      showToast(msg, 'success');
     } catch (err) {
       showToast('파일 읽기 실패: ' + err.message, 'error');
     }
@@ -323,7 +371,7 @@ export default function Settings() {
     setImporting(true);
 
     try {
-      const { dataRows, colIdx, priorYearNames } = parsedDataRef.current;
+      const { oDataRows, oColIdx, sDataRows, sColIdx, priorYearNames } = parsedDataRef.current;
 
       // 전년도 고객 목록 저장 (고객 분류에 사용)
       if (priorYearNames && priorYearNames.length > 0) {
@@ -337,46 +385,87 @@ export default function Settings() {
       const excludeStatuses = ['수주취소'];
       const excludeTypes = ['무상샘플', '수리출고'];
 
-      // 1차 패스: 유효한 주문 추출 + 미매칭 고객 수집
-      const validRows = [];
-      const unmatchedCustomerInfo = {}; // customer → { region, country, salesRep, products }
-      let filtered = 0;
+      // ── O 시트 (수주) 1차 패스: 유효행 추출 + 미매칭 고객 수집 ──
+      const oValidRows = [];
+      const unmatchedCustomerInfo = {};
+      let oFiltered = 0;
 
-      dataRows.forEach(row => {
-        const status = String(row[colIdx.status] || '').trim();
-        const orderType = String(row[colIdx.orderType] || '').trim();
-        if (excludeStatuses.includes(status)) { filtered++; return; }
-        if (excludeTypes.includes(orderType)) { filtered++; return; }
+      oDataRows.forEach(row => {
+        const status = String(row[oColIdx.status] || '').trim();
+        const orderType = String(row[oColIdx.orderType] || '').trim();
+        if (excludeStatuses.includes(status)) { oFiltered++; return; }
+        if (excludeTypes.includes(orderType)) { oFiltered++; return; }
 
-        const dateVal = row[colIdx.orderDate];
+        const dateVal = row[oColIdx.orderDate];
         if (!dateVal) return;
         const orderDate = excelDateToStr(dateVal);
         if (importYear && !orderDate.startsWith(importYear)) return;
 
-        const customer = String(row[colIdx.customer] || '').trim();
+        const customer = String(row[oColIdx.customer] || '').trim();
         if (!customer) return;
 
-        const orderAmount = parseFloat(row[colIdx.orderAmount]) || 0;
+        const orderAmount = parseFloat(row[oColIdx.orderAmount]) || 0;
         if (orderAmount <= 0) return;
 
-        validRows.push(row);
+        oValidRows.push(row);
 
-        // 미매칭 고객 정보 수집 (자동 계정 생성용)
         const key = customer.toLowerCase().trim();
         if (!accountMap[key] && !unmatchedCustomerInfo[key]) {
           unmatchedCustomerInfo[key] = {
             company_name: customer,
-            region: mapRegion(String(row[colIdx.region] || '').trim()),
-            country: String(row[colIdx.country] || '').trim(),
-            sales_rep: String(row[colIdx.salesRep] || '').trim(),
+            region: mapRegion(String(row[oColIdx.region] || '').trim()),
+            country: String(row[oColIdx.country] || '').trim(),
+            sales_rep: String(row[oColIdx.salesRep] || '').trim(),
             products: new Set(),
           };
         }
         if (unmatchedCustomerInfo[key]) {
-          const prod = String(row[colIdx.productGroup] || '').trim();
+          const prod = String(row[oColIdx.productGroup] || '').trim();
           if (prod) unmatchedCustomerInfo[key].products.add(prod);
         }
       });
+
+      // ── S 시트 (매출) 1차 패스: 유효행 추출 + 미매칭 고객 수집 (O와 동일 로직) ──
+      const sValidRows = [];
+      let sFiltered = 0;
+      const hasSheetS = sDataRows && sColIdx && sColIdx.orderDate >= 0;
+      if (hasSheetS) {
+        sDataRows.forEach(row => {
+          const status = String(row[sColIdx.status] || '').trim();
+          const orderType = String(row[sColIdx.orderType] || '').trim();
+          if (excludeStatuses.includes(status)) { sFiltered++; return; }
+          if (excludeTypes.includes(orderType)) { sFiltered++; return; }
+
+          const dateVal = row[sColIdx.orderDate];
+          if (!dateVal) return;
+          const saleDate = excelDateToStr(dateVal);
+          if (importYear && !saleDate.startsWith(importYear)) return;
+
+          const customer = String(row[sColIdx.customer] || '').trim();
+          if (!customer) return;
+
+          const saleAmount = parseFloat(row[sColIdx.orderAmount]) || 0;
+          if (saleAmount <= 0) return;
+
+          sValidRows.push(row);
+
+          // S 시트 고객도 미매칭이면 자동 계정 생성 (O와 동일)
+          const key = customer.toLowerCase().trim();
+          if (!accountMap[key] && !unmatchedCustomerInfo[key]) {
+            unmatchedCustomerInfo[key] = {
+              company_name: customer,
+              region: mapRegion(String(row[sColIdx.region] || '').trim()),
+              country: String(row[sColIdx.country] || '').trim(),
+              sales_rep: String(row[sColIdx.salesRep] || '').trim(),
+              products: new Set(),
+            };
+          }
+          if (unmatchedCustomerInfo[key]) {
+            const prod = String(row[sColIdx.productGroup] || '').trim();
+            if (prod) unmatchedCustomerInfo[key].products.add(prod);
+          }
+        });
+      }
 
       // 미매칭 고객 자동 계정 생성
       const newAccounts = [];
@@ -399,53 +488,85 @@ export default function Settings() {
           updated_at: today(),
         });
       }
-
-      // 자동 생성 계정 저장
       for (const acc of newAccounts) {
         await saveAccount(acc);
       }
 
-      // 2차 패스: 주문 데이터 생성 (이제 모든 고객이 매칭됨)
+      // ── 2차 패스: 수주(Orders) 생성 ──
       const newOrders = [];
-      let matched = 0;
-
-      validRows.forEach(row => {
-        const customer = String(row[colIdx.customer] || '').trim();
+      oValidRows.forEach(row => {
+        const customer = String(row[oColIdx.customer] || '').trim();
         const accountId = accountMap[customer.toLowerCase().trim()];
         if (!accountId) return;
-        matched++;
-
-        const orderNo = String(row[colIdx.orderNo] || '').trim();
-        const orderDate = excelDateToStr(row[colIdx.orderDate]);
-
+        const orderNo = String(row[oColIdx.orderNo] || '').trim();
+        const orderDate = excelDateToStr(row[oColIdx.orderDate]);
         newOrders.push({
           id: `ord_${orderNo || genId('ord')}`,
           account_id: accountId,
           customer_name: customer,
           order_number: orderNo,
           order_date: orderDate,
-          product_category: String(row[colIdx.productGroup] || '').trim(),
-          order_amount: parseFloat(row[colIdx.orderAmount]) || 0,
-          currency: String(row[colIdx.currency] || 'KRW').trim(),
-          quantity: parseInt(row[colIdx.quantity]) || 0,
-          unit_price: parseFloat(row[colIdx.unitPrice]) || 0,
-          sales_rep: String(row[colIdx.salesRep] || '').trim(),
-          region: mapRegion(String(row[colIdx.region] || '').trim()),
-          country: String(row[colIdx.country] || '').trim(),
-          status,
+          product_category: String(row[oColIdx.productGroup] || '').trim(),
+          order_amount: parseFloat(row[oColIdx.orderAmount]) || 0,
+          currency: String(row[oColIdx.currency] || 'KRW').trim(),
+          quantity: parseInt(row[oColIdx.quantity]) || 0,
+          unit_price: parseFloat(row[oColIdx.unitPrice]) || 0,
+          sales_rep: String(row[oColIdx.salesRep] || '').trim(),
+          region: mapRegion(String(row[oColIdx.region] || '').trim()),
+          country: String(row[oColIdx.country] || '').trim(),
+          status: String(row[oColIdx.status] || '').trim(),
           source: 'excel_import_영업현황',
           import_date: today(),
         });
       });
 
-      if (newOrders.length > 0) {
-        importOrders(newOrders, 'excel_import_영업현황');
+      // ── 2차 패스: 매출(Sales) 생성 ──
+      const newSales = [];
+      if (hasSheetS) {
+        sValidRows.forEach(row => {
+          const customer = String(row[sColIdx.customer] || '').trim();
+          const accountId = accountMap[customer.toLowerCase().trim()];
+          if (!accountId) return;
+          const orderNo = String(row[sColIdx.orderNo] || '').trim();
+          const saleDate = excelDateToStr(row[sColIdx.orderDate]);
+          newSales.push({
+            id: `sal_${orderNo || genId('sal')}_${saleDate}`,
+            account_id: accountId,
+            customer_name: customer,
+            order_number: orderNo,
+            sale_date: saleDate, // B/L date 기준
+            product_category: String(row[sColIdx.productGroup] || '').trim(),
+            sale_amount: parseFloat(row[sColIdx.orderAmount]) || 0,
+            currency: String(row[sColIdx.currency] || 'KRW').trim(),
+            quantity: parseInt(row[sColIdx.quantity]) || 0,
+            unit_price: parseFloat(row[sColIdx.unitPrice]) || 0,
+            sales_rep: String(row[sColIdx.salesRep] || '').trim(),
+            region: mapRegion(String(row[sColIdx.region] || '').trim()),
+            country: String(row[sColIdx.country] || '').trim(),
+            status: String(row[sColIdx.status] || '').trim(),
+            source: 'excel_import_영업현황_S',
+            import_date: today(),
+          });
+        });
       }
 
-      showToast(`Import 완료: 수주 ${newOrders.length}건${newAccounts.length > 0 ? ` (신규 고객 ${newAccounts.length}사 자동생성)` : ''}, 제외 ${filtered}건`, newOrders.length > 0 ? 'success' : 'error');
+      if (newOrders.length > 0) {
+        await importOrders(newOrders, 'excel_import_영업현황');
+      }
+      if (newSales.length > 0) {
+        await importSales(newSales, 'excel_import_영업현황_S');
+      }
+
+      const parts = [];
+      parts.push(`수주 ${newOrders.length}건`);
+      if (hasSheetS) parts.push(`매출 ${newSales.length}건`);
+      if (newAccounts.length > 0) parts.push(`신규 고객 ${newAccounts.length}사 자동생성`);
+      parts.push(`제외 ${oFiltered + sFiltered}건`);
+      showToast(`Import 완료: ${parts.join(', ')}`, 'success');
       setPreview(null);
       parsedDataRef.current = null;
     } catch (err) {
+      console.error('Import 실패:', err);
       showToast('Import 실패: ' + err.message, 'error');
     } finally {
       setImporting(false);
@@ -1223,17 +1344,20 @@ export default function Settings() {
         )}
       </div>
 
-      {/* ── 영업현황 Import ── */}
+      {/* ── 영업현황 Import (수주 O sheet + 매출 S sheet) ── */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-title">📥 영업현황 Import (수주 데이터)</div>
+        <div className="card-title">📥 영업현황 Import (수주 + 매출)</div>
         <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
-          영업현황 엑셀 파일의 <strong>O(수주)</strong> 시트에서 수주 데이터를 import합니다.<br />
-          수주취소·무상샘플은 자동 제외됩니다. 재업로드 시 기존 import 데이터를 교체합니다.
+          영업현황 엑셀 파일의 <strong>O시트(수주, 오더일 기준)</strong>와 <strong>S시트(매출, B/L date 기준)</strong>를 동시에 import합니다.<br />
+          수주취소·무상샘플은 자동 제외. 재업로드 시 기존 import 데이터를 교체합니다.
         </p>
 
         {currentOrderImports > 0 && (
           <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(46,125,50,.08)', borderColor: 'rgba(46,125,50,.3)' }}>
-            <span>📋</span> 영업현황 수주 <strong>{currentOrderImports.toLocaleString()}건</strong> import됨
+            <span>📋</span> 수주 <strong>{currentOrderImports.toLocaleString()}건</strong>
+            {sales && sales.length > 0 && (
+              <> / 매출 <strong>{sales.filter(s => s.source === 'excel_import_영업현황_S').length.toLocaleString()}건</strong></>
+            )} import됨
           </div>
         )}
 
@@ -1245,21 +1369,29 @@ export default function Settings() {
         {preview && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-              {preview.fileName} / {preview.sheetName} 시트 ({preview.totalRows.toLocaleString()}건)
+              {preview.fileName}<br />
+              <span style={{ color: 'var(--text2)', fontWeight: 400 }}>
+                O시트 (수주): {preview.oTotalRows.toLocaleString()}건
+                {preview.sSheetName ? (
+                  <> / S시트 (매출): {preview.sTotalRows.toLocaleString()}건 {!preview.sHasValidDateColumn && <span style={{ color: 'var(--red)' }}>⚠ B/L date 컬럼 미발견</span>}</>
+                ) : (
+                  <span style={{ color: 'var(--text3)' }}> / S시트 없음 (수주만 import)</span>
+                )}
+              </span>
             </div>
 
-            {/* 연도 선택 */}
+            {/* 연도 선택 (수주 기준) */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
               <span style={{ fontSize: 12, fontWeight: 600 }}>Import 연도:</span>
               <select value={importYear} onChange={e => setImportYear(e.target.value)} style={{ padding: '4px 8px', fontSize: 12 }}>
-                {Object.keys(preview.yearCounts).sort().reverse().map(y => (
-                  <option key={y} value={y}>{y}년 ({preview.yearCounts[y].toLocaleString()}건)</option>
+                {[...new Set([...Object.keys(preview.oYearCounts), ...Object.keys(preview.sYearCounts)])].sort().reverse().map(y => (
+                  <option key={y} value={y}>{y}년 (수주 {(preview.oYearCounts[y] || 0).toLocaleString()} / 매출 {(preview.sYearCounts[y] || 0).toLocaleString()})</option>
                 ))}
               </select>
             </div>
 
             {/* 매칭 현황 */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 12 }}>
               <div className="kpi green" style={{ padding: 10 }}>
                 <div className="kpi-label">매칭 고객</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>{preview.matchedCustomers}사</div>
@@ -1269,8 +1401,12 @@ export default function Settings() {
                 <div className="kpi-value" style={{ fontSize: 18 }}>{preview.unmatchedCustomers}사</div>
               </div>
               <div className="kpi accent" style={{ padding: 10 }}>
-                <div className="kpi-label">{importYear}년 건수</div>
-                <div className="kpi-value" style={{ fontSize: 18 }}>{(preview.yearCounts[importYear] || 0).toLocaleString()}</div>
+                <div className="kpi-label">{importYear}년 수주</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{(preview.oYearCounts[importYear] || 0).toLocaleString()}</div>
+              </div>
+              <div className="kpi" style={{ padding: 10, background: 'rgba(59,130,246,.08)' }}>
+                <div className="kpi-label">{importYear}년 매출</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{(preview.sYearCounts[importYear] || 0).toLocaleString()}</div>
               </div>
               <div className="kpi" style={{ padding: 10 }}>
                 <div className="kpi-label">{Number(importYear) - 1}년 고객</div>
@@ -1287,7 +1423,7 @@ export default function Settings() {
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-primary" onClick={handleImport} disabled={importing}>
-                {importing ? 'Import 중...' : `${importYear}년 수주 Import`}
+                {importing ? 'Import 중...' : `${importYear}년 수주+매출 Import`}
               </button>
               <button className="btn btn-ghost" onClick={() => { setPreview(null); parsedDataRef.current = null; }}>취소</button>
             </div>

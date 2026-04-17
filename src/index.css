@@ -1511,24 +1511,101 @@ body {
    Print Styles — 보고자료 출력용
    ══════════════════════════════════════ */
 @media print {
-  body { background: white; font-size: 11px; }
+  @page { size: A4 portrait; margin: 10mm 8mm; }
+
+  /* ── 1페이지 제한 문제 해결: app/main 컨테이너 height/overflow 제거 ── */
+  html, body { height: auto !important; overflow: visible !important; background: white; font-size: 11px; }
+  #app {
+    display: block !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+  #main {
+    margin-left: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  #content {
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
   #sidebar, #topbar, .modal-footer, .overlay, .toast,
   .btn, button, .topbar-tab, .topbar-search,
-  .sidebar-toggle { display: none !important; }
-  #main { margin-left: 0 !important; padding: 0 !important; }
-  .card { break-inside: avoid; border: 1px solid #ddd; margin-bottom: 10px; box-shadow: none; }
-  .kpi-grid { grid-template-columns: repeat(4, 1fr) !important; gap: 6px; }
-  .kpi { padding: 8px; border: 1px solid #ddd; box-shadow: none; }
+  .sidebar-toggle, .no-print { display: none !important; }
+
+  /* ── 카드는 쪼개지지 않도록 ── */
+  .card {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    border: 1px solid #ddd;
+    margin-bottom: 10px;
+    box-shadow: none;
+  }
+  .table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  /* 긴 표는 자동으로 분할되되 행 단위로 */
+  .data-table tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  .data-table thead {
+    display: table-header-group; /* 페이지마다 헤더 반복 */
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 6px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .kpi { padding: 8px; border: 1px solid #ddd; box-shadow: none; break-inside: avoid; }
   .kpi-value { font-size: 14px; }
-  .report-section-title { font-size: 14px; margin-top: 16px; break-after: avoid; }
-  .card-title { font-size: 12px; break-after: avoid; }
-  .table-wrap { max-height: none !important; overflow: visible !important; }
+
+  /* 섹션 제목은 뒤 콘텐츠와 붙여서 출력 */
+  .report-section-title {
+    font-size: 14px;
+    margin-top: 16px;
+    break-after: avoid-page !important;
+    page-break-after: avoid !important;
+  }
+  .card-title {
+    font-size: 12px;
+    break-after: avoid-page !important;
+    page-break-after: avoid !important;
+  }
+
   table { font-size: 10px; }
   .data-table th, .data-table td { padding: 4px 6px; }
-  .two-col { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .two-col {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
   .issue-list { max-height: none !important; }
   .score-badge { border: 1px solid #999; }
   a { text-decoration: none; color: inherit; }
+
+  /* 페이지 분할 제어 클래스 */
+  .print-page-break { break-before: page !important; page-break-before: always !important; }
+  .print-avoid-break { break-inside: avoid !important; page-break-inside: avoid !important; }
+
+  /* 리포트 내 input/textarea (Executive Summary 등) */
+  input[type="text"], textarea {
+    border: none !important;
+    padding: 0 !important;
+    background: transparent !important;
+    resize: none !important;
+    color: #000 !important;
+  }
+  textarea { min-height: auto !important; overflow: visible !important; }
 
   /* Show report header info for printed output */
   .print-header { display: block !important; text-align: center; margin-bottom: 16px; }

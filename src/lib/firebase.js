@@ -25,6 +25,7 @@ const firebaseConfig = {
 const ACCOUNTS_COL = 'accounts';
 const LOGS_COL = 'activity_logs';
 const ORDERS_COL = 'order_history';
+const SALES_COL = 'sales_history';
 const CONTRACTS_COL = 'price_contracts';
 const FORECASTS_COL = 'forecasts';
 const PLANS_COL = 'business_plans';
@@ -115,6 +116,38 @@ export async function batchSaveOrders(orders) {
     const chunk = orders.slice(i, i + CHUNK);
     const batch = writeBatch(db);
     chunk.forEach(o => batch.set(doc(db, ORDERS_COL, o.id), o));
+    await batch.commit();
+  }
+}
+
+/* ── Sales History (매출, B/L date 기준) ── */
+
+export function subscribeSales(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  const col = collection(db, SALES_COL);
+  return onSnapshot(col,
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] sales_history onSnapshot 오류:', err)
+  );
+}
+
+export async function saveSale(sale) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, SALES_COL, sale.id), sale);
+}
+
+export async function deleteSale(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, SALES_COL, id));
+}
+
+export async function batchSaveSales(sales) {
+  if (!FIREBASE_ENABLED) return;
+  const CHUNK = 500;
+  for (let i = 0; i < sales.length; i += CHUNK) {
+    const chunk = sales.slice(i, i + CHUNK);
+    const batch = writeBatch(db);
+    chunk.forEach(s => batch.set(doc(db, SALES_COL, s.id), s));
     await batch.commit();
   }
 }
@@ -241,6 +274,7 @@ export async function uploadAllData(data) {
   if (data.accounts?.length) await batchUpload(ACCOUNTS_COL, data.accounts);
   if (data.activityLogs?.length) await batchUpload(LOGS_COL, data.activityLogs);
   if (data.orders?.length) await batchUpload(ORDERS_COL, data.orders);
+  if (data.sales?.length) await batchUpload(SALES_COL, data.sales);
   if (data.contracts?.length) await batchUpload(CONTRACTS_COL, data.contracts);
   if (data.forecasts?.length) await batchUpload(FORECASTS_COL, data.forecasts);
   if (data.businessPlans?.length) await batchUpload(PLANS_COL, data.businessPlans);
@@ -275,6 +309,7 @@ export async function clearAllData() {
     clearCollection(ACCOUNTS_COL),
     clearCollection(LOGS_COL),
     clearCollection(ORDERS_COL),
+    clearCollection(SALES_COL),
     clearCollection(CONTRACTS_COL),
     clearCollection(FORECASTS_COL),
     clearCollection(PLANS_COL),
