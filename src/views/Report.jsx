@@ -11,6 +11,12 @@ const CURRENT_MONTH = new Date().getMonth() + 1;
 const TEAM_DISPLAY = { '해외영업': '해외(본사)', '영업지원': 'BPU', '국내영업': '국내' };
 const TEAM_ORDER = ['해외영업', '영업지원', '국내영업'];
 
+/* ── 매출 팀 (사업계획 월별매출 시트 기준: 해외/BPU/국내) ── */
+const SALES_TEAM_ORDER = ['해외', 'BPU', '국내'];
+const SALES_TEAM_DISPLAY = { '해외': '해외(본사)', 'BPU': 'BPU', '국내': '국내(직판포함)' };
+// 수주 team → 매출 team 매핑 (동일 plan 공유)
+const ORDER_TEAM_TO_SALES = { '해외영업': '해외', '영업지원': 'BPU', '국내영업': '국내' };
+
 /* ── helpers ── */
 function fmtKRW(n) {
   if (!n) return '0';
@@ -575,12 +581,13 @@ export default function Report() {
       displayTeams.push('기타');
     }
 
-    // ══ 매출(Sales) 팀별 집계 (B/L date 기준) ══
-    // 주문 → 팀 매핑 재사용 (동일 고객이면 동일 팀)
-    const getTeamForSale = (s) => {
+    // ══ 매출(Sales) 사업부별 집계 (B/L Date 기준, 해외/BPU/국내) ══
+    // 매출 고객의 plan.team(수주팀) → 매출팀 매핑
+    const getSalesTeamForSale = (s) => {
       const plan = planLookup.byAccountId[s.account_id]
         || planLookup.byName[(s.customer_name || '').toLowerCase().trim()];
-      return plan?.team || '기타';
+      const orderTeam = plan?.team;
+      return ORDER_TEAM_TO_SALES[orderTeam] || '기타';
     };
 
     const monthSales = (sales || []).filter(s => (s.sale_date || '').startsWith(monthStr));
@@ -588,26 +595,28 @@ export default function Report() {
     const prevWeekSales = monthSales.filter(s => (s.sale_date || '') >= monthStartStr && (s.sale_date || '') < wkStart);
 
     const salesTeamData = {};
-    TEAM_ORDER.forEach(team => {
+    SALES_TEAM_ORDER.forEach(team => {
       salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
     });
     salesTeamData['기타'] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
 
     prevWeekSales.forEach(s => {
-      const team = getTeamForSale(s);
+      const team = getSalesTeamForSale(s);
       if (!salesTeamData[team]) salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
       salesTeamData[team].prevCum += (s.sale_amount || 0);
       salesTeamData[team].monthCum += (s.sale_amount || 0);
     });
     thisWeekSales.forEach(s => {
-      const team = getTeamForSale(s);
+      const team = getSalesTeamForSale(s);
       if (!salesTeamData[team]) salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
       salesTeamData[team].thisWeek += (s.sale_amount || 0);
       salesTeamData[team].monthCum += (s.sale_amount || 0);
     });
-    // 매출 목표는 수주 목표를 동일하게 사용 (별도 목표가 아직 없음)
-    customerPlans.forEach(p => {
-      const team = p.team || '기타';
+
+    // 매출 목표: businessPlans의 type === 'team_sales' 에서 가져오기
+    const teamSalesPlans = businessPlans.filter(p => p.type === 'team_sales' && p.year === wkYear);
+    teamSalesPlans.forEach(p => {
+      const team = p.team;
       if (!salesTeamData[team]) salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
       salesTeamData[team].monthTarget += (p.targets?.[monthKey] || 0);
     });
@@ -620,6 +629,13 @@ export default function Report() {
       salesTotal.monthTarget += d.monthTarget;
     });
     const hasSalesData = (sales || []).length > 0;
+    const hasSalesTarget = teamSalesPlans.length > 0;
+
+    // 매출 표시 팀 목록
+    const displaySalesTeams = [...SALES_TEAM_ORDER];
+    if (salesTeamData['기타'] && (salesTeamData['기타'].prevCum > 0 || salesTeamData['기타'].thisWeek > 0)) {
+      displaySalesTeams.push('기타');
+    }
 
     // ── MTD 달성률 (수주 기준) ──
     const mtdActual = total.monthCum;
@@ -662,11 +678,11 @@ export default function Report() {
       teamData,
       displayTeams,
       total,
-      salesTeamData, salesTotal, hasSalesData,
+      salesTeamData, salesTotal, hasSalesData, hasSalesTarget, displaySalesTeams,
       mtdActual, mtdTarget, mtdPct,
       quarterData,
     };
-  }, [orders, sales, customerPlans, weekOffset, planLookup]);
+  }, [orders, sales, customerPlans, businessPlans, weekOffset, planLookup]);
 
   /* ══════════════════════════════
      SECTION B — 이슈사항 자동 집계
@@ -831,6 +847,8 @@ export default function Report() {
     const prevMonthStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
 
     // ── 섹션 B-1: 월별 추이 (수주 + 매출, 1~12월) ──
+    // 매출 목표 합계 (team_sales plans)
+    const teamSalesPlansTrend = businessPlans.filter(p => p.type === 'team_sales' && p.year === selYear);
     const monthlyTrend = [];
     const salesMonthlyTrend = [];
     for (let m = 1; m <= 12; m++) {
@@ -848,21 +866,23 @@ export default function Report() {
 
       const target = customerPlans.reduce((s, p) => s + (p.targets?.[mKey] || 0), 0);
 
-      // 매출 (B/L date 기준)
+      // 매출 (B/L Date 기준)
       const salesActual = (sales || [])
         .filter(s => (s.sale_date || '').startsWith(thisYearMonth))
         .reduce((sum, s) => sum + (s.sale_amount || 0), 0);
       const salesPrevYearActual = (sales || [])
         .filter(s => (s.sale_date || '').startsWith(prevYearMonth))
         .reduce((sum, s) => sum + (s.sale_amount || 0), 0);
+      // 매출 목표: team_sales plans의 월별 합계
+      const salesTarget = teamSalesPlansTrend.reduce((s, p) => s + (p.targets?.[mKey] || 0), 0);
 
       salesMonthlyTrend.push({
         month: m,
         prevYearActual: salesPrevYearActual,
-        target, // 수주 목표 동일 사용
+        target: salesTarget, // 매출 목표 (사업계획 team_sales)
         actual: salesActual,
         yoyPct: salesPrevYearActual > 0 ? Math.round((salesActual / salesPrevYearActual) * 100) : 0,
-        targetPct: target > 0 ? Math.round((salesActual / target) * 100) : 0,
+        targetPct: salesTarget > 0 ? Math.round((salesActual / salesTarget) * 100) : 0,
       });
 
       monthlyTrend.push({
@@ -933,25 +953,34 @@ export default function Report() {
     const monthSales = (sales || []).filter(s => (s.sale_date || '').startsWith(selMonthStr));
     const prevYearMonthSales = (sales || []).filter(s => (s.sale_date || '').startsWith(prevYearMonthStr));
 
+    // 매출 사업부 매핑: 고객 plan.team(수주) → 매출팀(해외/BPU/국내)
+    const getSalesTeamForSaleLocal = (s) => {
+      const plan = planLookup.byAccountId[s.account_id] || planLookup.byName[(s.customer_name || '').toLowerCase().trim()];
+      const orderTeam = plan?.team;
+      return ORDER_TEAM_TO_SALES[orderTeam] || '기타';
+    };
+
     const salesTeamMonthly = {};
-    TEAM_ORDER.forEach(t => { salesTeamMonthly[t] = { target: 0, actual: 0, prevYearActual: 0 }; });
-    customerPlans.forEach(p => {
-      const team = p.team || '기타';
+    SALES_TEAM_ORDER.forEach(t => { salesTeamMonthly[t] = { target: 0, actual: 0, prevYearActual: 0 }; });
+    // 매출 목표: businessPlans의 team_sales
+    const teamSalesPlansM = businessPlans.filter(p => p.type === 'team_sales' && p.year === selYear);
+    teamSalesPlansM.forEach(p => {
+      const team = p.team;
       if (!salesTeamMonthly[team]) salesTeamMonthly[team] = { target: 0, actual: 0, prevYearActual: 0 };
       salesTeamMonthly[team].target += (p.targets?.[selMonthKey] || 0);
     });
     monthSales.forEach(s => {
-      const team = getTeamForSaleLocal(s);
+      const team = getSalesTeamForSaleLocal(s);
       if (!salesTeamMonthly[team]) salesTeamMonthly[team] = { target: 0, actual: 0, prevYearActual: 0 };
       salesTeamMonthly[team].actual += (s.sale_amount || 0);
     });
     prevYearMonthSales.forEach(s => {
-      const team = getTeamForSaleLocal(s);
+      const team = getSalesTeamForSaleLocal(s);
       if (!salesTeamMonthly[team]) salesTeamMonthly[team] = { target: 0, actual: 0, prevYearActual: 0 };
       salesTeamMonthly[team].prevYearActual += (s.sale_amount || 0);
     });
-    const salesTeamRows = TEAM_ORDER.map(t => ({
-      team: t, display: TEAM_DISPLAY[t] || t, ...salesTeamMonthly[t],
+    const salesTeamRows = SALES_TEAM_ORDER.map(t => ({
+      team: t, display: SALES_TEAM_DISPLAY[t] || t, ...salesTeamMonthly[t],
       achieveRate: salesTeamMonthly[t].target > 0 ? Math.round((salesTeamMonthly[t].actual / salesTeamMonthly[t].target) * 100) : 0,
       yoyRate: salesTeamMonthly[t].prevYearActual > 0 ? Math.round((salesTeamMonthly[t].actual / salesTeamMonthly[t].prevYearActual) * 100) : 0,
     }));
@@ -1918,18 +1947,18 @@ export default function Report() {
             </div>
           )}
 
-          {/* ══ 섹션 A-2 — 매출 현황 (B/L date 기준) ══ */}
+          {/* ══ 섹션 A-2 — 매출 현황 (B/L Date 기준, BEP·생산 CAPA 모니터링) ══ */}
           {hasPlan && sectionAData.hasSalesData && (
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>■ 1-2. 매출 현황</span>
-                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[B/L date 기준, 단위: 백만원 / %]</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[B/L Date 기준, 단위: 백만원 / %]</span>
               </div>
               <div className="table-wrap">
                 <table className="data-table" style={{ fontSize: 12 }}>
                   <thead>
                     <tr>
-                      <th style={{ minWidth: 90 }}>구분</th>
+                      <th style={{ minWidth: 110 }}>사업부</th>
                       <th style={{ textAlign: 'right' }}>전주 누적</th>
                       <th style={{ textAlign: 'right' }}>금주 신규</th>
                       <th style={{ textAlign: 'right' }}>당월 누적</th>
@@ -1938,12 +1967,12 @@ export default function Report() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sectionAData.displayTeams.map(team => {
+                    {sectionAData.displaySalesTeams.map(team => {
                       const d = sectionAData.salesTeamData[team];
                       const rate = pct(d.monthCum, d.monthTarget);
                       return (
                         <tr key={team}>
-                          <td style={{ fontWeight: 600 }}>{TEAM_DISPLAY[team] || team}</td>
+                          <td style={{ fontWeight: 600 }}>{SALES_TEAM_DISPLAY[team] || team}</td>
                           <td style={{ textAlign: 'right' }}>{fmtM(d.prevCum)}</td>
                           <td style={{ textAlign: 'right', fontWeight: 600, color: d.thisWeek > 0 ? '#2563eb' : undefined }}>{fmtM(d.thisWeek)}</td>
                           <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(d.monthCum)}</td>
@@ -1967,7 +1996,8 @@ export default function Report() {
                 </table>
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                ※ 매출: Import S시트(B/L date 기준) / 목표: 수주 목표와 동일값 사용 (별도 매출 목표 미도입)
+                ※ 매출: Import S시트(B/L Date 기준, 매출금액 확정분) / 목표: 사업계획 월별매출 시트(사업부별)
+                {!sectionAData.hasSalesTarget && ' ⚠ 매출 목표 미Import — 설정에서 월별매출 시트 포함 사업계획 파일 재업로드 필요'}
               </div>
             </div>
           )}

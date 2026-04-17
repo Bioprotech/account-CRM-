@@ -228,33 +228,55 @@ export default function Settings() {
   // 파일 데이터를 ref로 보관 (React state에 13k 행 넣지 않음)
   const parsedDataRef = useRef(null);
 
-  // 공통 헤더 매핑 함수 (O/S 시트 공용)
-  const mapHeadersToColIdx = (headers, isOSheet = true) => {
+  // O 시트 (수주) 헤더 매핑
+  const mapOSheetHeaders = (headers) => ({
+    status: headers.indexOf('진행상태'),
+    orderNo: headers.indexOf('수주번호'),
+    customer: headers.indexOf('고객명'),
+    productGroup: headers.indexOf('제품군'),
+    orderDate: headers.indexOf('오더일'),
+    quantity: headers.indexOf('수량'),
+    unitPrice: headers.indexOf('단가'),
+    currency: headers.indexOf('통화'),
+    region: headers.indexOf('지역'),
+    country: headers.indexOf('국가'),
+    salesRep: headers.indexOf('영업담당'),
+    orderAmount: headers.indexOf('수주금액'),
+    orderType: headers.indexOf('오더 구분'),
+  });
+
+  // S 시트 (매출) 헤더 매핑 — 실제 영업현황_2026.xlsm S 시트 컬럼 기준
+  // [고객사, 수주번호, 제품군, 품명, 단가, 통화, 수량, 원화매출액, 납품일자, B/L Date, 영업담당, 지역, 매출금액, 매출대기]
+  const mapSSheetHeaders = (headers) => {
+    // 보조 탐색 (B/L Date 대소문자/공백 변형)
+    const findDate = () => {
+      const i1 = headers.indexOf('B/L Date');
+      if (i1 >= 0) return i1;
+      const fallback = ['B/L date', 'BL Date', 'B/L DATE', 'B/L 날짜', '매출일'];
+      for (const c of fallback) {
+        const i = headers.findIndex(h => h.toLowerCase() === c.toLowerCase());
+        if (i >= 0) return i;
+      }
+      return headers.findIndex(h => /b\s*\/?\s*l/i.test(h) && /date|날짜/i.test(h));
+    };
     return {
-      status: headers.indexOf('진행상태'),
+      status: -1, // S시트엔 진행상태 없음
+      orderType: -1, // S시트엔 오더 구분 없음
       orderNo: headers.indexOf('수주번호'),
-      customer: headers.indexOf('고객명'),
+      customer: headers.indexOf('고객사'), // O시트는 고객명, S시트는 고객사
       productGroup: headers.indexOf('제품군'),
-      // O 시트는 '오더일', S 시트는 'B/L date'/'B/L 날짜'/'출하일' 등 변종 시도
-      orderDate: isOSheet
-        ? headers.indexOf('오더일')
-        : (() => {
-            const candidates = ['B/L date', 'B/L Date', 'BL Date', 'B/L DATE', 'B/L 날짜', 'B/L일', '매출일', '출하일', 'BL date', 'bl_date'];
-            for (const c of candidates) {
-              const i = headers.findIndex(h => h.toLowerCase() === c.toLowerCase());
-              if (i >= 0) return i;
-            }
-            // 부분 매칭 시도
-            return headers.findIndex(h => /b\s*\/?\s*l/i.test(h) && /date|날짜|일/.test(h));
-          })(),
+      orderDate: findDate(), // B/L Date
+      saleConfirmedDate: findDate(), // 동일 (B/L Date = 매출 확정일)
+      deliveryDate: headers.indexOf('납품일자'),
       quantity: headers.indexOf('수량'),
       unitPrice: headers.indexOf('단가'),
       currency: headers.indexOf('통화'),
       region: headers.indexOf('지역'),
-      country: headers.indexOf('국가'),
+      country: -1, // S시트엔 국가 없음
       salesRep: headers.indexOf('영업담당'),
-      orderAmount: headers.indexOf('수주금액') >= 0 ? headers.indexOf('수주금액') : headers.indexOf('매출금액'),
-      orderType: headers.indexOf('오더 구분'),
+      // 매출 금액 우선순위: 매출금액(확정) > 원화매출액
+      orderAmount: headers.indexOf('매출금액') >= 0 ? headers.indexOf('매출금액') : headers.indexOf('원화매출액'),
+      pendingAmount: headers.indexOf('매출대기'),
     };
   };
 
@@ -276,7 +298,7 @@ export default function Settings() {
       if (oRows.length < 2) { showToast('O시트 데이터가 없습니다', 'error'); return; }
 
       const oHeaders = oRows[0].map(c => String(c || '').trim());
-      const oColIdx = mapHeadersToColIdx(oHeaders, true);
+      const oColIdx = mapOSheetHeaders(oHeaders);
       const oDataRows = oRows.slice(1).filter(r => r && r[oColIdx.customer]);
 
       // 연도별 분포 (수주)
@@ -299,8 +321,8 @@ export default function Settings() {
         const sRows = XLSX.utils.sheet_to_json(sWs, { header: 1 });
         if (sRows.length >= 2) {
           const sHeaders = sRows[0].map(c => String(c || '').trim());
-          sColIdx = mapHeadersToColIdx(sHeaders, false);
-          sHasValidDateColumn = sColIdx.orderDate >= 0;
+          sColIdx = mapSSheetHeaders(sHeaders);
+          sHasValidDateColumn = sColIdx.orderDate >= 0 && sColIdx.customer >= 0;
           sDataRows = sRows.slice(1).filter(r => r && r[sColIdx.customer]);
           sDataRows.forEach(r => {
             const dateVal = r[sColIdx.orderDate];
@@ -425,19 +447,14 @@ export default function Settings() {
         }
       });
 
-      // ── S 시트 (매출) 1차 패스: 유효행 추출 + 미매칭 고객 수집 (O와 동일 로직) ──
+      // ── S 시트 (매출) 1차 패스: B/L Date 있고 매출금액 > 0 인 행만 확정 매출로 처리 ──
       const sValidRows = [];
       let sFiltered = 0;
-      const hasSheetS = sDataRows && sColIdx && sColIdx.orderDate >= 0;
+      const hasSheetS = sDataRows && sColIdx && sColIdx.orderDate >= 0 && sColIdx.customer >= 0;
       if (hasSheetS) {
         sDataRows.forEach(row => {
-          const status = String(row[sColIdx.status] || '').trim();
-          const orderType = String(row[sColIdx.orderType] || '').trim();
-          if (excludeStatuses.includes(status)) { sFiltered++; return; }
-          if (excludeTypes.includes(orderType)) { sFiltered++; return; }
-
           const dateVal = row[sColIdx.orderDate];
-          if (!dateVal) return;
+          if (!dateVal) { sFiltered++; return; } // B/L Date 없으면 매출 미확정 → 제외
           const saleDate = excelDateToStr(dateVal);
           if (importYear && !saleDate.startsWith(importYear)) return;
 
@@ -445,17 +462,17 @@ export default function Settings() {
           if (!customer) return;
 
           const saleAmount = parseFloat(row[sColIdx.orderAmount]) || 0;
-          if (saleAmount <= 0) return;
+          if (saleAmount <= 0) { sFiltered++; return; }
 
           sValidRows.push(row);
 
-          // S 시트 고객도 미매칭이면 자동 계정 생성 (O와 동일)
+          // 미매칭 고객 자동 계정 (지역/담당자만, 국가·오더타입 없음)
           const key = customer.toLowerCase().trim();
           if (!accountMap[key] && !unmatchedCustomerInfo[key]) {
             unmatchedCustomerInfo[key] = {
               company_name: customer,
               region: mapRegion(String(row[sColIdx.region] || '').trim()),
-              country: String(row[sColIdx.country] || '').trim(),
+              country: '',
               sales_rep: String(row[sColIdx.salesRep] || '').trim(),
               products: new Set(),
             };
@@ -520,7 +537,7 @@ export default function Settings() {
         });
       });
 
-      // ── 2차 패스: 매출(Sales) 생성 ──
+      // ── 2차 패스: 매출(Sales) 생성 — B/L Date 기준 확정 매출만 ──
       const newSales = [];
       if (hasSheetS) {
         sValidRows.forEach(row => {
@@ -528,22 +545,24 @@ export default function Settings() {
           const accountId = accountMap[customer.toLowerCase().trim()];
           if (!accountId) return;
           const orderNo = String(row[sColIdx.orderNo] || '').trim();
-          const saleDate = excelDateToStr(row[sColIdx.orderDate]);
+          const saleDate = excelDateToStr(row[sColIdx.orderDate]); // B/L Date
+          const deliveryDate = sColIdx.deliveryDate >= 0 ? excelDateToStr(row[sColIdx.deliveryDate]) : '';
           newSales.push({
-            id: `sal_${orderNo || genId('sal')}_${saleDate}`,
+            id: `sal_${orderNo || genId('sal')}_${saleDate}_${Math.random().toString(36).slice(2, 6)}`,
             account_id: accountId,
             customer_name: customer,
             order_number: orderNo,
-            sale_date: saleDate, // B/L date 기준
+            sale_date: saleDate, // B/L Date (매출 확정일)
+            delivery_date: deliveryDate, // 납품일자 (참고용)
             product_category: String(row[sColIdx.productGroup] || '').trim(),
-            sale_amount: parseFloat(row[sColIdx.orderAmount]) || 0,
+            sale_amount: parseFloat(row[sColIdx.orderAmount]) || 0, // 매출금액
+            pending_amount: sColIdx.pendingAmount >= 0 ? (parseFloat(row[sColIdx.pendingAmount]) || 0) : 0,
             currency: String(row[sColIdx.currency] || 'KRW').trim(),
             quantity: parseInt(row[sColIdx.quantity]) || 0,
             unit_price: parseFloat(row[sColIdx.unitPrice]) || 0,
             sales_rep: String(row[sColIdx.salesRep] || '').trim(),
             region: mapRegion(String(row[sColIdx.region] || '').trim()),
-            country: String(row[sColIdx.country] || '').trim(),
-            status: String(row[sColIdx.status] || '').trim(),
+            country: '', // S 시트에 국가 없음
             source: 'excel_import_영업현황_S',
             import_date: today(),
           });
@@ -683,6 +702,74 @@ export default function Settings() {
         });
       }
 
+      // 월별매출 시트 파싱 — 사업부별 매출 목표 추출 (해외/BPU/국내)
+      // 여러 파일명 패턴 지원: '월별매출', '26년도 월별수주매출S_251229' 등
+      const salesSheet = wb.SheetNames.find(s => s === '월별매출')
+        || wb.SheetNames.find(s => /월별.*매출/.test(s) && !s.includes('세부'));
+      const teamSalesTargets = {}; // { 해외: {01:..12:}, BPU: {...}, 국내: {...} }
+      let salesTargetFound = false;
+      if (salesSheet) {
+        const sWs = wb.Sheets[salesSheet];
+        const sRows = XLSX.utils.sheet_to_json(sWs, { header: 1, defval: '' });
+        // "사업부별 매출" 섹션 찾기
+        let sectionIdx = -1;
+        for (let i = 0; i < sRows.length; i++) {
+          const cellText = (sRows[i] || []).map(c => String(c || '')).join(' ');
+          if (/사업부별\s*매출/.test(cellText) || /팀별\s*매출/.test(cellText)) {
+            sectionIdx = i;
+            break;
+          }
+        }
+        if (sectionIdx >= 0) {
+          // 섹션 아래 1~2행 이내 헤더 행(구분 + 1월~12월) 탐색
+          let headerRowIdx = -1;
+          for (let i = sectionIdx + 1; i < Math.min(sectionIdx + 4, sRows.length); i++) {
+            const row = (sRows[i] || []).map(c => String(c || ''));
+            if (row.includes('1월') && row.includes('12월')) { headerRowIdx = i; break; }
+          }
+          if (headerRowIdx >= 0) {
+            const hdr = (sRows[headerRowIdx] || []).map(c => String(c || ''));
+            const monthCols = [];
+            for (let m = 1; m <= 12; m++) {
+              monthCols.push(hdr.indexOf(`${m}월`));
+            }
+            // 데이터 행: Total/합계 나올 때까지
+            ['해외', 'BPU', '국내'].forEach(t => {
+              teamSalesTargets[t] = {};
+              for (let m = 1; m <= 12; m++) teamSalesTargets[t][String(m).padStart(2, '0')] = 0;
+            });
+            for (let i = headerRowIdx + 1; i < Math.min(headerRowIdx + 15, sRows.length); i++) {
+              const row = sRows[i] || [];
+              // 팀명은 보통 col 2 (B=매출, C=팀)
+              let teamName = '';
+              for (let c = 0; c <= 3; c++) {
+                const v = String(row[c] || '').trim();
+                if (['해외', 'BPU', '국내', '국내(직판)'].includes(v) || v === 'Total' || v === 'Total ') {
+                  teamName = v;
+                  break;
+                }
+              }
+              if (!teamName) continue;
+              if (teamName === 'Total' || teamName === 'Total ') break;
+              // 국내 계열은 모두 "국내"로 통합 (직판 포함)
+              const mappedTeam = teamName.startsWith('국내') ? '국내' : teamName;
+              if (!teamSalesTargets[mappedTeam]) {
+                teamSalesTargets[mappedTeam] = {};
+                for (let m = 1; m <= 12; m++) teamSalesTargets[mappedTeam][String(m).padStart(2, '0')] = 0;
+              }
+              for (let m = 1; m <= 12; m++) {
+                const col = monthCols[m - 1];
+                if (col < 0) continue;
+                const val = parseFloat(row[col]) || 0;
+                // 단위: 천원 → 원 변환 (1000 곱하기)
+                teamSalesTargets[mappedTeam][String(m).padStart(2, '0')] += (val * 1000);
+              }
+              salesTargetFound = true;
+            }
+          }
+        }
+      }
+
       // 품목별 시트 파싱
       const prodSheet = wb.SheetNames.find(s => s.includes('품목별'));
       const productPlans = [];
@@ -729,11 +816,13 @@ export default function Settings() {
       setPlanPreview({
         fileName: file.name, sheetName: mainSheet,
         planRows, productPlans,
+        teamSalesTargets, salesTargetFound,
         totalRows: planRows.length,
         matched: matchedSet.size, unmatched: unmatchedNames.length,
         unmatchedNames, annualTotal,
       });
-      showToast(`${file.name} 로드 (${planRows.length}개 고객, ${productPlans.length}개 품목)`, 'info');
+      const salesMsg = salesTargetFound ? `, 매출목표(해외/BPU/국내) 포함` : ', 매출목표 시트 없음';
+      showToast(`${file.name} 로드 (${planRows.length}개 고객, ${productPlans.length}개 품목${salesMsg})`, 'info');
     } catch (err) {
       showToast('파일 읽기 실패: ' + err.message, 'error');
     }
@@ -817,9 +906,34 @@ export default function Settings() {
         });
       });
 
+      // 팀별 매출 목표 (월별매출 시트에서 파싱된 것)
+      let teamSalesCount = 0;
+      if (planPreview.salesTargetFound && planPreview.teamSalesTargets) {
+        const teamMap = { '해외': 'overseas', 'BPU': 'bpu', '국내': 'domestic' };
+        Object.entries(planPreview.teamSalesTargets).forEach(([teamName, targets]) => {
+          const annual = Object.values(targets).reduce((s, v) => s + v, 0);
+          if (annual <= 0) return;
+          plans.push({
+            id: `plan_${year}_team_sales_${teamMap[teamName] || teamName}`,
+            year,
+            type: 'team_sales',
+            team: teamName, // '해외' | 'BPU' | '국내'
+            targets, // {01: amt, ..., 12: amt} 원 단위
+            annual_target: annual,
+            currency: 'KRW',
+            source: 'excel_import',
+            import_date: today(),
+          });
+          teamSalesCount++;
+        });
+      }
+
       if (plans.length > 0) importBusinessPlans(plans);
 
-      showToast(`사업계획 ${plans.length}건 import${newAccountCount > 0 ? ` (신규 고객 ${newAccountCount}사 자동생성)` : ''}`, 'success');
+      const parts = [`사업계획 ${plans.length}건 import`];
+      if (teamSalesCount > 0) parts.push(`(팀별 매출목표 ${teamSalesCount}팀 포함)`);
+      if (newAccountCount > 0) parts.push(`(신규 고객 ${newAccountCount}사 자동생성)`);
+      showToast(parts.join(' '), 'success');
       setPlanPreview(null);
     } catch (err) {
       showToast('Import 실패: ' + err.message, 'error');
@@ -1433,10 +1547,11 @@ export default function Settings() {
 
       {/* ── 사업계획 Import ── */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-title">📊 사업계획 Import (수주목표)</div>
+        <div className="card-title">📊 사업계획 Import (수주목표 + 매출목표)</div>
         <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
-          수주목표 엑셀에서 <strong>월별·담당별·고객별</strong> 목표 금액을 import합니다.<br />
-          미매칭 고객도 함께 import되어 전체 목표 합계가 유지됩니다. 품목별 시트가 있으면 품목별 목표도 포함됩니다.
+          <strong>수주목표 엑셀</strong>(고객별 월별 목표) 또는 <strong>사업계획 엑셀</strong>(수주 + 매출 목표)을 업로드합니다.<br />
+          • <strong>고객별</strong> 시트 있으면 → 고객별 수주 목표 + 품목별 목표 import<br />
+          • <strong>월별매출</strong> 시트 있으면 → <strong>사업부별 매출 목표</strong>(해외/BPU/국내) 자동 추출 (단위: 천원 → 원)
         </p>
 
         {currentPlanCount > 0 && (() => {
@@ -1478,9 +1593,9 @@ export default function Settings() {
               {planPreview.fileName} / {planPreview.sheetName}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 12 }}>
               <div className="kpi accent" style={{ padding: 10 }}>
-                <div className="kpi-label">연간 목표 합계</div>
+                <div className="kpi-label">수주 연간 목표</div>
                 <div className="kpi-value" style={{ fontSize: 16 }}>{fmtKRW(planPreview.annualTotal)}</div>
               </div>
               <div className="kpi green" style={{ padding: 10 }}>
@@ -1495,7 +1610,32 @@ export default function Settings() {
                 <div className="kpi-label">품목별 목표</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>{planPreview.productPlans.length}개</div>
               </div>
+              <div className={`kpi ${planPreview.salesTargetFound ? 'green' : 'red'}`} style={{ padding: 10, background: planPreview.salesTargetFound ? 'rgba(59,130,246,.08)' : undefined }}>
+                <div className="kpi-label">팀별 매출목표</div>
+                <div className="kpi-value" style={{ fontSize: 14 }}>
+                  {planPreview.salesTargetFound
+                    ? `${Object.keys(planPreview.teamSalesTargets).filter(k => Object.values(planPreview.teamSalesTargets[k] || {}).reduce((s, v) => s + v, 0) > 0).length}팀`
+                    : '없음'}
+                </div>
+              </div>
             </div>
+
+            {planPreview.salesTargetFound && (
+              <details style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 12, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>📘 팀별 매출 목표 상세 보기 (월별매출 시트)</summary>
+                <div style={{ marginTop: 6 }}>
+                  {Object.entries(planPreview.teamSalesTargets || {}).map(([team, targets]) => {
+                    const annual = Object.values(targets).reduce((s, v) => s + v, 0);
+                    if (annual <= 0) return null;
+                    return (
+                      <div key={team} style={{ padding: '2px 0' }}>
+                        • <strong>{team}</strong> — 연간 {fmtKRW(annual)}
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
 
             {planPreview.unmatchedNames.length > 0 && (
               <details style={{ fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>
