@@ -155,11 +155,23 @@ export default function GapAnalysis({ draft, update }) {
         </div>
       )}
 
-      {/* ── Section 2: Gap 원인 태깅 ── */}
+      {/* ── Section 2: Gap 원인 / 대책 ── */}
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="card-title">Gap 원인 분석</div>
+        <div className="card-title">
+          Gap 원인 및 대책
+          {planGap && (
+            <span style={{ fontSize: 10, marginLeft: 8, padding: '2px 8px', borderRadius: 10,
+              background: planGap.ytdGap >= 0 ? 'rgba(22,163,74,.12)' : 'rgba(220,38,38,.12)',
+              color: planGap.ytdGap >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700,
+            }}>
+              {planGap.ytdGap >= 0 ? '초과 달성' : '미달'}
+            </span>
+          )}
+        </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
-          수주 미달의 주요 원인을 선택하세요 (복수 선택 가능)
+          {planGap?.ytdGap < 0
+            ? '수주 미달의 주요 원인을 선택하세요 (복수 선택 가능)'
+            : '목표 대비 수주 상황의 주요 원인을 선택하세요 (복수 선택 가능)'}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
           {GAP_CAUSES.map(cause => {
@@ -186,12 +198,28 @@ export default function GapAnalysis({ draft, update }) {
         </div>
         <div style={{ marginTop: 8 }}>
           <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
-            상세 설명
+            상세 설명 — {planGap?.ytdGap >= 0 ? '초과 달성 원인' : 'Gap 원인 분석'}
           </label>
           <textarea
             value={gap.cause_detail || ''}
             onChange={e => updateGap({ cause_detail: e.target.value })}
-            placeholder="Gap 원인에 대한 구체적 상황을 기록하세요..."
+            placeholder={planGap?.ytdGap >= 0
+              ? "초과 달성 원인을 구체적으로 기록하세요 (예: 예상외 대량 수주, 경쟁사 이탈 고객 유입 등)"
+              : "Gap 원인에 대한 구체적 상황을 기록하세요..."}
+            style={{ minHeight: 60 }}
+          />
+        </div>
+        {/* 부족분: 대책 / 초과분: 추가 요소 */}
+        <div style={{ marginTop: 8 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: planGap?.ytdGap < 0 ? 'var(--red)' : 'var(--green)', display: 'block', marginBottom: 4 }}>
+            {planGap?.ytdGap < 0 ? '⚠ 대책 (부족분 만회 계획) *필수' : '✅ 지속 발전 요소 (초과 원인 강화)'}
+          </label>
+          <textarea
+            value={gap.countermeasure || ''}
+            onChange={e => updateGap({ countermeasure: e.target.value })}
+            placeholder={planGap?.ytdGap < 0
+              ? "Gap 만회를 위한 구체적 대책 (예: 4월 Q2 가격 재협상, 추가 샘플 공급으로 5월 PO 확보 예상)"
+              : "초과 실적 유지 방안 (예: 신제품 추가 제안, 장기 계약 체결 검토 등)"}
             style={{ minHeight: 60 }}
           />
         </div>

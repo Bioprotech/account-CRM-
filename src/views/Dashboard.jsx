@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { REGIONS, CUSTOMER_TYPE_GUIDE, STRATEGIC_TIERS } from '../lib/constants';
 import { daysSince, scoreColorClass } from '../lib/utils';
-import { classifyCustomers, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
+import { classifyCustomers, classifyForRepView, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
+import { getSortedValidReps } from '../lib/salesReps';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -28,7 +29,19 @@ function pctColor(p) {
 }
 
 export default function Dashboard() {
-  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, forecasts, contracts, currentUser, isAdmin, saveAccount, showToast, appSettings } = useAccount();
+  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, forecasts, contracts, currentUser, isAdmin, saveAccount, showToast, appSettings, teamMembers } = useAccount();
+
+  // 전년도 수주 Set + 유효 담당자 (신 분류 체계)
+  const priorYearSet = useMemo(() => {
+    if (appSettings?.priorYearCustomers && Array.isArray(appSettings.priorYearCustomers)) {
+      return new Set(appSettings.priorYearCustomers);
+    }
+    return loadPriorYearCustomers();
+  }, [appSettings]);
+  const validReps = useMemo(
+    () => getSortedValidReps({ businessPlans, teamMembers }),
+    [businessPlans, teamMembers]
+  );
   const [syncing, setSyncing] = useState(false);
 
   // ── 담당자별 데이터 필터링 ──
@@ -269,31 +282,65 @@ export default function Dashboard() {
     return map;
   }, [myAccounts, customerPlans, yearOrders, hasPlan, accounts, planLookup]);
 
-  // 담당자별 목표 vs 실적 — 관리자만 전체 표시, 일반 사용자는 본인만
+  // 담당자별 목표 vs 실적 — 신 분류 체계 (국내기타/해외기타/국내신규/해외신규 버킷 포함)
   const repStats = useMemo(() => {
     const map = {};
+    const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
+
+    // 사업계획 담당자 + teamMembers 초기화
+    validReps.forEach(r => { map[r] = { count: 0, target: 0, actual: 0, isBucket: false }; });
+    // 버킷 4종 초기화
+    ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => {
+      map[k] = { count: 0, target: 0, actual: 0, isBucket: true, isNew: k.endsWith('신규') };
+    });
 
     if (hasPlan) {
       customerPlans.forEach(p => {
+        const name = (p.customer_name || '').trim();
+        // 버킷 플랜 → 해당 버킷 target에 반영
+        if (bucketNames.includes(name)) {
+          let key = null;
+          if (name === '해외기타') key = '해외기타';
+          else if (name === '국내 기타') key = '국내기타';
+          else if (name === '국내 신규') key = '국내신규';
+          if (key && map[key]) map[key].target += (p.annual_target || 0);
+          return;
+        }
         const rep = p.sales_rep || '미배정';
-        if (!map[rep]) map[rep] = { count: 0, target: 0, actual: 0 };
+        if (!map[rep]) map[rep] = { count: 0, target: 0, actual: 0, isBucket: false };
         map[rep].target += (p.annual_target || 0);
       });
+
+      // 신 분류 체계로 실적 배분
+      const planByName = {};
+      customerPlans.forEach(p => {
+        if (!p.customer_name) return;
+        if (bucketNames.includes(p.customer_name.trim())) return;
+        planByName[p.customer_name.toLowerCase().trim()] = p;
+      });
       yearOrders.forEach(o => {
-        const plan = findPlanForOrder(o);
-        const rep = plan?.sales_rep || '기타';
-        if (!map[rep]) map[rep] = { count: 0, target: 0, actual: 0 };
+        const acc = o.account_id ? accounts.find(a => a.id === o.account_id)
+          : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (o.customer_name || '').toLowerCase().trim()) || null;
+        const { rep } = classifyForRepView({
+          account: acc,
+          customerName: o.customer_name || acc?.company_name,
+          planByName,
+          priorSet: priorYearSet,
+        });
+        if (!rep) return;
+        if (!map[rep]) map[rep] = { count: 0, target: 0, actual: 0, isBucket: false };
         map[rep].actual += (o.order_amount || 0);
       });
     }
 
+    // 배정 고객 수
     myAccounts.forEach(a => {
       const rep = a.sales_rep || '미배정';
       if (map[rep]) map[rep].count++;
     });
 
     return map;
-  }, [myAccounts, customerPlans, yearOrders, hasPlan, planLookup]);
+  }, [myAccounts, customerPlans, yearOrders, hasPlan, planLookup, accounts, validReps, priorYearSet]);
 
   // 구분(사업형태)별 목표 vs 실적
   const bizTypeStats = useMemo(() => {

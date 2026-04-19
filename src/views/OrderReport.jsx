@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useAccount } from '../context/AccountContext';
+import { getValidSalesReps, getSortedValidReps } from '../lib/salesReps';
 import { PRODUCTS } from '../lib/constants';
 import { classifyCustomers, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
 import { genId, today } from '../lib/utils';
@@ -179,12 +180,11 @@ export default function OrderReport() {
     return [start, start + 1, start + 2];
   }, [displayQ]);
 
-  // ── 담당자 목록 (팀 멤버 기준) ──
+  // ── 담당자 목록 (사업계획 + teamMembers, 중앙화된 규칙) ──
   const repList = useMemo(() => {
-    return teamMembers.filter(name =>
-      Object.values(customerData).some(d => d.salesRep === name)
-    );
-  }, [customerData, teamMembers]);
+    const sorted = getSortedValidReps({ businessPlans, teamMembers });
+    return sorted.filter(name => Object.values(customerData).some(d => d.salesRep === name));
+  }, [customerData, businessPlans, teamMembers]);
 
   // ── FCST 인라인 편집 ──
   const handleCellClick = useCallback((accountId, month) => {

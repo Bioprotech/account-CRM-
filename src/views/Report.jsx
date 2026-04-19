@@ -3,6 +3,8 @@ import { useAccount } from '../context/AccountContext';
 import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES, SALES_TEAMS } from '../lib/constants';
 import { daysSince } from '../lib/utils';
 import { HBarChart, DonutChart, ProgressBars } from '../components/Charts';
+import { aggregateByRep, classifyForRepView, loadPriorYearCustomers } from '../lib/customerClassification';
+import { getValidSalesReps, getSortedValidReps } from '../lib/salesReps';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -174,7 +176,22 @@ function MonthlyBreakdownTable({ title, rows }) {
    REPORT COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function Report() {
-  const { accounts, activityLogs, orders, sales, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers } = useAccount();
+  const { accounts, activityLogs, orders, sales, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings } = useAccount();
+
+  // 전년도 수주 고객 Set (신규 vs 기타 판별용) — appSettings 우선, localStorage fallback
+  const priorYearSet = useMemo(() => {
+    if (appSettings?.priorYearCustomers && Array.isArray(appSettings.priorYearCustomers)) {
+      return new Set(appSettings.priorYearCustomers);
+    }
+    return loadPriorYearCustomers();
+  }, [appSettings]);
+
+  // 유효 담당자 정렬 목록 (사업계획 + teamMembers만)
+  const validReps = useMemo(
+    () => getSortedValidReps({ businessPlans, teamMembers }),
+    [businessPlans, teamMembers]
+  );
+  const validRepsSet = useMemo(() => new Set(validReps), [validReps]);
   const [tab, setTab] = useState('weekly');
   const [weekOffset, setWeekOffset] = useState(0);
   // 월 offset: 0=이번달, -1=전월 등. 스펙 기본값은 직전 완료 월(-1)
@@ -183,6 +200,9 @@ export default function Report() {
   const [execSummary, setExecSummary] = useState({ msg1: '', msg2: '', msg3: '', status: '🟢', nextMonthFocus: '' });
   // 다음 달 사업 계획 (수동 입력, localStorage)
   const [nextMonthPlan, setNextMonthPlan] = useState({ overseas: '', domestic: '', support: '' });
+  // 담당자별 실적 드릴다운 토글 (신규/기타 고객 리스트 펼침)
+  const [repDrillOpen, setRepDrillOpen] = useState({}); // { [repKey]: boolean }
+  const toggleRepDrill = (key) => setRepDrillOpen(prev => ({ ...prev, [key]: !prev[key] }));
 
   /* ── Base data ── */
   const customerPlans = useMemo(() =>
@@ -642,6 +662,87 @@ export default function Report() {
     const mtdTarget = total.monthTarget;
     const mtdPct = mtdTarget > 0 ? Math.round((mtdActual / mtdTarget) * 100) : 0;
 
+    // ── 담당자별 주간 실적 (신 분류 체계) ──
+    const planByNameWk = {};
+    customerPlans.forEach(p => {
+      if (!p.customer_name) return;
+      const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
+      if (bucketNames.includes(p.customer_name.trim())) return;
+      planByNameWk[p.customer_name.toLowerCase().trim()] = p;
+    });
+    const classifyTxWk = (tx) => {
+      const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
+        : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (tx.customer_name || '').toLowerCase().trim()) || null;
+      return classifyForRepView({
+        account: acc,
+        customerName: tx.customer_name || acc?.company_name,
+        planByName: planByNameWk,
+        priorSet: priorYearSet,
+      });
+    };
+    const weekRepMap = {};
+    const initWkKeys = new Set();
+    customerPlans.forEach(p => { if (p.sales_rep && !['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) initWkKeys.add(p.sales_rep); });
+    teamMembers.forEach(r => initWkKeys.add(r));
+    ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => initWkKeys.add(k));
+    initWkKeys.forEach(k => { weekRepMap[k] = { monthTarget: 0, weekActual: 0, monthActual: 0, monthCum: 0 }; });
+
+    // 월 목표 (해당 담당자 plans + 버킷 플랜 월 목표)
+    customerPlans.forEach(p => {
+      const name = (p.customer_name || '').trim();
+      if (['해외기타', '국내 기타', '국내 신규', '직판영업'].includes(name)) {
+        let key = null;
+        if (name === '해외기타') key = '해외기타';
+        else if (name === '국내 기타') key = '국내기타';
+        else if (name === '국내 신규') key = '국내신규';
+        if (key && weekRepMap[key]) weekRepMap[key].monthTarget += (p.targets?.[monthKey] || 0);
+        return;
+      }
+      const rep = p.sales_rep || '미배정';
+      if (!weekRepMap[rep]) weekRepMap[rep] = { monthTarget: 0, weekActual: 0, monthActual: 0 };
+      weekRepMap[rep].monthTarget += (p.targets?.[monthKey] || 0);
+    });
+    // 금주 수주
+    thisWeekOrders.forEach(o => {
+      const { rep } = classifyTxWk(o);
+      if (!rep || !weekRepMap[rep]) weekRepMap[rep] = weekRepMap[rep] || { monthTarget: 0, weekActual: 0, monthActual: 0 };
+      weekRepMap[rep].weekActual += (o.order_amount || 0);
+    });
+    // 당월 누적 수주 (전주 + 금주)
+    monthOrders.forEach(o => {
+      const { rep } = classifyTxWk(o);
+      if (!rep || !weekRepMap[rep]) weekRepMap[rep] = weekRepMap[rep] || { monthTarget: 0, weekActual: 0, monthActual: 0 };
+      weekRepMap[rep].monthActual += (o.order_amount || 0);
+    });
+    const weekRepRows = Object.entries(weekRepMap)
+      .filter(([k, v]) => v.monthTarget > 0 || v.monthActual > 0 || v.weekActual > 0)
+      .sort((a, b) => {
+        const pa = a[1].monthTarget > 0 ? a[1].monthActual / a[1].monthTarget : -1;
+        const pb = b[1].monthTarget > 0 ? b[1].monthActual / b[1].monthTarget : -1;
+        if (pa !== pb) return pb - pa;
+        return b[1].monthActual - a[1].monthActual;
+      })
+      .map(([label, v]) => ({
+        label, ...v,
+        isBucket: ['국내기타', '해외기타', '국내신규', '해외신규'].includes(label),
+        isNew: label.endsWith('신규'),
+      }));
+
+    // 주간용 신규/기타 상세 리스트 (월 누적 기준)
+    const wkNewDetails = { 국내신규: [], 해외신규: [] };
+    const wkEtcDetails = { 국내기타: [], 해외기타: [] };
+    monthOrders.forEach(o => {
+      const { rep, bucket } = classifyTxWk(o);
+      if (bucket !== 'new' && bucket !== 'etc') return;
+      const target = bucket === 'new' ? wkNewDetails : wkEtcDetails;
+      if (!target[rep]) target[rep] = [];
+      const existing = target[rep].find(x => x.name === o.customer_name);
+      if (existing) { existing.amount += (o.order_amount || 0); existing.orderCount++; }
+      else target[rep].push({ name: o.customer_name, amount: o.order_amount || 0, orderCount: 1, accountId: o.account_id || null });
+    });
+    Object.keys(wkNewDetails).forEach(k => wkNewDetails[k].sort((a, b) => b.amount - a.amount));
+    Object.keys(wkEtcDetails).forEach(k => wkEtcDetails[k].sort((a, b) => b.amount - a.amount));
+
     // ── 분기별 진행 현황 (Q1~Q4) ──
     const quarterData = [1, 2, 3, 4].map(q => {
       const startMonth = (q - 1) * 3 + 1;
@@ -681,8 +782,9 @@ export default function Report() {
       salesTeamData, salesTotal, hasSalesData, hasSalesTarget, displaySalesTeams,
       mtdActual, mtdTarget, mtdPct,
       quarterData,
+      weekRepRows, wkNewDetails, wkEtcDetails,
     };
-  }, [orders, sales, customerPlans, businessPlans, weekOffset, planLookup]);
+  }, [orders, sales, customerPlans, businessPlans, weekOffset, planLookup, accounts, teamMembers, priorYearSet]);
 
   /* ══════════════════════════════
      SECTION B — 이슈사항 자동 집계
@@ -1104,6 +1206,121 @@ export default function Report() {
       .filter(p => p.monthTarget > 0)
       .sort((a, b) => a.monthPct - b.monthPct);
 
+    // ══════════════════════════════════════════════════════
+    // GAP 심층 분석 — 미달/초과 고객 상위 N사 + 고객카드 전체 맥락 통합
+    // ══════════════════════════════════════════════════════
+    const gapDeepAnalysis = (() => {
+      // YTD 기준 목표 있는 고객만
+      const candidates = Object.values(planByCustomerM).filter(p => p.ytdTarget > 0);
+      if (candidates.length === 0) return { shortfall: [], surplus: [] };
+
+      const buildContext = (p) => {
+        const account = accounts.find(a => a.id === p.accountId) ||
+          accounts.find(a => (a.company_name || '').toLowerCase().trim() === p.key);
+
+        // FCST Catch-up: 고객의 향후 FCST 합계
+        const acctForecasts = (forecasts || []).filter(f =>
+          (f.account_id === account?.id || (f.customer_name || '').toLowerCase().trim() === p.key)
+          && f.year === selYear
+        );
+        let fcstFutureTotal = 0;
+        let fcstLastMonth = null;
+        acctForecasts.forEach(f => {
+          if (!f.order_month) return;
+          const mNum = f.order_month.length === 7
+            ? parseInt(f.order_month.slice(5, 7), 10)
+            : parseInt(f.order_month, 10);
+          if (mNum > selMonth && mNum <= 12) {
+            fcstFutureTotal += (f.amount || 0);
+            if (!fcstLastMonth || mNum > fcstLastMonth) fcstLastMonth = mNum;
+          }
+        });
+        // Gap catch-up 여부 판단
+        let catchUpComment = null;
+        if (p.ytdGap > 0 && fcstFutureTotal > 0) {
+          const projected = p.ytdActual + fcstFutureTotal;
+          const annualGoal = account ? customerPlans
+            .filter(cp => cp.account_id === account.id || (cp.customer_name || '').toLowerCase().trim() === p.key)
+            .reduce((s, cp) => s + (cp.annual_target || 0), 0) : 0;
+          if (fcstFutureTotal >= p.ytdGap) {
+            catchUpComment = {
+              type: 'full', month: fcstLastMonth,
+              text: `${fcstLastMonth}월 FCST 반영 시 YTD Gap ${fmtKRW(p.ytdGap)} 전액 회복 예상`,
+            };
+          } else if (annualGoal > 0) {
+            const projectedRate = Math.round((projected / annualGoal) * 100);
+            catchUpComment = {
+              type: 'partial', projectedRate,
+              text: `FCST 반영 시 연간 달성률 ${projectedRate}% 예상 (Gap 일부 회복)`,
+            };
+          }
+        }
+
+        // Activity Log 최근 3개월 GAP 관련 이슈
+        const threeMonthsAgo = new Date(selYear, selMonth - 3, 1).toISOString().slice(0, 10);
+        const gapIssueTypes = ['수주활동', '가격협의', '입찰', '품질클레임', '샘플요청', '계약갱신'];
+        const recentIssues = (activityLogs || [])
+          .filter(l => l.account_id === account?.id && (l.date || '') >= threeMonthsAgo && gapIssueTypes.includes(l.issue_type))
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+          .slice(0, 5);
+
+        // 계약 만료 임박
+        const expiringContracts = (contracts || [])
+          .filter(c => c.account_id === account?.id && c.contract_expiry)
+          .map(c => {
+            const daysLeft = Math.ceil((new Date(c.contract_expiry) - new Date()) / 86400000);
+            return { ...c, daysLeft };
+          })
+          .filter(c => c.daysLeft > 0 && c.daysLeft <= 90);
+
+        // 수주 트렌드 (전년 동기 대비)
+        const prevYearYtd = (orders || []).filter(o => {
+          const d = o.order_date || '';
+          if (!d.startsWith(String(selYear - 1))) return false;
+          const m = parseInt(d.slice(5, 7), 10);
+          if (m < 1 || m > selMonth) return false;
+          return o.account_id === account?.id || (o.customer_name || '').toLowerCase().trim() === p.key;
+        }).reduce((s, o) => s + (o.order_amount || 0), 0);
+        const yoyGrowth = prevYearYtd > 0
+          ? Math.round(((p.ytdActual - prevYearYtd) / prevYearYtd) * 100)
+          : null;
+
+        // Cross-selling 진행 기회
+        const csOpportunities = (account?.cross_selling || []).filter(cs => cs.status !== '중단' && cs.status !== '수주완료');
+
+        const gap = account?.gap_analysis || {};
+
+        return {
+          ...p,
+          account,
+          gap,
+          catchUpComment,
+          recentIssues,
+          expiringContracts,
+          prevYearYtd,
+          yoyGrowth,
+          csOpportunities,
+          fcstFutureTotal,
+        };
+      };
+
+      // 미달 (ytdPct < 90%), 상위 10사 (Gap 금액 큰 순)
+      const shortfall = candidates
+        .filter(p => p.ytdPct < 90 && p.ytdGap > 0)
+        .sort((a, b) => b.ytdGap - a.ytdGap)
+        .slice(0, 10)
+        .map(buildContext);
+
+      // 초과 (ytdPct > 110%), 상위 5사 (Gap 음수 크기 순 = 초과 금액 큰 순)
+      const surplus = candidates
+        .filter(p => p.ytdPct > 110 && p.ytdGap < 0)
+        .sort((a, b) => a.ytdGap - b.ytdGap) // 더 초과한 것부터
+        .slice(0, 5)
+        .map(buildContext);
+
+      return { shortfall, surplus };
+    })();
+
     // ── 섹션 E: 재구매/계약 만료 임박 ──
     const now = new Date();
     const nextMonthDate = new Date(selYear, selMonth, 0); // 선택월 말일
@@ -1186,11 +1403,14 @@ export default function Report() {
       teamActivity,
       topAccounts,
       monthlyByCustomer,
+      repMonthRows,
+      newCustomerDetails, etcCustomerDetails,
+      gapDeepAnalysis,
       kpi,
       reorderSoon, contractExpiringSoon,
       monthOrders, monthSales, // for Excel raw
     };
-  }, [monthOffset, orders, sales, customerPlans, activityLogs, accounts, contracts, alarms, planLookup]);
+  }, [monthOffset, orders, sales, customerPlans, businessPlans, activityLogs, accounts, contracts, forecasts, alarms, planLookup, teamMembers, priorYearSet]);
 
   /* ══════════════════════════════════════════════════════
      Executive Summary / 다음 달 계획 localStorage 로드·저장
@@ -1267,12 +1487,116 @@ export default function Report() {
         .map(([label, v]) => ({ label, ...v }));
     };
 
-    // Rep breakdown with month targets
-    const repMonthRows = buildMonthlyRows(
-      monthOrders, customerPlans,
-      p => p.sales_rep || '미배정',
-      o => { const plan = findPlanForOrder(o); return plan?.sales_rep || o.sales_rep || '기타'; }
-    );
+    // Rep breakdown with month targets — 신 분류 체계 적용
+    // planByName for classifyForRepView
+    const planByNameForRep = {};
+    customerPlans.forEach(p => {
+      if (!p.customer_name) return;
+      const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
+      if (bucketNames.includes(p.customer_name.trim())) return;
+      planByNameForRep[p.customer_name.toLowerCase().trim()] = p;
+    });
+    const classifyTx = (tx) => {
+      const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
+        : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (tx.customer_name || '').toLowerCase().trim()) || null;
+      return classifyForRepView({
+        account: acc,
+        customerName: tx.customer_name || acc?.company_name,
+        planByName: planByNameForRep,
+        priorSet: priorYearSet,
+      });
+    };
+
+    const repMap = {};
+    // 사업계획 담당자 + teamMembers 초기화 (빈 행 유지)
+    const initRepKeys = new Set();
+    customerPlans.forEach(p => { if (p.sales_rep && !['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) initRepKeys.add(p.sales_rep); });
+    teamMembers.forEach(r => initRepKeys.add(r));
+    // 버킷 4종 추가
+    ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => initRepKeys.add(k));
+    initRepKeys.forEach(k => {
+      repMap[k] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+    });
+
+    // 월별 목표 (사업계획 담당자만 — 버킷은 aggregate에서 처리)
+    customerPlans.forEach(p => {
+      if (['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) {
+        // 버킷 플랜: 이름에 따라 국내기타/국내신규/해외기타에 배분
+        const name = (p.customer_name || '').trim();
+        let key = null;
+        if (name === '해외기타') key = '해외기타';
+        else if (name === '국내 기타') key = '국내기타';
+        else if (name === '국내 신규') key = '국내신규';
+        if (key) {
+          repMap[key].monthTarget += (p.targets?.[selMonthKey] || 0);
+          repMap[key].annualTarget += (p.annual_target || 0);
+          for (let m = 1; m <= selMonth; m++) {
+            // YTD 목표는 이 자리에서 쓰이지 않음; annual만 필요
+          }
+        }
+        return;
+      }
+      const rep = p.sales_rep || '미배정';
+      if (!repMap[rep]) repMap[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMap[rep].monthTarget += (p.targets?.[selMonthKey] || 0);
+      repMap[rep].annualTarget += (p.annual_target || 0);
+    });
+
+    // 당월 실적
+    monthOrders.forEach(o => {
+      const { rep } = classifyTx(o);
+      if (!rep) return;
+      if (!repMap[rep]) repMap[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMap[rep].monthActual += (o.order_amount || 0);
+    });
+    // YTD 실적 (1~선택월)
+    const ytdMonthOrders = orders.filter(o => {
+      const d = o.order_date || '';
+      if (!d.startsWith(String(selYear))) return false;
+      const m = parseInt(d.slice(5, 7), 10);
+      return m >= 1 && m <= selMonth;
+    });
+    ytdMonthOrders.forEach(o => {
+      const { rep } = classifyTx(o);
+      if (!rep) return;
+      if (!repMap[rep]) repMap[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMap[rep].ytdActual += (o.order_amount || 0);
+    });
+
+    // 정렬: 달성률 높은 순
+    const repMonthRows = Object.entries(repMap)
+      .filter(([k, v]) => v.monthTarget > 0 || v.monthActual > 0 || v.ytdActual > 0 || v.annualTarget > 0)
+      .sort((a, b) => {
+        const pa = a[1].monthTarget > 0 ? a[1].monthActual / a[1].monthTarget : -1;
+        const pb = b[1].monthTarget > 0 ? b[1].monthActual / b[1].monthTarget : -1;
+        if (pa !== pb) return pb - pa;
+        return b[1].monthActual - a[1].monthActual;
+      })
+      .map(([label, v]) => ({
+        label,
+        ...v,
+        isBucket: ['국내기타', '해외기타', '국내신규', '해외신규'].includes(label),
+        isNew: label.endsWith('신규'),
+      }));
+
+    // 신규 고객 상세 리스트 (드릴다운용)
+    const newCustomerDetails = { 국내신규: [], 해외신규: [] };
+    const etcCustomerDetails = { 국내기타: [], 해외기타: [] };
+    ytdMonthOrders.forEach(o => {
+      const { rep, bucket } = classifyTx(o);
+      if (bucket !== 'new' && bucket !== 'etc') return;
+      const target = bucket === 'new' ? newCustomerDetails : etcCustomerDetails;
+      if (!target[rep]) target[rep] = [];
+      const existing = target[rep].find(x => x.name === o.customer_name);
+      if (existing) {
+        existing.amount += (o.order_amount || 0);
+        existing.orderCount++;
+      } else {
+        target[rep].push({ name: o.customer_name, amount: o.order_amount || 0, orderCount: 1, accountId: o.account_id || null });
+      }
+    });
+    Object.keys(newCustomerDetails).forEach(k => newCustomerDetails[k].sort((a, b) => b.amount - a.amount));
+    Object.keys(etcCustomerDetails).forEach(k => etcCustomerDetails[k].sort((a, b) => b.amount - a.amount));
 
     // Product breakdown with month targets
     const prodMonthRows = buildMonthlyRows(
@@ -2107,6 +2431,89 @@ export default function Report() {
             </div>
           )}
 
+          {/* ══ 섹션 1-3 — 담당자별 당월 실적 (금주 시점, 신 분류 체계) ══ */}
+          {sectionAData.weekRepRows && sectionAData.weekRepRows.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>■ 1-3. 담당자별 당월 수주 실적</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                  ({sectionAData.monthStr} 기준, 달성률 순, 단위: 백만원)
+                </span>
+              </div>
+              <div className="table-wrap">
+                <table className="data-table" style={{ fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 110 }}>담당자 / 버킷</th>
+                      <th style={{ textAlign: 'right' }}>당월 목표</th>
+                      <th style={{ textAlign: 'right' }}>금주 신규</th>
+                      <th style={{ textAlign: 'right' }}>당월 누적</th>
+                      <th style={{ textAlign: 'right' }}>달성률</th>
+                      <th style={{ textAlign: 'right' }}>Gap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sectionAData.weekRepRows.map((r) => {
+                      const gap = r.monthTarget - r.monthActual;
+                      const monthPct = r.monthTarget > 0 ? Math.round((r.monthActual / r.monthTarget) * 100) : 0;
+                      const details = r.isNew ? sectionAData.wkNewDetails[r.label] : sectionAData.wkEtcDetails[r.label];
+                      const hasDrill = r.isBucket && details && details.length > 0;
+                      const isOpen = repDrillOpen[`w-${r.label}`];
+                      return (
+                        <>
+                          <tr key={r.label} style={{ background: r.isBucket ? 'var(--bg2)' : undefined }}>
+                            <td style={{ fontWeight: 600 }}>
+                              {hasDrill ? (
+                                <button onClick={() => toggleRepDrill(`w-${r.label}`)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, color: r.isNew ? '#2563eb' : 'var(--accent)', padding: 0 }}>
+                                  {isOpen ? '▾' : '▸'} {r.label}
+                                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 4 }}>({details.length}사)</span>
+                                </button>
+                              ) : (
+                                <span style={{ color: r.isBucket ? (r.isNew ? '#2563eb' : 'var(--text2)') : undefined }}>{r.label}</span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>{fmtM(r.monthTarget)}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600, color: r.weekActual > 0 ? 'var(--accent)' : 'var(--text3)' }}>{fmtM(r.weekActual)}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(r.monthActual)}</td>
+                            <td style={{ textAlign: 'right', ...achieveStyle(monthPct) }}>{r.monthTarget > 0 ? `${monthPct}%` : '-'}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600, color: gap > 0 ? 'var(--red)' : gap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                              {r.monthTarget === 0 && r.monthActual === 0 ? '-' : gap > 0 ? `-${fmtM(gap)}` : gap < 0 ? `+${fmtM(-gap)}` : '0'}
+                            </td>
+                          </tr>
+                          {isOpen && hasDrill && (
+                            <tr key={`${r.label}-wk-drill`}>
+                              <td colSpan={6} style={{ padding: 8, background: r.isNew ? 'rgba(219,234,254,0.3)' : 'rgba(254,243,199,0.2)', borderTop: '1px dashed var(--border)' }}>
+                                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
+                                  {r.isNew ? '🆕 신규 고객 상세 (전년도 수주 無)' : '📋 기타 고객 상세 (사업계획 외)'}
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 }}>
+                                  {details.map((c, j) => (
+                                    <div key={j} style={{ fontSize: 11, padding: '3px 6px', background: 'var(--bg)', borderRadius: 4 }}>
+                                      <a href="#" onClick={(e) => { e.preventDefault(); if (c.accountId) { const acc = accounts.find(a => a.id === c.accountId); if (acc) setEditingAccount(acc); } }}
+                                        style={{ color: c.accountId ? 'var(--accent)' : 'var(--text)', textDecoration: 'none', fontWeight: 600 }}>
+                                        {c.name}
+                                      </a>
+                                      <span style={{ float: 'right', fontWeight: 600 }}>{fmtM(c.amount)}</span>
+                                      <span style={{ fontSize: 9, color: 'var(--text3)', display: 'block' }}>{c.orderCount}건 (당월)</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                ※ 사업계획상 담당자 + 팀원으로 구성 · 계획 외 고객은 국내/해외 기타(전년도 수주 有) 또는 신규(전년도 수주 無)로 자동 분류 · ▸ 클릭 시 상세 펼치기
+              </div>
+            </div>
+          )}
+
           {/* ══ 섹션 B — 이슈사항 자동 집계 ══ */}
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2888,6 +3295,99 @@ export default function Report() {
             </div>
           )}
 
+          {/* ══ 섹션 2-3 — 담당자별 월간 수주 실적 (신 분류 체계) ══ */}
+          {monthlyReportData.repMonthRows.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>■ 2-3. 담당자별 월간 수주 실적</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                  ({monthlyReportData.monthLabel}, 달성률 순, 단위: 백만원)
+                </span>
+              </div>
+              <div className="table-wrap">
+                <table className="data-table" style={{ fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 110 }}>담당자 / 버킷</th>
+                      <th style={{ textAlign: 'right' }}>당월 목표</th>
+                      <th style={{ textAlign: 'right' }}>당월 실적</th>
+                      <th style={{ textAlign: 'right' }}>달성률</th>
+                      <th style={{ textAlign: 'right' }}>Gap</th>
+                      <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>YTD 실적</th>
+                      <th style={{ textAlign: 'right' }}>연간 목표</th>
+                      <th style={{ textAlign: 'right' }}>연간 달성률</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyReportData.repMonthRows.map((r, i) => {
+                      const gap = r.monthTarget - r.monthActual;
+                      const annualPct = r.annualTarget > 0 ? Math.round((r.ytdActual / r.annualTarget) * 100) : 0;
+                      const monthPct = r.monthTarget > 0 ? Math.round((r.monthActual / r.monthTarget) * 100) : 0;
+                      const hasDrill = r.isBucket && (
+                        (r.isNew ? monthlyReportData.newCustomerDetails[r.label] : monthlyReportData.etcCustomerDetails[r.label])?.length > 0
+                      );
+                      const isOpen = repDrillOpen[`m-${r.label}`];
+                      return (
+                        <>
+                          <tr key={r.label} style={{ background: r.isBucket ? 'var(--bg2)' : undefined }}>
+                            <td style={{ fontWeight: 600 }}>
+                              {hasDrill ? (
+                                <button onClick={() => toggleRepDrill(`m-${r.label}`)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, color: r.isNew ? '#2563eb' : 'var(--accent)', padding: 0 }}>
+                                  {isOpen ? '▾' : '▸'} {r.label}
+                                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 4 }}>
+                                    ({(r.isNew ? monthlyReportData.newCustomerDetails[r.label] : monthlyReportData.etcCustomerDetails[r.label]).length}사)
+                                  </span>
+                                </button>
+                              ) : (
+                                <span style={{ color: r.isBucket ? (r.isNew ? '#2563eb' : 'var(--text2)') : undefined }}>
+                                  {r.label}
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>{fmtM(r.monthTarget)}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{fmtM(r.monthActual)}</td>
+                            <td style={{ textAlign: 'right', ...achieveStyle(monthPct) }}>{r.monthTarget > 0 ? `${monthPct}%` : '-'}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600, color: gap > 0 ? 'var(--red)' : gap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                              {r.monthTarget === 0 && r.monthActual === 0 ? '-' : gap > 0 ? `-${fmtM(gap)}` : gap < 0 ? `+${fmtM(-gap)}` : '0'}
+                            </td>
+                            <td style={{ textAlign: 'right', fontWeight: 600, borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>{fmtM(r.ytdActual)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(r.annualTarget)}</td>
+                            <td style={{ textAlign: 'right', ...achieveStyle(annualPct) }}>{r.annualTarget > 0 ? `${annualPct}%` : '-'}</td>
+                          </tr>
+                          {isOpen && hasDrill && (
+                            <tr key={`${r.label}-drill`}>
+                              <td colSpan={8} style={{ padding: 8, background: r.isNew ? 'rgba(219,234,254,0.3)' : 'rgba(254,243,199,0.2)', borderTop: '1px dashed var(--border)' }}>
+                                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
+                                  {r.isNew ? '🆕 신규 고객 상세 (전년도 수주 無)' : '📋 기타 고객 상세 (사업계획 외)'}
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
+                                  {(r.isNew ? monthlyReportData.newCustomerDetails[r.label] : monthlyReportData.etcCustomerDetails[r.label]).map((c, j) => (
+                                    <div key={j} style={{ fontSize: 11, padding: '3px 6px', background: 'var(--bg)', borderRadius: 4 }}>
+                                      <a href="#" onClick={(e) => { e.preventDefault(); if (c.accountId) { const acc = accounts.find(a => a.id === c.accountId); if (acc) setEditingAccount(acc); } }}
+                                        style={{ color: c.accountId ? 'var(--accent)' : 'var(--text)', textDecoration: 'none', fontWeight: 600 }}>
+                                        {c.name}
+                                      </a>
+                                      <span style={{ float: 'right', fontWeight: 600 }}>{fmtM(c.amount)}</span>
+                                      <span style={{ fontSize: 9, color: 'var(--text3)', display: 'block' }}>{c.orderCount}건 (YTD)</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                ※ 사업계획상 담당자 + 팀원으로 구성 · 계획 외 고객은 국내/해외 기타(전년도 수주 有) 또는 신규(전년도 수주 無)로 자동 분류 · ▸ 클릭 시 상세 펼치기
+              </div>
+            </div>
+          )}
+
           {/* ══ 섹션 C — 팀별 월간 활동 분석 ══ */}
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title">■ 3. 팀별 월간 활동 분석</div>
@@ -3011,6 +3511,176 @@ export default function Report() {
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
                 ※ 목표가 설정된 모든 고객 표시 (실적 0 포함) · 달성률 낮은 순 · 고객명 클릭 시 상세 카드 열림
+              </div>
+            </div>
+          )}
+
+          {/* ══ 섹션 4-3 — 고객별 GAP 심층 분석 (미달 + 초과) ══ */}
+          {(monthlyReportData.gapDeepAnalysis.shortfall.length > 0 || monthlyReportData.gapDeepAnalysis.surplus.length > 0) && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>■ 4-3. 고객별 GAP 심층 분석</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                  (미달 {monthlyReportData.gapDeepAnalysis.shortfall.length}사 · 초과 {monthlyReportData.gapDeepAnalysis.surplus.length}사 · 고객카드 전체 맥락 통합)
+                </span>
+              </div>
+
+              {/* 🔴 미달 고객 */}
+              {monthlyReportData.gapDeepAnalysis.shortfall.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid rgba(220,38,38,.3)' }}>
+                    🔴 미달 고객 (YTD 달성률 90% 미만, Gap 금액 순)
+                  </div>
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {monthlyReportData.gapDeepAnalysis.shortfall.map((c, i) => (
+                      <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'rgba(254,226,226,0.2)' }}>
+                        {/* 헤더 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: '1px dashed var(--border)', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 13, fontWeight: 700 }}>
+                            <a href="#" onClick={(e) => { e.preventDefault(); if (c.account) setEditingAccount(c.account); }}
+                              style={{ color: 'var(--accent)', textDecoration: 'none' }}>{c.name}</a>
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--text2)' }}>({c.rep})</span>
+                          {c.account?.strategic_tier && (
+                            <span style={{ fontSize: 10, padding: '2px 6px', background: 'var(--bg2)', borderRadius: 4, fontWeight: 600 }}>
+                              {c.account.strategic_tier}
+                            </span>
+                          )}
+                          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: 'var(--red)' }}>
+                            YTD {c.ytdPct}% | Gap -{fmtKRW(c.ytdGap)}
+                          </span>
+                          {c.yoyGrowth !== null && (
+                            <span style={{ fontSize: 10, color: c.yoyGrowth >= 0 ? 'var(--green, #16a34a)' : 'var(--red)', fontWeight: 600 }}>
+                              YoY {c.yoyGrowth > 0 ? '+' : ''}{c.yoyGrowth}%
+                            </span>
+                          )}
+                        </div>
+
+                        {/* GAP 분석 내용 */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 11 }}>
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>📌 GAP 분석</div>
+                            {c.gap.causes && c.gap.causes.length > 0 ? (
+                              <div style={{ marginBottom: 4 }}>
+                                <strong>원인:</strong> {c.gap.causes.map(k => {
+                                  const cause = GAP_CAUSES.find(g => g.key === k);
+                                  return cause ? `${cause.icon} ${cause.label}` : k;
+                                }).join(', ')}
+                              </div>
+                            ) : <div style={{ color: 'var(--text3)', marginBottom: 4 }}>원인 미설정</div>}
+                            {c.gap.cause_detail && (
+                              <div style={{ marginBottom: 4, padding: 4, background: 'var(--bg)', borderRadius: 4 }}>
+                                <strong>상세:</strong> {c.gap.cause_detail}
+                              </div>
+                            )}
+                            {c.gap.countermeasure && (
+                              <div style={{ padding: 4, background: 'rgba(220,38,38,.06)', borderRadius: 4, borderLeft: '3px solid var(--red)' }}>
+                                <strong style={{ color: 'var(--red)' }}>⚠ 대책:</strong> {c.gap.countermeasure}
+                              </div>
+                            )}
+                            {c.gap.competition_notes && (
+                              <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text2)' }}>
+                                🏁 경쟁: {c.gap.competition_notes}
+                              </div>
+                            )}
+                            {c.gap.opportunities && c.gap.opportunities.length > 0 && (
+                              <div style={{ marginTop: 4, fontSize: 10 }}>
+                                🔗 Gap 만회 기회 {c.gap.opportunities.length}건 ({fmtKRW(c.gap.opportunities.reduce((s, o) => s + (o.amount || 0) * (o.probability || 0) / 100, 0))} 가중)
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>📊 연관 정보</div>
+                            {c.catchUpComment && (
+                              <div style={{ marginBottom: 4, padding: 4, background: 'rgba(37,99,235,.08)', borderRadius: 4, borderLeft: '3px solid #2563eb' }}>
+                                <strong style={{ color: '#2563eb' }}>📈 FCST:</strong> {c.catchUpComment.text}
+                              </div>
+                            )}
+                            {c.account?.current_context && (
+                              <div style={{ marginBottom: 4, fontSize: 10 }}>
+                                📝 컨텍스트: {c.account.current_context.slice(0, 80)}{c.account.current_context.length > 80 ? '…' : ''}
+                              </div>
+                            )}
+                            {c.recentIssues.length > 0 && (
+                              <div style={{ marginBottom: 4, fontSize: 10 }}>
+                                📞 최근 3개월 이슈 ({c.recentIssues.length}):
+                                <div style={{ marginTop: 2 }}>
+                                  {c.recentIssues.slice(0, 3).map((l, j) => (
+                                    <div key={j} style={{ paddingLeft: 4, color: 'var(--text2)' }}>
+                                      • [{l.issue_type}] {l.date} — {l.status}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {c.expiringContracts.length > 0 && (
+                              <div style={{ marginBottom: 4, fontSize: 10, color: '#d97706' }}>
+                                📅 계약 만료 임박: {c.expiringContracts.map(x => `${x.product_category}(D-${x.daysLeft})`).join(', ')}
+                              </div>
+                            )}
+                            {c.csOpportunities.length > 0 && (
+                              <div style={{ fontSize: 10 }}>
+                                🔗 Cross-selling: {c.csOpportunities.length}건 진행
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 🟢 초과 고객 */}
+              {monthlyReportData.gapDeepAnalysis.surplus.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid rgba(22,163,74,.3)' }}>
+                    🟢 초과 달성 고객 (YTD 달성률 110% 초과, 초과 금액 순)
+                  </div>
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {monthlyReportData.gapDeepAnalysis.surplus.map((c, i) => (
+                      <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'rgba(220,252,231,0.2)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: '1px dashed var(--border)', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 13, fontWeight: 700 }}>
+                            <a href="#" onClick={(e) => { e.preventDefault(); if (c.account) setEditingAccount(c.account); }}
+                              style={{ color: 'var(--accent)', textDecoration: 'none' }}>{c.name}</a>
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--text2)' }}>({c.rep})</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: 'var(--green, #16a34a)' }}>
+                            YTD {c.ytdPct}% | 초과 +{fmtKRW(-c.ytdGap)}
+                          </span>
+                          {c.yoyGrowth !== null && (
+                            <span style={{ fontSize: 10, color: c.yoyGrowth >= 0 ? 'var(--green, #16a34a)' : 'var(--red)', fontWeight: 600 }}>
+                              YoY {c.yoyGrowth > 0 ? '+' : ''}{c.yoyGrowth}%
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11 }}>
+                          {c.gap.cause_detail && (
+                            <div style={{ marginBottom: 4 }}>
+                              <strong>✅ 초과 원인:</strong> {c.gap.cause_detail}
+                            </div>
+                          )}
+                          {c.gap.countermeasure && (
+                            <div style={{ marginBottom: 4, padding: 4, background: 'rgba(22,163,74,.06)', borderRadius: 4, borderLeft: '3px solid var(--green, #16a34a)' }}>
+                              <strong style={{ color: 'var(--green, #16a34a)' }}>🚀 지속 발전:</strong> {c.gap.countermeasure}
+                            </div>
+                          )}
+                          {!c.gap.cause_detail && !c.gap.countermeasure && (
+                            <div style={{ color: 'var(--text3)', fontSize: 10 }}>
+                              ⚠ 초과 달성 원인 미기록 — 고객카드 GAP 분석 탭에서 기록 필요
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 10, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>
+                ※ 고객명 클릭 시 상세 카드 열림 · FCST catch-up 코멘트는 향후 FCST 합계가 Gap을 만회할 수 있을 때 자동 생성 · 전년 동기 대비 증감률 포함
               </div>
             </div>
           )}
