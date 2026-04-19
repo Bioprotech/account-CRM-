@@ -1062,6 +1062,48 @@ export default function Report() {
         changeRate: a.lastMonth > 0 ? Math.round(((a.thisMonth - a.lastMonth) / a.lastMonth) * 100) : null,
       }));
 
+    // ── 고객별 당월 실적 (목표 설정된 모든 고객, 실적 0 포함, 달성률 오름차순) ──
+    const planByCustomerM = {};
+    customerPlans.forEach(p => {
+      if (!p.customer_name) return;
+      // 버킷 플랜 제외 (실제 고객만)
+      const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
+      if (bucketNames.includes(p.customer_name.trim())) return;
+      const key = p.customer_name.toLowerCase().trim();
+      if (!planByCustomerM[key]) planByCustomerM[key] = {
+        key, name: p.customer_name, rep: p.sales_rep || '미배정',
+        accountId: p.account_id || null,
+        monthTarget: 0, ytdTarget: 0,
+      };
+      planByCustomerM[key].monthTarget += (p.targets?.[selMonthKey] || 0);
+      for (let m = 1; m <= selMonth; m++) {
+        planByCustomerM[key].ytdTarget += (p.targets?.[String(m).padStart(2, '0')] || 0);
+      }
+    });
+    // 실제 주문 조인
+    const ytdOrdersForMonth = orders.filter(o => {
+      const d = o.order_date || '';
+      if (!d.startsWith(String(selYear))) return false;
+      const m = parseInt(d.slice(5, 7), 10);
+      return m >= 1 && m <= selMonth;
+    });
+    Object.values(planByCustomerM).forEach(p => {
+      p.monthActual = monthOrders
+        .filter(o => (o.customer_name || '').toLowerCase().trim() === p.key)
+        .reduce((s, o) => s + (o.order_amount || 0), 0);
+      p.ytdActual = ytdOrdersForMonth
+        .filter(o => (o.customer_name || '').toLowerCase().trim() === p.key)
+        .reduce((s, o) => s + (o.order_amount || 0), 0);
+      p.monthPct = p.monthTarget > 0 ? Math.round((p.monthActual / p.monthTarget) * 100) : 0;
+      p.ytdPct = p.ytdTarget > 0 ? Math.round((p.ytdActual / p.ytdTarget) * 100) : 0;
+      p.monthGap = p.monthTarget - p.monthActual;
+      p.ytdGap = p.ytdTarget - p.ytdActual;
+    });
+    // 목표 > 0 인 모든 고객 포함 (실적 0 포함), 달성률 낮은 순 (미달 우선 노출)
+    const monthlyByCustomer = Object.values(planByCustomerM)
+      .filter(p => p.monthTarget > 0)
+      .sort((a, b) => a.monthPct - b.monthPct);
+
     // ── 섹션 E: 재구매/계약 만료 임박 ──
     const now = new Date();
     const nextMonthDate = new Date(selYear, selMonth, 0); // 선택월 말일
@@ -1085,6 +1127,55 @@ export default function Report() {
     });
     contractExpiringSoon.sort((a, b) => a.daysLeft - b.daysLeft);
 
+    // ── KPI 계산: 당월 + YTD ──
+    // YTD = 1월~선택월까지 누적
+    const ytdOrderActual = monthlyTrend
+      .filter(t => t.month <= selMonth)
+      .reduce((s, t) => s + t.actual, 0);
+    const ytdOrderTarget = monthlyTrend
+      .filter(t => t.month <= selMonth)
+      .reduce((s, t) => s + t.target, 0);
+    const ytdOrderPrevYear = monthlyTrend
+      .filter(t => t.month <= selMonth)
+      .reduce((s, t) => s + t.prevYearActual, 0);
+
+    const ytdSalesActual = salesMonthlyTrend
+      .filter(t => t.month <= selMonth)
+      .reduce((s, t) => s + t.actual, 0);
+    const ytdSalesTarget = salesMonthlyTrend
+      .filter(t => t.month <= selMonth)
+      .reduce((s, t) => s + t.target, 0);
+    const ytdSalesPrevYear = salesMonthlyTrend
+      .filter(t => t.month <= selMonth)
+      .reduce((s, t) => s + t.prevYearActual, 0);
+
+    const monthOrderActual = monthlyTrend.find(t => t.month === selMonth)?.actual || 0;
+    const monthOrderTarget = monthlyTrend.find(t => t.month === selMonth)?.target || 0;
+    const monthOrderPrevYear = monthlyTrend.find(t => t.month === selMonth)?.prevYearActual || 0;
+
+    const monthSalesActual = salesMonthlyTrend.find(t => t.month === selMonth)?.actual || 0;
+    const monthSalesTarget = salesMonthlyTrend.find(t => t.month === selMonth)?.target || 0;
+    const monthSalesPrevYear = salesMonthlyTrend.find(t => t.month === selMonth)?.prevYearActual || 0;
+
+    const kpi = {
+      order: {
+        mtdActual: monthOrderActual, mtdTarget: monthOrderTarget, mtdPrevYear: monthOrderPrevYear,
+        mtdPct: monthOrderTarget > 0 ? Math.round((monthOrderActual / monthOrderTarget) * 100) : 0,
+        mtdYoyPct: monthOrderPrevYear > 0 ? Math.round((monthOrderActual / monthOrderPrevYear) * 100) : 0,
+        ytdActual: ytdOrderActual, ytdTarget: ytdOrderTarget, ytdPrevYear: ytdOrderPrevYear,
+        ytdPct: ytdOrderTarget > 0 ? Math.round((ytdOrderActual / ytdOrderTarget) * 100) : 0,
+        ytdYoyPct: ytdOrderPrevYear > 0 ? Math.round((ytdOrderActual / ytdOrderPrevYear) * 100) : 0,
+      },
+      sales: {
+        mtdActual: monthSalesActual, mtdTarget: monthSalesTarget, mtdPrevYear: monthSalesPrevYear,
+        mtdPct: monthSalesTarget > 0 ? Math.round((monthSalesActual / monthSalesTarget) * 100) : 0,
+        mtdYoyPct: monthSalesPrevYear > 0 ? Math.round((monthSalesActual / monthSalesPrevYear) * 100) : 0,
+        ytdActual: ytdSalesActual, ytdTarget: ytdSalesTarget, ytdPrevYear: ytdSalesPrevYear,
+        ytdPct: ytdSalesTarget > 0 ? Math.round((ytdSalesActual / ytdSalesTarget) * 100) : 0,
+        ytdYoyPct: ytdSalesPrevYear > 0 ? Math.round((ytdSalesActual / ytdSalesPrevYear) * 100) : 0,
+      },
+    };
+
     return {
       selYear, selMonth, selMonthStr, selMonthKey,
       monthLabel: `${selYear}년 ${selMonth}월`,
@@ -1094,6 +1185,8 @@ export default function Report() {
       salesTeamRows, salesTeamTotal,
       teamActivity,
       topAccounts,
+      monthlyByCustomer,
+      kpi,
       reorderSoon, contractExpiringSoon,
       monthOrders, monthSales, // for Excel raw
     };
@@ -1164,7 +1257,13 @@ export default function Report() {
       });
       return Object.entries(map)
         .filter(([, v]) => v.monthTarget > 0 || v.monthActual > 0 || v.ytdActual > 0)
-        .sort((a, b) => b[1].annualTarget - a[1].annualTarget || b[1].ytdActual - a[1].ytdActual)
+        .sort((a, b) => {
+          // 달성률 높은 순 (목표 있는 것만 의미있음)
+          const pa = a[1].monthTarget > 0 ? a[1].monthActual / a[1].monthTarget : -1;
+          const pb = b[1].monthTarget > 0 ? b[1].monthActual / b[1].monthTarget : -1;
+          if (pa !== pb) return pb - pa;
+          return b[1].monthActual - a[1].monthActual;
+        })
         .map(([label, v]) => ({ label, ...v }));
     };
 
@@ -2410,6 +2509,112 @@ export default function Report() {
             )}
           </div>
 
+          {/* ══ KPI 카드 — 당월 + YTD, 수주 + 매출 ══ */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+            {/* 수주 MTD */}
+            <div className={`kpi ${pctColor(monthlyReportData.kpi.order.mtdPct)}`} style={{ padding: 12 }}>
+              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>📦 수주 MTD 달성률</div>
+              <div className="kpi-value" style={{ fontSize: 22, marginBottom: 4 }}>{monthlyReportData.kpi.order.mtdPct}%</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                {fmtKRW(monthlyReportData.kpi.order.mtdActual)} / {fmtKRW(monthlyReportData.kpi.order.mtdTarget)}
+              </div>
+              <div style={{ fontSize: 10, color: monthlyReportData.kpi.order.mtdYoyPct >= 100 ? 'var(--green, #16a34a)' : 'var(--red)', marginTop: 2 }}>
+                전년 {monthlyReportData.kpi.order.mtdYoyPct > 0 ? `${monthlyReportData.kpi.order.mtdYoyPct}%` : '-'}
+              </div>
+            </div>
+            {/* 수주 YTD */}
+            <div className={`kpi ${pctColor(monthlyReportData.kpi.order.ytdPct)}`} style={{ padding: 12 }}>
+              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>📦 수주 YTD 누적달성률</div>
+              <div className="kpi-value" style={{ fontSize: 22, marginBottom: 4 }}>{monthlyReportData.kpi.order.ytdPct}%</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                {fmtKRW(monthlyReportData.kpi.order.ytdActual)} / {fmtKRW(monthlyReportData.kpi.order.ytdTarget)}
+              </div>
+              <div style={{ fontSize: 10, color: monthlyReportData.kpi.order.ytdYoyPct >= 100 ? 'var(--green, #16a34a)' : 'var(--red)', marginTop: 2 }}>
+                전년 {monthlyReportData.kpi.order.ytdYoyPct > 0 ? `${monthlyReportData.kpi.order.ytdYoyPct}%` : '-'}
+              </div>
+            </div>
+            {/* 매출 MTD */}
+            <div className={`kpi ${pctColor(monthlyReportData.kpi.sales.mtdPct)}`} style={{ padding: 12, background: 'rgba(59,130,246,0.05)' }}>
+              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>💰 매출 MTD 달성률</div>
+              <div className="kpi-value" style={{ fontSize: 22, marginBottom: 4 }}>{monthlyReportData.kpi.sales.mtdPct}%</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                {fmtKRW(monthlyReportData.kpi.sales.mtdActual)} / {fmtKRW(monthlyReportData.kpi.sales.mtdTarget)}
+              </div>
+              <div style={{ fontSize: 10, color: monthlyReportData.kpi.sales.mtdYoyPct >= 100 ? 'var(--green, #16a34a)' : 'var(--red)', marginTop: 2 }}>
+                전년 {monthlyReportData.kpi.sales.mtdYoyPct > 0 ? `${monthlyReportData.kpi.sales.mtdYoyPct}%` : '-'}
+              </div>
+            </div>
+            {/* 매출 YTD */}
+            <div className={`kpi ${pctColor(monthlyReportData.kpi.sales.ytdPct)}`} style={{ padding: 12, background: 'rgba(59,130,246,0.05)' }}>
+              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>💰 매출 YTD 누적달성률</div>
+              <div className="kpi-value" style={{ fontSize: 22, marginBottom: 4 }}>{monthlyReportData.kpi.sales.ytdPct}%</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                {fmtKRW(monthlyReportData.kpi.sales.ytdActual)} / {fmtKRW(monthlyReportData.kpi.sales.ytdTarget)}
+              </div>
+              <div style={{ fontSize: 10, color: monthlyReportData.kpi.sales.ytdYoyPct >= 100 ? 'var(--green, #16a34a)' : 'var(--red)', marginTop: 2 }}>
+                전년 {monthlyReportData.kpi.sales.ytdYoyPct > 0 ? `${monthlyReportData.kpi.sales.ytdYoyPct}%` : '-'}
+              </div>
+            </div>
+          </div>
+
+          {/* ══ 전년동기 대비 비교 요약 ══ */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title">■ 전년동기 대비 비교</div>
+            <div className="table-wrap">
+              <table className="data-table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ minWidth: 100 }}>구분</th>
+                    <th style={{ textAlign: 'right' }}>전년 동월 실적</th>
+                    <th style={{ textAlign: 'right' }}>당월 실적</th>
+                    <th style={{ textAlign: 'right' }}>증감액</th>
+                    <th style={{ textAlign: 'right' }}>증감률</th>
+                    <th style={{ textAlign: 'right', paddingLeft: 12, borderLeft: '2px solid var(--border)' }}>전년 YTD</th>
+                    <th style={{ textAlign: 'right' }}>당해 YTD</th>
+                    <th style={{ textAlign: 'right' }}>YTD 증감액</th>
+                    <th style={{ textAlign: 'right' }}>YTD 증감률</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label: '📦 수주', k: monthlyReportData.kpi.order },
+                    { label: '💰 매출', k: monthlyReportData.kpi.sales },
+                  ].map((row, i) => {
+                    const mtdDiff = row.k.mtdActual - row.k.mtdPrevYear;
+                    const mtdGrowth = row.k.mtdPrevYear > 0 ? Math.round(((row.k.mtdActual - row.k.mtdPrevYear) / row.k.mtdPrevYear) * 100) : null;
+                    const ytdDiff = row.k.ytdActual - row.k.ytdPrevYear;
+                    const ytdGrowth = row.k.ytdPrevYear > 0 ? Math.round(((row.k.ytdActual - row.k.ytdPrevYear) / row.k.ytdPrevYear) * 100) : null;
+                    const colorFor = (v) => v > 0 ? 'var(--green, #16a34a)' : v < 0 ? 'var(--red)' : 'var(--text2)';
+                    return (
+                      <tr key={i}>
+                        <td style={{ fontWeight: 700 }}>{row.label}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmtM(row.k.mtdPrevYear)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(row.k.mtdActual)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: colorFor(mtdDiff) }}>
+                          {mtdDiff >= 0 ? '+' : ''}{fmtM(mtdDiff)}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: colorFor(mtdDiff) }}>
+                          {mtdGrowth === null ? '신규' : `${mtdGrowth >= 0 ? '+' : ''}${mtdGrowth}%`}
+                        </td>
+                        <td style={{ textAlign: 'right', color: 'var(--text3)', paddingLeft: 12, borderLeft: '2px solid var(--border)' }}>{fmtM(row.k.ytdPrevYear)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(row.k.ytdActual)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: colorFor(ytdDiff) }}>
+                          {ytdDiff >= 0 ? '+' : ''}{fmtM(ytdDiff)}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: colorFor(ytdDiff) }}>
+                          {ytdGrowth === null ? '신규' : `${ytdGrowth >= 0 ? '+' : ''}${ytdGrowth}%`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+              ※ 수주: O시트(오더일 기준) / 매출: S시트(B/L Date 기준) · 단위: 백만원
+            </div>
+          </div>
+
           {/* ══ 섹션 A — Executive Summary (수동 입력) ══ */}
           <div className="card" style={{ marginBottom: 16, background: 'var(--bg2)' }}>
             <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2751,6 +2956,64 @@ export default function Report() {
               </div>
             )}
           </div>
+
+          {/* ══ 섹션 D-2 — 고객별 당월 실적 (목표 설정된 모든 고객, 미달 우선 정렬) ══ */}
+          {monthlyReportData.monthlyByCustomer.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>■ 4-2. 고객별 당월 수주 실적</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                  ({monthlyReportData.monthLabel} 목표 설정 고객 {monthlyReportData.monthlyByCustomer.length}사, 달성률 낮은 순)
+                </span>
+              </div>
+              <div className="table-wrap" style={{ maxHeight: 400 }}>
+                <table className="data-table" style={{ fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th>거래처명</th>
+                      <th>담당</th>
+                      <th style={{ textAlign: 'right' }}>당월 목표</th>
+                      <th style={{ textAlign: 'right' }}>당월 실적</th>
+                      <th style={{ textAlign: 'right' }}>달성률</th>
+                      <th style={{ textAlign: 'right' }}>Gap</th>
+                      <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>YTD 목표</th>
+                      <th style={{ textAlign: 'right' }}>YTD 실적</th>
+                      <th style={{ textAlign: 'right' }}>YTD 달성률</th>
+                      <th style={{ textAlign: 'right' }}>YTD Gap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyReportData.monthlyByCustomer.map((p, i) => (
+                      <tr key={i} style={{ background: p.monthPct < 80 ? 'rgba(254, 226, 226, 0.3)' : undefined }}>
+                        <td style={{ fontWeight: 600 }}>
+                          {p.accountId ? (
+                            <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === p.accountId); if (acc) setEditingAccount(acc); }}
+                              style={{ color: 'var(--accent)', textDecoration: 'none' }}>{p.name}</a>
+                          ) : p.name}
+                        </td>
+                        <td style={{ color: 'var(--text2)' }}>{p.rep}</td>
+                        <td style={{ textAlign: 'right' }}>{fmtM(p.monthTarget)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: p.monthActual > 0 ? 'var(--accent)' : 'var(--red)' }}>{fmtM(p.monthActual)}</td>
+                        <td style={{ textAlign: 'right', ...achieveStyle(p.monthPct) }}>{p.monthPct}%</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: p.monthGap > 0 ? 'var(--red)' : p.monthGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                          {p.monthGap > 0 ? `-${fmtM(p.monthGap)}` : p.monthGap < 0 ? `+${fmtM(-p.monthGap)}` : '0'}
+                        </td>
+                        <td style={{ textAlign: 'right', color: 'var(--text3)', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>{fmtM(p.ytdTarget)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(p.ytdActual)}</td>
+                        <td style={{ textAlign: 'right', ...achieveStyle(p.ytdPct) }}>{p.ytdPct}%</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: p.ytdGap > 0 ? 'var(--red)' : p.ytdGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                          {p.ytdGap > 0 ? `-${fmtM(p.ytdGap)}` : p.ytdGap < 0 ? `+${fmtM(-p.ytdGap)}` : '0'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                ※ 목표가 설정된 모든 고객 표시 (실적 0 포함) · 달성률 낮은 순 · 고객명 클릭 시 상세 카드 열림
+              </div>
+            </div>
+          )}
 
           {/* ══ 섹션 E — 다음 달 사업 계획 (반자동) ══ */}
           <div className="card" style={{ marginBottom: 16 }}>

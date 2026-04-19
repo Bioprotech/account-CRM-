@@ -187,6 +187,8 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
   let overseasEtcActual = 0;
   let domesticEtcActual = 0;
   let newCustomerActual = 0;
+  let newCustomerDomesticActual = 0;
+  let newCustomerOverseasActual = 0;
   const overseasEtcCustomers = [];
   const domesticEtcCustomers = [];
   const newCustomers = [];
@@ -198,17 +200,20 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
     const domestic = info.account ? isDomestic(info.account) : /[가-힣]/.test(info.name || '');
 
     if (!isPrior) {
-      // 신규
+      // 신규 (전년도 수주 없는 고객)
       newCustomerActual += amount;
-      newCustomers.push({ name: info.name, amount, accountId: info.account?.id || null });
+      if (domestic) newCustomerDomesticActual += amount;
+      else newCustomerOverseasActual += amount;
+      newCustomers.push({
+        name: info.name, amount, accountId: info.account?.id || null,
+        domestic, orderCount: info.orders.length,
+      });
     } else if (domestic) {
-      // 국내기타
       domesticEtcActual += amount;
-      domesticEtcCustomers.push({ name: info.name, amount, accountId: info.account?.id || null });
+      domesticEtcCustomers.push({ name: info.name, amount, accountId: info.account?.id || null, orderCount: info.orders.length });
     } else {
-      // 해외기타
       overseasEtcActual += amount;
-      overseasEtcCustomers.push({ name: info.name, amount, accountId: info.account?.id || null });
+      overseasEtcCustomers.push({ name: info.name, amount, accountId: info.account?.id || null, orderCount: info.orders.length });
     }
   });
 
@@ -241,10 +246,166 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
     newCustomer: {
       target: newCustomerTarget,
       actual: newCustomerActual,
+      actualDomestic: newCustomerDomesticActual,
+      actualOverseas: newCustomerOverseasActual,
       monthTargets: newCustomerMonthTargets,
       customers: newCustomers,
+      customersDomestic: newCustomers.filter(c => c.domestic),
+      customersOverseas: newCustomers.filter(c => !c.domestic),
     },
   };
+}
+
+/* ══════════════════════════════════════════════════════
+   담당자 뷰용 고객 버킷 결정 (단일 주문/매출 → 분류 키)
+   ══════════════════════════════════════════════════════ */
+
+/**
+ * 한 고객(account)의 담당자 뷰 버킷을 결정
+ *   - 사업계획 매칭 → { bucket: 'plan', rep: '사업계획 담당자' }
+ *   - 전년도 수주 無 → { bucket: 'new', domestic, label: '국내신규'|'해외신규' }
+ *   - 전년도 수주 有 + 사업계획 外 → { bucket: 'etc', domestic, label: '국내기타'|'해외기타' }
+ *
+ * @param {object} params
+ * @param {object} params.account - 고객 객체 (선택, null 가능)
+ * @param {string} params.customerName - 주문/매출의 customer_name
+ * @param {Map|object} params.planByName - { name(lowercase trimmed) → plan }
+ * @param {Set<string>} params.priorSet - 전년도 수주 고객명 Set (lowercase trimmed)
+ */
+export function classifyForRepView({ account, customerName, planByName, priorSet }) {
+  const nameKey = (customerName || account?.company_name || '').toLowerCase().trim();
+  if (!nameKey) return { bucket: 'unknown', label: '기타', rep: null };
+
+  // 1. 사업계획 매칭 (customer 플랜)
+  const plan = planByName instanceof Map ? planByName.get(nameKey) : planByName[nameKey];
+  if (plan && plan.sales_rep) {
+    return { bucket: 'plan', rep: plan.sales_rep, label: plan.sales_rep, planMatch: true };
+  }
+
+  // 2. 국내/해외 판별
+  const domestic = account
+    ? isDomestic(account)
+    : /[가-힣]/.test(customerName || '');
+
+  // 3. 전년도 수주 여부
+  const hasPrior = priorSet && priorSet.has(nameKey);
+
+  if (!hasPrior) {
+    // 신규
+    return {
+      bucket: 'new',
+      rep: domestic ? '국내신규' : '해외신규',
+      label: domestic ? '국내신규' : '해외신규',
+      domestic,
+      isNew: true,
+    };
+  }
+
+  // 기타
+  return {
+    bucket: 'etc',
+    rep: domestic ? '국내기타' : '해외기타',
+    label: domestic ? '국내기타' : '해외기타',
+    domestic,
+    isEtc: true,
+  };
+}
+
+/* ══════════════════════════════════════════════════════
+   담당자별 집계 (신 분류 체계 기반)
+   ══════════════════════════════════════════════════════ */
+
+/**
+ * 주문/매출 목록을 담당자별로 집계
+ * - 사업계획 담당자 + 국내기타 / 해외기타 / 국내신규 / 해외신규
+ *
+ * @param {object} params
+ * @param {Array} params.transactions - orders 또는 sales 배열
+ * @param {Array} params.accounts
+ * @param {Array} params.customerPlans
+ * @param {Set<string>} params.priorSet
+ * @param {Array<string>} params.teamMembers - 유효 담당자 목록 (빈 행 유지용)
+ * @param {function} params.amountGetter - (tx) => amount
+ * @returns {object} { repAggregates: { [repName]: { amount, customers: [...] } }, buckets: {...} }
+ */
+export function aggregateByRep({
+  transactions,
+  accounts,
+  customerPlans,
+  priorSet,
+  teamMembers = [],
+  amountGetter = (t) => t.order_amount || t.sale_amount || 0,
+}) {
+  // plan name lookup
+  const planByName = {};
+  (customerPlans || []).forEach(p => {
+    if (!p.customer_name) return;
+    if (getBucketCategory(p.customer_name)) return; // 버킷 플랜 제외
+    planByName[p.customer_name.toLowerCase().trim()] = p;
+  });
+
+  const accountByName = {};
+  (accounts || []).forEach(a => {
+    if (a.company_name) accountByName[a.company_name.toLowerCase().trim()] = a;
+  });
+  const accountById = {};
+  (accounts || []).forEach(a => { accountById[a.id] = a; });
+
+  // 결과 컨테이너: 담당자 + 버킷
+  const result = {};
+
+  // 사업계획 담당자 초기화 (실적 0이어도 행 유지)
+  const planReps = new Set();
+  (customerPlans || []).forEach(p => {
+    if (p.sales_rep) planReps.add(p.sales_rep);
+  });
+  (teamMembers || []).forEach(r => planReps.add(r));
+
+  planReps.forEach(rep => {
+    result[rep] = { kind: 'plan', rep, amount: 0, customers: [], orderCount: 0 };
+  });
+
+  // 버킷 4종 초기화
+  ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => {
+    result[k] = {
+      kind: k.endsWith('신규') ? 'new' : 'etc',
+      rep: k,
+      amount: 0,
+      customers: [], // [{ name, amount, accountId }]
+      orderCount: 0,
+    };
+  });
+
+  // transaction 순회
+  (transactions || []).forEach(tx => {
+    const acc = tx.account_id ? accountById[tx.account_id]
+      : accountByName[(tx.customer_name || '').toLowerCase().trim()] || null;
+    const { rep, bucket } = classifyForRepView({
+      account: acc,
+      customerName: tx.customer_name || acc?.company_name,
+      planByName,
+      priorSet: priorSet || new Set(),
+    });
+    if (!rep) return;
+    if (!result[rep]) {
+      // teamMembers에 없는 담당자 (사업계획엔 있지만) - 버킷에 매핑
+      result[rep] = { kind: 'plan', rep, amount: 0, customers: [], orderCount: 0 };
+    }
+    const amount = amountGetter(tx);
+    const name = tx.customer_name || acc?.company_name || '?';
+    result[rep].amount += amount;
+    result[rep].orderCount++;
+    // 고객별 누적
+    const existing = result[rep].customers.find(c => c.name === name);
+    if (existing) {
+      existing.amount += amount;
+      existing.orderCount++;
+    } else {
+      result[rep].customers.push({ name, amount, accountId: acc?.id || null, orderCount: 1 });
+    }
+  });
+
+  return result;
 }
 
 /**
