@@ -1207,6 +1207,106 @@ export default function Report() {
       .sort((a, b) => a.monthPct - b.monthPct);
 
     // ══════════════════════════════════════════════════════
+    // 담당자별 월간 실적 (신 분류 체계) — 사업계획 담당자 + 국내기타/해외기타/국내신규/해외신규
+    // ══════════════════════════════════════════════════════
+    const planByNameForRep = {};
+    customerPlans.forEach(p => {
+      if (!p.customer_name) return;
+      const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
+      if (bucketNames.includes(p.customer_name.trim())) return;
+      planByNameForRep[p.customer_name.toLowerCase().trim()] = p;
+    });
+    const classifyTxRep = (tx) => {
+      const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
+        : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (tx.customer_name || '').toLowerCase().trim()) || null;
+      return classifyForRepView({
+        account: acc,
+        customerName: tx.customer_name || acc?.company_name,
+        planByName: planByNameForRep,
+        priorSet: priorYearSet,
+      });
+    };
+
+    const repMapMR = {};
+    const initRepKeysMR = new Set();
+    customerPlans.forEach(p => {
+      if (p.sales_rep && !['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) {
+        initRepKeysMR.add(p.sales_rep);
+      }
+    });
+    (teamMembers || []).forEach(r => initRepKeysMR.add(r));
+    ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => initRepKeysMR.add(k));
+    initRepKeysMR.forEach(k => {
+      repMapMR[k] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+    });
+
+    customerPlans.forEach(p => {
+      const name = (p.customer_name || '').trim();
+      if (['해외기타', '국내 기타', '국내 신규', '직판영업'].includes(name)) {
+        let key = null;
+        if (name === '해외기타') key = '해외기타';
+        else if (name === '국내 기타') key = '국내기타';
+        else if (name === '국내 신규') key = '국내신규';
+        if (key && repMapMR[key]) {
+          repMapMR[key].monthTarget += (p.targets?.[selMonthKey] || 0);
+          repMapMR[key].annualTarget += (p.annual_target || 0);
+        }
+        return;
+      }
+      const rep = p.sales_rep || '미배정';
+      if (!repMapMR[rep]) repMapMR[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMapMR[rep].monthTarget += (p.targets?.[selMonthKey] || 0);
+      repMapMR[rep].annualTarget += (p.annual_target || 0);
+    });
+
+    monthOrders.forEach(o => {
+      const { rep } = classifyTxRep(o);
+      if (!rep) return;
+      if (!repMapMR[rep]) repMapMR[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMapMR[rep].monthActual += (o.order_amount || 0);
+    });
+    const ytdMonthOrdersMR = orders.filter(o => {
+      const d = o.order_date || '';
+      if (!d.startsWith(String(selYear))) return false;
+      const m = parseInt(d.slice(5, 7), 10);
+      return m >= 1 && m <= selMonth;
+    });
+    ytdMonthOrdersMR.forEach(o => {
+      const { rep } = classifyTxRep(o);
+      if (!rep) return;
+      if (!repMapMR[rep]) repMapMR[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMapMR[rep].ytdActual += (o.order_amount || 0);
+    });
+
+    const repMonthRows = Object.entries(repMapMR)
+      .filter(([, v]) => v.monthTarget > 0 || v.monthActual > 0 || v.ytdActual > 0 || v.annualTarget > 0)
+      .sort((a, b) => {
+        const pa = a[1].monthTarget > 0 ? a[1].monthActual / a[1].monthTarget : -1;
+        const pb = b[1].monthTarget > 0 ? b[1].monthActual / b[1].monthTarget : -1;
+        if (pa !== pb) return pb - pa;
+        return b[1].monthActual - a[1].monthActual;
+      })
+      .map(([label, v]) => ({
+        label, ...v,
+        isBucket: ['국내기타', '해외기타', '국내신규', '해외신규'].includes(label),
+        isNew: label.endsWith('신규'),
+      }));
+
+    const newCustomerDetails = { 국내신규: [], 해외신규: [] };
+    const etcCustomerDetails = { 국내기타: [], 해외기타: [] };
+    ytdMonthOrdersMR.forEach(o => {
+      const { rep, bucket } = classifyTxRep(o);
+      if (bucket !== 'new' && bucket !== 'etc') return;
+      const target = bucket === 'new' ? newCustomerDetails : etcCustomerDetails;
+      if (!target[rep]) target[rep] = [];
+      const existing = target[rep].find(x => x.name === o.customer_name);
+      if (existing) { existing.amount += (o.order_amount || 0); existing.orderCount++; }
+      else target[rep].push({ name: o.customer_name, amount: o.order_amount || 0, orderCount: 1, accountId: o.account_id || null });
+    });
+    Object.keys(newCustomerDetails).forEach(k => newCustomerDetails[k].sort((a, b) => b.amount - a.amount));
+    Object.keys(etcCustomerDetails).forEach(k => etcCustomerDetails[k].sort((a, b) => b.amount - a.amount));
+
+    // ══════════════════════════════════════════════════════
     // GAP 심층 분석 — 미달/초과 고객 상위 N사 + 고객카드 전체 맥락 통합
     // ══════════════════════════════════════════════════════
     const gapDeepAnalysis = (() => {
@@ -1487,116 +1587,12 @@ export default function Report() {
         .map(([label, v]) => ({ label, ...v }));
     };
 
-    // Rep breakdown with month targets — 신 분류 체계 적용
-    // planByName for classifyForRepView
-    const planByNameForRep = {};
-    customerPlans.forEach(p => {
-      if (!p.customer_name) return;
-      const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
-      if (bucketNames.includes(p.customer_name.trim())) return;
-      planByNameForRep[p.customer_name.toLowerCase().trim()] = p;
-    });
-    const classifyTx = (tx) => {
-      const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
-        : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (tx.customer_name || '').toLowerCase().trim()) || null;
-      return classifyForRepView({
-        account: acc,
-        customerName: tx.customer_name || acc?.company_name,
-        planByName: planByNameForRep,
-        priorSet: priorYearSet,
-      });
-    };
-
-    const repMap = {};
-    // 사업계획 담당자 + teamMembers 초기화 (빈 행 유지)
-    const initRepKeys = new Set();
-    customerPlans.forEach(p => { if (p.sales_rep && !['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) initRepKeys.add(p.sales_rep); });
-    teamMembers.forEach(r => initRepKeys.add(r));
-    // 버킷 4종 추가
-    ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => initRepKeys.add(k));
-    initRepKeys.forEach(k => {
-      repMap[k] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
-    });
-
-    // 월별 목표 (사업계획 담당자만 — 버킷은 aggregate에서 처리)
-    customerPlans.forEach(p => {
-      if (['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) {
-        // 버킷 플랜: 이름에 따라 국내기타/국내신규/해외기타에 배분
-        const name = (p.customer_name || '').trim();
-        let key = null;
-        if (name === '해외기타') key = '해외기타';
-        else if (name === '국내 기타') key = '국내기타';
-        else if (name === '국내 신규') key = '국내신규';
-        if (key) {
-          repMap[key].monthTarget += (p.targets?.[selMonthKey] || 0);
-          repMap[key].annualTarget += (p.annual_target || 0);
-          for (let m = 1; m <= selMonth; m++) {
-            // YTD 목표는 이 자리에서 쓰이지 않음; annual만 필요
-          }
-        }
-        return;
-      }
-      const rep = p.sales_rep || '미배정';
-      if (!repMap[rep]) repMap[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
-      repMap[rep].monthTarget += (p.targets?.[selMonthKey] || 0);
-      repMap[rep].annualTarget += (p.annual_target || 0);
-    });
-
-    // 당월 실적
-    monthOrders.forEach(o => {
-      const { rep } = classifyTx(o);
-      if (!rep) return;
-      if (!repMap[rep]) repMap[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
-      repMap[rep].monthActual += (o.order_amount || 0);
-    });
-    // YTD 실적 (1~선택월)
-    const ytdMonthOrders = orders.filter(o => {
-      const d = o.order_date || '';
-      if (!d.startsWith(String(selYear))) return false;
-      const m = parseInt(d.slice(5, 7), 10);
-      return m >= 1 && m <= selMonth;
-    });
-    ytdMonthOrders.forEach(o => {
-      const { rep } = classifyTx(o);
-      if (!rep) return;
-      if (!repMap[rep]) repMap[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
-      repMap[rep].ytdActual += (o.order_amount || 0);
-    });
-
-    // 정렬: 달성률 높은 순
-    const repMonthRows = Object.entries(repMap)
-      .filter(([k, v]) => v.monthTarget > 0 || v.monthActual > 0 || v.ytdActual > 0 || v.annualTarget > 0)
-      .sort((a, b) => {
-        const pa = a[1].monthTarget > 0 ? a[1].monthActual / a[1].monthTarget : -1;
-        const pb = b[1].monthTarget > 0 ? b[1].monthActual / b[1].monthTarget : -1;
-        if (pa !== pb) return pb - pa;
-        return b[1].monthActual - a[1].monthActual;
-      })
-      .map(([label, v]) => ({
-        label,
-        ...v,
-        isBucket: ['국내기타', '해외기타', '국내신규', '해외신규'].includes(label),
-        isNew: label.endsWith('신규'),
-      }));
-
-    // 신규 고객 상세 리스트 (드릴다운용)
-    const newCustomerDetails = { 국내신규: [], 해외신규: [] };
-    const etcCustomerDetails = { 국내기타: [], 해외기타: [] };
-    ytdMonthOrders.forEach(o => {
-      const { rep, bucket } = classifyTx(o);
-      if (bucket !== 'new' && bucket !== 'etc') return;
-      const target = bucket === 'new' ? newCustomerDetails : etcCustomerDetails;
-      if (!target[rep]) target[rep] = [];
-      const existing = target[rep].find(x => x.name === o.customer_name);
-      if (existing) {
-        existing.amount += (o.order_amount || 0);
-        existing.orderCount++;
-      } else {
-        target[rep].push({ name: o.customer_name, amount: o.order_amount || 0, orderCount: 1, accountId: o.account_id || null });
-      }
-    });
-    Object.keys(newCustomerDetails).forEach(k => newCustomerDetails[k].sort((a, b) => b.amount - a.amount));
-    Object.keys(etcCustomerDetails).forEach(k => etcCustomerDetails[k].sort((a, b) => b.amount - a.amount));
+    // Rep breakdown with month targets (기존 간단 버전 — 상세 분석용)
+    const repMonthRows = buildMonthlyRows(
+      monthOrders, customerPlans,
+      p => p.sales_rep || '미배정',
+      o => { const plan = findPlanForOrder(o); return plan?.sales_rep || o.sales_rep || '기타'; }
+    );
 
     // Product breakdown with month targets
     const prodMonthRows = buildMonthlyRows(
