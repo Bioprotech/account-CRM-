@@ -545,10 +545,20 @@ export default function Report() {
     const prevWeekEndStr = prevWeekEnd.toISOString().slice(0, 10);
     const monthStartStr = `${monthStr}-01`;
 
-    // 주문 → 팀 매핑 함수
+    // 주문 → 팀 매핑 함수 (region fallback으로 3사업부만, '기타' 제거)
     const getTeamForOrder = (o) => {
       const plan = findPlanForOrder(o);
-      return plan?.team || '기타';
+      if (plan?.team && ['해외영업', '영업지원', '국내영업'].includes(plan.team)) {
+        return plan.team;
+      }
+      // fallback: 고객 region 기반 국내/해외 판별
+      const acc = o.account_id ? accounts.find(a => a.id === o.account_id) : null;
+      const region = (o.region || acc?.region || '').trim();
+      const domesticRegions = ['한국', '국내', 'Korea', 'Domestic'];
+      if (domesticRegions.includes(region)) return '국내영업';
+      // 한글 고객명이면 국내로 추정 (region 미확인 시)
+      if (!region && /[가-힣]/.test(o.customer_name || acc?.company_name || '')) return '국내영업';
+      return '해외영업';
     };
 
     // 당월 전체 주문
@@ -595,19 +605,25 @@ export default function Report() {
       total.monthTarget += d.monthTarget;
     });
 
-    // 표시할 팀 목록 (TEAM_ORDER + 기타가 있으면)
+    // 표시할 팀 목록 (3사업부만; region fallback으로 '기타'는 발생 안 함)
     const displayTeams = [...TEAM_ORDER];
-    if (teamData['기타'] && (teamData['기타'].prevCum > 0 || teamData['기타'].thisWeek > 0 || teamData['기타'].monthTarget > 0)) {
-      displayTeams.push('기타');
-    }
 
     // ══ 매출(Sales) 사업부별 집계 (B/L Date 기준, 해외/BPU/국내) ══
-    // 매출 고객의 plan.team(수주팀) → 매출팀 매핑
+    // 매출 고객의 plan.team(수주팀) → 매출팀 매핑, region fallback으로 3사업부 통합
     const getSalesTeamForSale = (s) => {
       const plan = planLookup.byAccountId[s.account_id]
         || planLookup.byName[(s.customer_name || '').toLowerCase().trim()];
       const orderTeam = plan?.team;
-      return ORDER_TEAM_TO_SALES[orderTeam] || '기타';
+      if (orderTeam && ORDER_TEAM_TO_SALES[orderTeam]) {
+        return ORDER_TEAM_TO_SALES[orderTeam];
+      }
+      // fallback: region 기반
+      const acc = s.account_id ? accounts.find(a => a.id === s.account_id) : null;
+      const region = (s.region || acc?.region || '').trim();
+      const domesticRegions = ['한국', '국내', 'Korea', 'Domestic'];
+      if (domesticRegions.includes(region)) return '국내';
+      if (!region && /[가-힣]/.test(s.customer_name || acc?.company_name || '')) return '국내';
+      return '해외';
     };
 
     const monthSales = (sales || []).filter(s => (s.sale_date || '').startsWith(monthStr));
@@ -651,11 +667,8 @@ export default function Report() {
     const hasSalesData = (sales || []).length > 0;
     const hasSalesTarget = teamSalesPlans.length > 0;
 
-    // 매출 표시 팀 목록
+    // 매출 표시 팀 목록 (3사업부만, region fallback으로 '기타' 발생 안 함)
     const displaySalesTeams = [...SALES_TEAM_ORDER];
-    if (salesTeamData['기타'] && (salesTeamData['기타'].prevCum > 0 || salesTeamData['기타'].thisWeek > 0)) {
-      displaySalesTeams.push('기타');
-    }
 
     // ── MTD 달성률 (수주 기준) ──
     const mtdActual = total.monthCum;
@@ -815,41 +828,214 @@ export default function Report() {
     return '해외영업';
   };
 
+  /* ══════════════════════════════
+     팀별 통합 블록 데이터
+     각 팀별로: 금주활동 / 주요이슈 / Open이슈 / 차주계획 / 리스크
+     ══════════════════════════════ */
+  const teamBlocksData = useMemo(() => {
+    const { wkStart, wkEnd, monday } = sectionAData;
+    const nextMonday = new Date(monday);
+    nextMonday.setDate(monday.getDate() + 7);
+    const nextSunday = new Date(nextMonday);
+    nextSunday.setDate(nextMonday.getDate() + 6);
+    const nStart = nextMonday.toISOString().slice(0, 10);
+    const nEnd = nextSunday.toISOString().slice(0, 10);
+    const now = new Date();
+
+    // 팀별 빈 구조 초기화
+    const blocks = {};
+    TEAM_ORDER.forEach(t => {
+      blocks[t] = {
+        team: t,
+        display: TEAM_DISPLAY[t] || t,
+        activity: { contacts: 0, orderActivity: 0, crossSelling: 0, sampleRequest: 0, priceNegotiation: 0 },
+        majorIssues: [],   // 금주 발생 + priority ≥ 2
+        openIssues: [],    // 누적 미해결, 우선순위별 그룹핑
+        nextActions: [],   // 차주 예정 + 금주 미완료 이월
+        risks: {
+          reorderSoon: [],
+          contractExpiring: [],
+          overdue: [],
+        },
+      };
+    });
+
+    // ── 금주 활동 집계 ──
+    const weekLogs = activityLogs.filter(l => (l.date || '') >= wkStart && (l.date || '') <= wkEnd);
+    weekLogs.forEach(l => {
+      const team = getTeamForAccount(l.account_id);
+      if (!blocks[team]) return;
+      blocks[team].activity.contacts++;
+      if (l.issue_type === '수주활동') blocks[team].activity.orderActivity++;
+      if (l.issue_type === '크로스셀링') blocks[team].activity.crossSelling++;
+      if (l.issue_type === '샘플요청') blocks[team].activity.sampleRequest++;
+      if (l.issue_type === '가격협의') blocks[team].activity.priceNegotiation++;
+    });
+
+    // ── 주요 이슈 (금주 발생 + priority ≥ 2) ──
+    weekLogs.forEach(l => {
+      const priority = l.priority ?? 1;
+      if (priority < 2) return;
+      const team = getTeamForAccount(l.account_id);
+      if (!blocks[team]) return;
+      const acc = accounts.find(a => a.id === l.account_id);
+      blocks[team].majorIssues.push({
+        id: l.id,
+        company: acc?.company_name || '?',
+        accountId: l.account_id,
+        content: l.content || '-',
+        issueType: l.issue_type,
+        status: l.status || 'Open',
+        priority,
+        date: l.date,
+        rep: l.sales_rep || '-',
+      });
+    });
+    // 긴급 먼저
+    Object.values(blocks).forEach(b => {
+      b.majorIssues.sort((a, b2) => (b2.priority - a.priority) || (b2.date || '').localeCompare(a.date || ''));
+    });
+
+    // ── Open 이슈 (누적, 고객별 그룹핑 + 우선순위) ──
+    const openLogs = activityLogs.filter(l => l.status !== 'Closed');
+    // 고객별 묶기
+    const byTeamAndCustomer = {};
+    openLogs.forEach(l => {
+      const team = getTeamForAccount(l.account_id);
+      if (!blocks[team]) return;
+      const acc = accounts.find(a => a.id === l.account_id);
+      const company = acc?.company_name || '?';
+      const key = `${team}||${company}`;
+      if (!byTeamAndCustomer[key]) {
+        byTeamAndCustomer[key] = {
+          team, company, accountId: l.account_id, account: acc,
+          issues: [], maxDaysOpen: 0, hasQuality: false, priorityMax: 0,
+          strategicTier: acc?.strategic_tier || null,
+        };
+      }
+      const daysOpen = daysSince(l.date);
+      byTeamAndCustomer[key].issues.push({
+        id: l.id,
+        issueType: l.issue_type,
+        content: l.content || '-',
+        status: l.status || 'Open',
+        priority: l.priority ?? 1,
+        date: l.date,
+        daysOpen,
+        rep: l.sales_rep || '-',
+      });
+      if (daysOpen > byTeamAndCustomer[key].maxDaysOpen) byTeamAndCustomer[key].maxDaysOpen = daysOpen;
+      if (l.issue_type === '품질클레임') byTeamAndCustomer[key].hasQuality = true;
+      const prio = l.priority ?? 1;
+      if (prio > byTeamAndCustomer[key].priorityMax) byTeamAndCustomer[key].priorityMax = prio;
+    });
+
+    // 우선순위 자동 산정 + 팀별 배분
+    Object.values(byTeamAndCustomer).forEach(cu => {
+      // P1 긴급: priority 3 있음 OR 14일 초과 + (A/B 등급 or 품질클레임) OR 5건 이상
+      // P2 주의: 7일+ 이슈 있거나 2건 이상 OR priority 2
+      // P3 관리: 그 외
+      const isABTier = cu.strategicTier === 'A' || cu.strategicTier === 'B';
+      let p = 'P3';
+      if (cu.priorityMax >= 3 || cu.hasQuality || (cu.maxDaysOpen > 14 && isABTier) || cu.issues.length >= 5) p = 'P1';
+      else if (cu.priorityMax >= 2 || cu.maxDaysOpen > 7 || cu.issues.length >= 2) p = 'P2';
+      cu.priority = p;
+      // 이슈 정렬
+      cu.issues.sort((a, b) => (b.priority - a.priority) || b.daysOpen - a.daysOpen);
+      if (blocks[cu.team]) blocks[cu.team].openIssues.push(cu);
+    });
+    // 팀별로 우선순위 순 정렬
+    Object.values(blocks).forEach(b => {
+      const order = { P1: 0, P2: 1, P3: 2 };
+      b.openIssues.sort((a, b2) => (order[a.priority] - order[b2.priority]) || b2.maxDaysOpen - a.maxDaysOpen);
+    });
+
+    // ── 차주 계획 (다음주 due_date + 금주 미완료 이월) ──
+    const actionsMap = new Map();
+    activityLogs.forEach(l => {
+      if (l.status === 'Closed') return;
+      const team = getTeamForAccount(l.account_id);
+      if (!blocks[team]) return;
+      const inNextWeek = l.next_action && l.due_date && l.due_date >= nStart && l.due_date <= nEnd;
+      const isThisWeekOpen = (l.date || '') >= wkStart && (l.date || '') <= wkEnd && !l.next_action;
+      const isOverdue = l.due_date && l.due_date <= wkEnd;
+      if (!inNextWeek && !isThisWeekOpen && !isOverdue) return;
+      if (actionsMap.has(l.id)) return;
+      const acc = accounts.find(a => a.id === l.account_id);
+      actionsMap.set(l.id, {
+        team,
+        company: acc?.company_name || '?',
+        accountId: l.account_id,
+        action: l.next_action || `[${l.issue_type}] ${l.content || '-'}`,
+        dueDate: l.due_date || '-',
+        rep: l.sales_rep || '-',
+        isCarryover: !inNextWeek,
+        daysOpen: daysSince(l.date),
+        status: l.status,
+      });
+    });
+    Array.from(actionsMap.values()).forEach(a => {
+      if (blocks[a.team]) blocks[a.team].nextActions.push(a);
+    });
+    Object.values(blocks).forEach(b => {
+      b.nextActions.sort((a, b2) => {
+        if (a.isCarryover !== b2.isCarryover) return a.isCarryover ? -1 : 1;
+        return (a.dueDate || '').localeCompare(b2.dueDate || '');
+      });
+    });
+
+    // ── 리스크 (재구매 임박 + 계약만료 임박 + 14일+ 미해결) ──
+    // 재구매 임박: alarms에서 수집 + 팀 분배
+    (alarms || []).filter(a => a.type === 'reorder' && a.level === 'danger').forEach(al => {
+      const team = getTeamForAccount(al.account?.id);
+      if (!blocks[team]) return;
+      blocks[team].risks.reorderSoon.push({
+        company: al.account?.company_name || '?', msg: al.msg, source: al.source,
+        accountId: al.account?.id,
+      });
+    });
+    // 계약 만료 D-60 이내
+    (contracts || []).forEach(c => {
+      if (!c.contract_expiry) return;
+      const daysLeft = Math.ceil((new Date(c.contract_expiry) - now) / 86400000);
+      if (daysLeft <= 60 && daysLeft > 0) {
+        const team = getTeamForAccount(c.account_id);
+        if (!blocks[team]) return;
+        const acc = accounts.find(a => a.id === c.account_id);
+        blocks[team].risks.contractExpiring.push({
+          company: acc?.company_name || '?',
+          product: c.product_category, daysLeft, expiry: c.contract_expiry,
+          accountId: c.account_id,
+        });
+      }
+    });
+    // 14일+ 미해결
+    openLogs.forEach(l => {
+      const d = daysSince(l.date);
+      if (d <= 14) return;
+      const team = getTeamForAccount(l.account_id);
+      if (!blocks[team]) return;
+      const acc = accounts.find(a => a.id === l.account_id);
+      blocks[team].risks.overdue.push({
+        company: acc?.company_name || '?', issueType: l.issue_type,
+        daysOpen: d, accountId: l.account_id,
+      });
+    });
+    Object.values(blocks).forEach(b => {
+      b.risks.reorderSoon.sort((a, c) => (a.company || '').localeCompare(b.company || ''));
+      b.risks.contractExpiring.sort((a, c) => a.daysLeft - c.daysLeft);
+      b.risks.overdue.sort((a, c) => c.daysOpen - a.daysOpen);
+    });
+
+    return { blocks, nextWeekLabel: `${nStart} ~ ${nEnd}` };
+  }, [sectionAData, activityLogs, accounts, contracts, alarms, planLookup]);
+
+  // 레거시 유지용 (기존 섹션 B/C 참조 호환)
   const sectionBData = useMemo(() => {
     const { wkStart, wkEnd } = sectionAData;
     const weekLogs = activityLogs.filter(l => (l.date || '') >= wkStart && (l.date || '') <= wkEnd);
-
-    // 카테고리별 + 팀별 그룹핑
-    const grouped = {};
-    ISSUE_CAT_ORDER.forEach(cat => { grouped[cat] = []; });
-
-    weekLogs.forEach(l => {
-      const cat = ISSUE_CATEGORY_MAP[l.issue_type] || '기타';
-      const team = getTeamForAccount(l.account_id);
-      const acc = accounts.find(a => a.id === l.account_id);
-      grouped[cat].push({
-        team,
-        teamShort: TEAM_SHORT[team] || team,
-        company: acc?.company_name || '?',
-        content: l.content || '-',
-        rep: l.sales_rep || '-',
-        status: l.status || 'Open',
-        issueType: l.issue_type,
-        date: l.date,
-      });
-    });
-
-    // 각 카테고리 내에서 팀 순서 정렬
-    Object.keys(grouped).forEach(cat => {
-      grouped[cat].sort((a, b) => {
-        const ti = TEAM_ORDER.indexOf(a.team === '해외영업' ? '해외영업' : a.team);
-        const tj = TEAM_ORDER.indexOf(b.team === '해외영업' ? '해외영업' : b.team);
-        return ti - tj;
-      });
-    });
-
-    return { grouped, totalCount: weekLogs.length };
-  }, [sectionAData, activityLogs, accounts, planLookup]);
+    return { totalCount: weekLogs.length };
+  }, [sectionAData, activityLogs]);
 
   /* ══════════════════════════════
      SECTION C — 다음 주 예정 액션
@@ -1897,24 +2083,63 @@ export default function Report() {
           }),
           ['합계', Math.round(sectionAData.total.prevCum / 1e6), Math.round(sectionAData.total.thisWeek / 1e6), Math.round(sectionAData.total.monthCum / 1e6), Math.round(sectionAData.total.monthTarget / 1e6), sectionAData.total.monthTarget > 0 ? `${pct(sectionAData.total.monthCum, sectionAData.total.monthTarget)}%` : '-'],
           [],
-          // ── 섹션 B: 이슈사항 ──
-          ['■ 2. 영업본부 주간 이슈사항'],
-          ['구분', '팀', '고객명', '주요 내용', '담당', '상태'],
-          ...ISSUE_CAT_ORDER.flatMap(cat => {
-            const catRows = sectionBData.grouped[cat];
-            if (catRows.length === 0) return [[ISSUE_CAT_LABELS[cat], '', '', '—', '', '']];
-            return catRows.map((r, i) => [i === 0 ? ISSUE_CAT_LABELS[cat] : '', r.teamShort, r.company, `[${r.issueType}] ${r.content}`, r.rep, r.status]);
+          // ── 팀별 통합 블록 ──
+          ...TEAM_ORDER.flatMap(teamKey => {
+            const blk = teamBlocksData.blocks[teamKey];
+            if (!blk) return [];
+            const act = blk.activity;
+            const rows = [
+              [],
+              [`■ [${blk.display}]`],
+              [`📊 금주 활동`, `총 ${act.contacts}건 | 수주활동 ${act.orderActivity} | 가격협의 ${act.priceNegotiation} | 샘플요청 ${act.sampleRequest} | 크로스셀링 ${act.crossSelling}`],
+              [],
+              ['🔴 주요 이슈 (금주 발생, 🟡주요·🔴긴급)'],
+            ];
+            if (blk.majorIssues.length === 0) {
+              rows.push(['', '없음']);
+            } else {
+              rows.push(['우선순위', '고객명', '유형', '내용', '담당', '상태', '날짜']);
+              blk.majorIssues.forEach(iss => {
+                rows.push([iss.priority === 3 ? '🔴 긴급' : '🟡 주요', iss.company, iss.issueType, iss.content, iss.rep, iss.status, iss.date]);
+              });
+            }
+            rows.push([]);
+            rows.push(['⏳ Open 이슈 (누적)']);
+            if (blk.openIssues.length === 0) {
+              rows.push(['', '없음']);
+            } else {
+              rows.push(['우선순위', '고객명', '등급', '이슈 건수', '최장 경과일', '주요 이슈']);
+              blk.openIssues.forEach(cu => {
+                const issueSummary = cu.issues.slice(0, 3).map(i => `[${i.issueType}] ${i.content.slice(0, 30)}`).join(' / ');
+                rows.push([cu.priority, cu.company, cu.strategicTier || '-', cu.issues.length, cu.maxDaysOpen + '일', issueSummary]);
+              });
+            }
+            rows.push([]);
+            rows.push([`📅 차주 계획 (${teamBlocksData.nextWeekLabel})`]);
+            if (blk.nextActions.length === 0) {
+              rows.push(['', '예정된 액션 없음']);
+            } else {
+              rows.push(['구분', '고객명', '액션 내용', '담당', '기한']);
+              blk.nextActions.forEach(a => {
+                rows.push([a.isCarryover ? '이월' : '신규', a.company, a.action, a.rep, a.dueDate]);
+              });
+            }
+            rows.push([]);
+            rows.push(['⚠ 리스크']);
+            if (blk.risks.reorderSoon.length > 0) {
+              rows.push([`🔔 재구매 임박 ${blk.risks.reorderSoon.length}사`, blk.risks.reorderSoon.map(r => r.company).join(', ')]);
+            }
+            if (blk.risks.contractExpiring.length > 0) {
+              rows.push([`📅 계약 만료 D-60 ${blk.risks.contractExpiring.length}건`, blk.risks.contractExpiring.map(c => `${c.company}(D-${c.daysLeft})`).join(', ')]);
+            }
+            if (blk.risks.overdue.length > 0) {
+              rows.push([`⏰ 14일+ 미해결 ${blk.risks.overdue.length}건`, blk.risks.overdue.map(o => `${o.company}(${o.daysOpen}일)`).join(', ')]);
+            }
+            if (blk.risks.reorderSoon.length === 0 && blk.risks.contractExpiring.length === 0 && blk.risks.overdue.length === 0) {
+              rows.push(['', '현재 리스크 없음']);
+            }
+            return rows;
           }),
-          [],
-          // ── 섹션 C: 다음 주 예정 액션 ──
-          ['■ 3. 다음 주 예정 액션', `(${sectionCData.nextWeekLabel})`],
-          ['팀', '고객명', '액션 내용', '담당', '기한'],
-          ...(sectionCData.actions.length > 0
-            ? sectionCData.actions.map(a => [a.teamShort, a.company, a.action, a.rep, a.dueDate])
-            : [['', '', '예정된 액션 없음', '', '']]),
-          ...(sectionCData.reorderAlarms.length > 0
-            ? [[], ['※ 재구매 임박 고객 (D-14 이내)'], ...sectionCData.reorderAlarms.map(a => ['', a.account?.company_name || '', a.msg, '', ''])]
-            : []),
           [],
           // ── 부록: 상세 실적 ──
           ['[부록] 금주 수주 상세'],
@@ -2510,161 +2735,163 @@ export default function Report() {
             </div>
           )}
 
-          {/* ══ 섹션 B — 이슈사항 자동 집계 ══ */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>■ 2. 영업본부 주간 이슈사항</span>
-              <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>{sectionBData.totalCount}건</span>
-            </div>
-            {sectionBData.totalCount === 0 ? (
-              <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>해당 주 등록된 이슈 없음</div>
-            ) : (
-              <div className="table-wrap">
-                <table className="data-table" style={{ fontSize: 12 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ minWidth: 110 }}>구분</th>
-                      <th style={{ minWidth: 40 }}>팀</th>
-                      <th style={{ minWidth: 80 }}>고객명</th>
-                      <th>주요 내용</th>
-                      <th style={{ minWidth: 50 }}>담당</th>
-                      <th style={{ minWidth: 60 }}>상태</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ISSUE_CAT_ORDER.map(cat => {
-                      const rows = sectionBData.grouped[cat];
-                      if (rows.length === 0) {
-                        return (
-                          <tr key={cat} style={{ background: 'var(--bg2)' }}>
-                            <td style={{ fontWeight: 600, color: 'var(--text2)' }}>{ISSUE_CAT_LABELS[cat]}</td>
-                            <td colSpan={5} style={{ color: 'var(--text4)', fontSize: 11 }}>—</td>
-                          </tr>
-                        );
-                      }
-                      return rows.map((r, i) => (
-                        <tr key={`${cat}-${i}`}>
-                          {i === 0 && (
-                            <td rowSpan={rows.length} style={{ fontWeight: 600, verticalAlign: 'top', background: 'var(--bg2)', borderRight: '1px solid var(--border)' }}>
-                              {ISSUE_CAT_LABELS[cat]}
-                            </td>
-                          )}
-                          <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.teamShort}</td>
-                          <td style={{ fontWeight: 600, fontSize: 11 }}>{r.company}</td>
-                          <td style={{ fontSize: 11, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            <span style={{ color: 'var(--text3)', marginRight: 4 }}>[{r.issueType}]</span>
-                            {r.content.length > 60 ? r.content.slice(0, 60) + '...' : r.content}
-                          </td>
-                          <td style={{ fontSize: 11 }}>{r.rep}</td>
-                          <td>
-                            <span className={`status-badge ${r.status === 'Open' ? 'open' : r.status === 'In Progress' ? 'in-progress' : 'closed'}`} style={{ fontSize: 10 }}>
-                              {r.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ));
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          {/* ══ 섹션 B — 팀별 통합 블록 (금주활동 / 주요이슈 / Open이슈 / 차주계획 / 리스크) ══ */}
+          {TEAM_ORDER.map(teamKey => {
+            const blk = teamBlocksData.blocks[teamKey];
+            if (!blk) return null;
+            const openIssueTotal = blk.openIssues.reduce((s, c) => s + c.issues.length, 0);
+            const p1Count = blk.openIssues.filter(c => c.priority === 'P1').length;
+            return (
+              <div key={teamKey} className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--accent)' }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 15 }}>■ [{blk.display}]</span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                    활동 {blk.activity.contacts}건 · 주요이슈 {blk.majorIssues.length}건 · Open {openIssueTotal}건 ({blk.openIssues.length}사)
+                    {p1Count > 0 && <span style={{ color: 'var(--red)', marginLeft: 4 }}>P1 {p1Count}사</span>}
+                  </span>
+                </div>
 
-          {/* ══ 섹션 C — 다음 주 예정 액션 (미완료 이슈 자동 이월 포함) ══ */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span>■ 3. 다음 주 예정 액션</span>
-              <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>({sectionCData.nextWeekLabel})</span>
-              {sectionCData.carryoverCount > 0 && (
-                <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 600, background: '#fee2e2', padding: '2px 8px', borderRadius: 10 }}>
-                  이월 {sectionCData.carryoverCount}건
-                </span>
-              )}
-            </div>
-            {sectionCData.actions.length === 0 && sectionCData.reorderAlarms.length === 0 ? (
-              <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>예정된 액션 없음</div>
-            ) : (
-              <>
-                {sectionCData.actions.length > 0 && (
-                  <div className="table-wrap" style={{ marginBottom: sectionCData.reorderAlarms.length > 0 ? 12 : 0 }}>
-                    <table className="data-table" style={{ fontSize: 12 }}>
-                      <thead>
-                        <tr>
-                          <th style={{ minWidth: 50 }}>구분</th>
-                          <th style={{ minWidth: 40 }}>팀</th>
-                          <th style={{ minWidth: 80 }}>고객명</th>
-                          <th>액션 내용</th>
-                          <th style={{ minWidth: 50 }}>담당</th>
-                          <th style={{ minWidth: 80 }}>기한</th>
-                          <th style={{ minWidth: 60 }}>상태</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sectionCData.actions.map((a, i) => (
-                          <tr key={i} style={{ background: a.isCarryover ? '#fef2f2' : undefined }}>
-                            <td>
-                              {a.isCarryover
-                                ? <span style={{ fontSize: 10, color: '#fff', background: 'var(--red)', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>이월</span>
-                                : <span style={{ fontSize: 10, color: 'var(--text3)' }}>신규</span>}
-                            </td>
-                            <td style={{ fontSize: 11, color: 'var(--text2)' }}>{a.teamShort}</td>
-                            <td style={{ fontWeight: 600, fontSize: 11 }}>{a.company}</td>
-                            <td style={{ fontSize: 11 }}>
-                              {a.action}
-                              {a.isCarryover && a.daysOpen > 0 && (
-                                <span style={{ fontSize: 10, color: 'var(--red)', marginLeft: 6 }}>({a.daysOpen}일 경과)</span>
-                              )}
-                            </td>
-                            <td style={{ fontSize: 11 }}>{a.rep}</td>
-                            <td style={{ fontSize: 11, fontWeight: 600 }}>{a.dueDate}</td>
-                            <td>
-                              <span className={`status-badge ${a.status === 'Open' ? 'open' : a.status === 'In Progress' ? 'in-progress' : 'closed'}`} style={{ fontSize: 10 }}>
-                                {a.status}
+                {/* ── 금주 활동 ── */}
+                <div style={{ padding: '8px 10px', background: 'var(--bg2)', borderRadius: 6, marginBottom: 10, fontSize: 11 }}>
+                  <strong style={{ fontSize: 11 }}>📊 금주 활동:</strong>
+                  <span style={{ marginLeft: 8 }}>총 {blk.activity.contacts}건</span>
+                  {blk.activity.orderActivity > 0 && <span style={{ marginLeft: 6 }}>| 수주활동 {blk.activity.orderActivity}</span>}
+                  {blk.activity.priceNegotiation > 0 && <span style={{ marginLeft: 6 }}>| 가격협의 {blk.activity.priceNegotiation}</span>}
+                  {blk.activity.sampleRequest > 0 && <span style={{ marginLeft: 6 }}>| 샘플요청 {blk.activity.sampleRequest}</span>}
+                  {blk.activity.crossSelling > 0 && <span style={{ marginLeft: 6 }}>| 크로스셀링 {blk.activity.crossSelling}</span>}
+                </div>
+
+                {/* ── 주요 이슈 ── */}
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: 'var(--red)' }}>🔴 주요 이슈 (금주 발생, 🟡주요·🔴긴급)</div>
+                  {blk.majorIssues.length === 0 ? (
+                    <div style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 8px' }}>— 해당 없음 (Activity Log에 중요도 🟡주요 이상 기록 시 자동 표시)</div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {blk.majorIssues.map((iss, i) => (
+                        <div key={i} style={{ fontSize: 11, padding: '4px 8px', background: iss.priority === 3 ? 'rgba(220,38,38,.06)' : 'rgba(217,119,6,.06)', borderLeft: `3px solid ${iss.priority === 3 ? '#dc2626' : '#d97706'}`, borderRadius: 3 }}>
+                          <span style={{ marginRight: 4 }}>{iss.priority === 3 ? '🔴' : '🟡'}</span>
+                          <strong>
+                            {iss.accountId ? (
+                              <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === iss.accountId); if (acc) setEditingAccount(acc); }}
+                                style={{ color: 'var(--accent)', textDecoration: 'none' }}>{iss.company}</a>
+                            ) : iss.company}
+                          </strong>
+                          <span style={{ marginLeft: 4, color: 'var(--text3)' }}>[{iss.issueType}]</span>
+                          <span style={{ marginLeft: 4 }}>{iss.content.length > 80 ? iss.content.slice(0, 80) + '...' : iss.content}</span>
+                          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>— {iss.rep}, {iss.status}, {iss.date}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Open 이슈 ── */}
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>⏳ Open 이슈 (누적 진행중, 고객별 우선순위)</div>
+                  {blk.openIssues.length === 0 ? (
+                    <div style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 8px' }}>진행 중인 이슈 없음</div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {blk.openIssues.slice(0, 15).map(cu => {
+                        const pColor = cu.priority === 'P1' ? '#dc2626' : cu.priority === 'P2' ? '#d97706' : '#6b7280';
+                        const pBg = cu.priority === 'P1' ? 'rgba(220,38,38,.06)' : cu.priority === 'P2' ? 'rgba(217,119,6,.04)' : 'var(--bg2)';
+                        const isOpen = repDrillOpen[`o-${teamKey}-${cu.company}`];
+                        return (
+                          <div key={cu.company} style={{ background: pBg, borderLeft: `3px solid ${pColor}`, borderRadius: 3 }}>
+                            <button onClick={() => toggleRepDrill(`o-${teamKey}-${cu.company}`)}
+                              style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px', fontSize: 11 }}>
+                              <span style={{ fontWeight: 700, color: pColor, marginRight: 6 }}>[{cu.priority}]</span>
+                              <strong>{cu.company}</strong>
+                              {cu.strategicTier && <span style={{ marginLeft: 4, fontSize: 10, padding: '1px 4px', borderRadius: 3, background: 'var(--bg)' }}>{cu.strategicTier}</span>}
+                              <span style={{ marginLeft: 6, color: 'var(--text2)' }}>
+                                {cu.issues.length}건 / 최장 {cu.maxDaysOpen}일
+                                {cu.hasQuality && <span style={{ color: 'var(--red)', marginLeft: 4 }}>⚠ 품질</span>}
                               </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {(sectionCData.reorderBySource.fcst.length + sectionCData.reorderBySource.plan.length + sectionCData.reorderBySource.trend.length) > 0 && (
-                  <div style={{ padding: '8px 0', display: 'grid', gap: 10 }}>
-                    {sectionCData.reorderBySource.fcst.length > 0 && (
-                      <div style={{ padding: '6px 10px', background: '#dbeafe', borderRadius: 6, borderLeft: '3px solid #2563eb' }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: '#1d4ed8', marginBottom: 4 }}>🔵 [FCST 기반] 재구매 예상 D-14 이내 ({sectionCData.reorderBySource.fcst.length}건)</div>
-                        {sectionCData.reorderBySource.fcst.map((a, i) => (
-                          <div key={i} style={{ fontSize: 11, padding: '2px 0', color: 'var(--text2)' }}>
-                            • <strong>{a.account?.company_name}</strong> — {a.msg.replace(/^🔵 \[FCST\]\s*/, '')}
+                              <span style={{ float: 'right', color: 'var(--text3)', fontSize: 10 }}>{isOpen ? '▾' : '▸'}</span>
+                            </button>
+                            {isOpen && (
+                              <div style={{ padding: '4px 14px 8px', fontSize: 10, color: 'var(--text2)' }}>
+                                {cu.issues.map(iss => (
+                                  <div key={iss.id} style={{ padding: '2px 0' }}>
+                                    • [{iss.issueType}] {iss.content.length > 80 ? iss.content.slice(0, 80) + '…' : iss.content}
+                                    <span style={{ marginLeft: 4, color: 'var(--text3)' }}>({iss.status}, {iss.daysOpen}일, {iss.rep})</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    )}
-                    {sectionCData.reorderBySource.plan.length > 0 && (
-                      <div style={{ padding: '6px 10px', background: '#dcfce7', borderRadius: 6, borderLeft: '3px solid #16a34a' }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', marginBottom: 4 }}>🟢 [사업계획 기반] 타겟 D-14 이내 ({sectionCData.reorderBySource.plan.length}건)</div>
-                        {sectionCData.reorderBySource.plan.map((a, i) => (
-                          <div key={i} style={{ fontSize: 11, padding: '2px 0', color: 'var(--text2)' }}>
-                            • <strong>{a.account?.company_name}</strong> — {a.msg.replace(/^🟢 \[사업계획\]\s*/, '')}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {sectionCData.reorderBySource.trend.length > 0 && (
-                      <div style={{ padding: '6px 10px', background: '#fef3c7', borderRadius: 6, borderLeft: '3px solid #d97706' }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: '#b45309', marginBottom: 4 }}>🟡 [트렌드 기반] 주문 패턴 예상 D-14 이내 ({sectionCData.reorderBySource.trend.length}건)</div>
-                        {sectionCData.reorderBySource.trend.map((a, i) => (
-                          <div key={i} style={{ fontSize: 11, padding: '2px 0', color: 'var(--text2)' }}>
-                            • <strong>{a.account?.company_name}</strong> — {a.msg.replace(/^🟡 \[트렌드\]\s*/, '')}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+                        );
+                      })}
+                      {blk.openIssues.length > 15 && (
+                        <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', padding: 4 }}>... 외 {blk.openIssues.length - 15}사</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── 차주 계획 ── */}
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>📅 차주 계획 ({teamBlocksData.nextWeekLabel})</div>
+                  {blk.nextActions.length === 0 ? (
+                    <div style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 8px' }}>예정된 액션 없음</div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 3 }}>
+                      {blk.nextActions.slice(0, 10).map((a, i) => (
+                        <div key={i} style={{ fontSize: 11, padding: '3px 8px', background: a.isCarryover ? '#fef2f2' : 'var(--bg)', borderRadius: 3 }}>
+                          {a.isCarryover && <span style={{ fontSize: 9, color: '#fff', background: 'var(--red)', padding: '1px 4px', borderRadius: 3, marginRight: 4 }}>이월</span>}
+                          <strong>{a.company}</strong>
+                          <span style={{ marginLeft: 4 }}>— {a.action.length > 60 ? a.action.slice(0, 60) + '…' : a.action}</span>
+                          <span style={{ marginLeft: 6, color: 'var(--text3)', fontSize: 10 }}>({a.rep}, 기한: {a.dueDate})</span>
+                        </div>
+                      ))}
+                      {blk.nextActions.length > 10 && (
+                        <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', padding: 4 }}>... 외 {blk.nextActions.length - 10}건</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── 리스크 ── */}
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#d97706' }}>⚠ 리스크</div>
+                  {blk.risks.reorderSoon.length === 0 && blk.risks.contractExpiring.length === 0 && blk.risks.overdue.length === 0 ? (
+                    <div style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 8px' }}>현재 리스크 없음</div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 3, fontSize: 11 }}>
+                      {blk.risks.reorderSoon.length > 0 && (
+                        <div style={{ padding: '3px 8px', background: '#fef3c7', borderRadius: 3 }}>
+                          <strong>🔔 재구매 임박 ({blk.risks.reorderSoon.length}사)</strong>:&nbsp;
+                          <span style={{ color: 'var(--text2)' }}>
+                            {blk.risks.reorderSoon.slice(0, 5).map(r => r.company).join(', ')}
+                            {blk.risks.reorderSoon.length > 5 && ` 외 ${blk.risks.reorderSoon.length - 5}사`}
+                          </span>
+                        </div>
+                      )}
+                      {blk.risks.contractExpiring.length > 0 && (
+                        <div style={{ padding: '3px 8px', background: '#fee2e2', borderRadius: 3 }}>
+                          <strong>📅 계약 만료 D-60 ({blk.risks.contractExpiring.length}건)</strong>:&nbsp;
+                          <span style={{ color: 'var(--text2)' }}>
+                            {blk.risks.contractExpiring.slice(0, 5).map(c => `${c.company}(D-${c.daysLeft})`).join(', ')}
+                            {blk.risks.contractExpiring.length > 5 && ` 외 ${blk.risks.contractExpiring.length - 5}건`}
+                          </span>
+                        </div>
+                      )}
+                      {blk.risks.overdue.length > 0 && (
+                        <div style={{ padding: '3px 8px', background: 'rgba(220,38,38,.06)', borderRadius: 3 }}>
+                          <strong>⏰ 14일+ 미해결 ({blk.risks.overdue.length}건)</strong>:&nbsp;
+                          <span style={{ color: 'var(--text2)' }}>
+                            {blk.risks.overdue.slice(0, 5).map(o => `${o.company}(${o.daysOpen}일)`).join(', ')}
+                            {blk.risks.overdue.length > 5 && ` 외 ${blk.risks.overdue.length - 5}건`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
 
           {/* ── 기존 상세 분석 ── */}
           <div className="report-section-title no-print" style={{ marginTop: 8 }}>상세 분석 ({weeklyData.weekStart} ~ {weeklyData.weekEnd})</div>
@@ -2752,97 +2979,55 @@ export default function Report() {
             </div>
           </div>
 
-          {/* Section 4: 사업계획 YTD 진도 */}
-          {planSummary && (
+          {/* Section 5b: 당월 분류별 실적 (MTD 기준) */}
+          {(monthlyData.repMonthRows.length > 0 || monthlyData.prodMonthRows.length > 0) && (
             <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">사업계획 YTD 진도</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
-                <div className="kpi" style={{ padding: 10 }}>
-                  <div className="kpi-label">연간 목표</div>
-                  <div className="kpi-value" style={{ fontSize: 16 }}>{fmtKRW(planSummary.annualTarget)}</div>
-                </div>
-                <div className="kpi" style={{ padding: 10 }}>
-                  <div className="kpi-label">YTD 목표</div>
-                  <div className="kpi-value" style={{ fontSize: 16 }}>{fmtKRW(planSummary.ytdTarget)}</div>
-                </div>
-                <div className="kpi" style={{ padding: 10 }}>
-                  <div className="kpi-label">YTD 실적</div>
-                  <div className="kpi-value" style={{ fontSize: 16 }}>{fmtKRW(planSummary.ytdActual)}</div>
-                </div>
-                <div className={`kpi ${pctColor(pct(planSummary.ytdActual, planSummary.ytdTarget))}`} style={{ padding: 10 }}>
-                  <div className="kpi-label">달성률</div>
-                  <div className="kpi-value" style={{ fontSize: 20 }}>{pct(planSummary.ytdActual, planSummary.ytdTarget)}%</div>
-                </div>
+              <div className="card-title">당월 분류별 실적 (상세)</div>
+              {[
+                { title: '담당자별 당월 실적', rows: monthlyData.repMonthRows },
+                { title: '품목별 당월 실적', rows: monthlyData.prodMonthRows },
+                { title: '지역별 당월 실적', rows: monthlyData.regMonthRows },
+                { title: '사업구분별 당월 실적', rows: monthlyData.bizMonthRows },
+              ].map(({ title, rows }) => {
+                if (!rows || rows.length === 0) return null;
+                return (
+                  <div key={title} style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{title}</div>
+                    <div className="table-wrap" style={{ maxHeight: 250 }}>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>구분</th>
+                            <th style={{ textAlign: 'right' }}>당월 목표</th>
+                            <th style={{ textAlign: 'right' }}>당월 실적</th>
+                            <th style={{ textAlign: 'right' }}>당월 달성률</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(r => {
+                            const mp = pct(r.monthActual, r.monthTarget);
+                            return (
+                              <tr key={r.label}>
+                                <td style={{ fontWeight: 600 }}>{r.label}</td>
+                                <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(r.monthTarget)}</td>
+                                <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(r.monthActual)}</td>
+                                <td style={{ textAlign: 'right' }}>
+                                  {r.monthTarget > 0
+                                    ? <span className={`score-badge ${pctColor(mp)}`}>{mp}%</span>
+                                    : '-'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                ※ 당월(MTD) 기준 · YTD 누적과 연간 달성률은 월간 리포트에서 확인
               </div>
-
-              <div className="table-wrap" style={{ maxHeight: 200 }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>담당자</th>
-                      <th style={{ textAlign: 'right' }}>YTD 목표</th>
-                      <th style={{ textAlign: 'right' }}>YTD 실적</th>
-                      <th style={{ textAlign: 'right' }}>달성률</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(planSummary.byRep)
-                      .filter(([, v]) => v.ytdTarget > 0 || v.ytdActual > 0)
-                      .sort((a, b) => b[1].ytdTarget - a[1].ytdTarget)
-                      .map(([rep, v]) => (
-                        <tr key={rep}>
-                          <td style={{ fontWeight: 600 }}>{rep}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtKRW(v.ytdTarget)}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(v.ytdActual)}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            <span className={`score-badge ${pctColor(pct(v.ytdActual, v.ytdTarget))}`}>{pct(v.ytdActual, v.ytdTarget)}%</span>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Section 5: 시각적 차트 */}
-          {hasPlan && weeklyData.breakdown.repRows.length > 0 && (
-            <div className="two-col" style={{ marginBottom: 16 }}>
-              <HBarChart
-                title="담당자별 YTD 달성률"
-                rows={weeklyData.breakdown.repRows.filter(r => r.annualTarget > 0).map(r => ({
-                  label: r.label, target: r.annualTarget, actual: r.ytdActual,
-                }))}
-              />
-              <DonutChart
-                title="품목별 YTD 실적 비중"
-                slices={weeklyData.breakdown.prodRows.filter(r => r.ytdActual > 0).map(r => ({
-                  label: r.label, value: r.ytdActual,
-                }))}
-              />
-            </div>
-          )}
-
-          {hasPlan && weeklyData.breakdown.repRows.length > 0 && (
-            <ProgressBars
-              title="담당자별 연간 목표 달성 진도"
-              items={weeklyData.breakdown.repRows.filter(r => r.annualTarget > 0).map(r => ({
-                label: r.label, value: r.ytdActual, max: r.annualTarget,
-              }))}
-            />
-          )}
-
-          {/* Section 5b: 주간 담당/품목/지역/사업구분별 실적 */}
-          {(weeklyData.breakdown.repRows.length > 0 || weeklyData.breakdown.prodRows.length > 0) && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">주간 분류별 실적 (상세)</div>
-              <BreakdownTable title="담당자별 금주 실적" rows={weeklyData.breakdown.repRows} periodLabel="금주" showYtd showAnnual={hasPlan} />
-              <BreakdownTable title="품목별 금주 실적" rows={weeklyData.breakdown.prodRows} periodLabel="금주" showYtd showAnnual={productPlans.length > 0} />
-              <BreakdownTable title="지역별 금주 실적" rows={weeklyData.breakdown.regRows} periodLabel="금주" showYtd showAnnual={hasPlan} />
-              <BreakdownTable title="사업구분별 금주 실적" rows={weeklyData.breakdown.bizRows} periodLabel="금주" showYtd showAnnual={hasPlan} />
-              {weeklyData.breakdown.typeRows?.length > 0 && (
-                <BreakdownTable title="고객유형별 금주 실적" rows={weeklyData.breakdown.typeRows} periodLabel="금주" showYtd showAnnual={hasPlan} />
-              )}
             </div>
           )}
 
@@ -3852,9 +4037,6 @@ export default function Report() {
               <MonthlyBreakdownTable title="품목별" rows={monthlyData.prodMonthRows} />
               <MonthlyBreakdownTable title="지역별" rows={monthlyData.regMonthRows} />
               <MonthlyBreakdownTable title="사업구분별" rows={monthlyData.bizMonthRows} />
-              {monthlyData.typeMonthRows?.length > 0 && (
-                <MonthlyBreakdownTable title="고객유형별" rows={monthlyData.typeMonthRows} />
-              )}
             </div>
           )}
 

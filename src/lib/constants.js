@@ -133,6 +133,17 @@ export const CUSTOMER_TYPE_GUIDE = {
 /* ── 이슈 상태 ── */
 export const ISSUE_STATUSES = ['Open', 'In Progress', 'Closed'];
 
+/* ── 이슈 중요도 (우선순위 가중치) ──
+ *  - 주요이슈 자동 집계 기준: priority >= 2 (주요 + 긴급)
+ *  - 주간 → 월간 누적 보고 자연 연결
+ */
+export const ISSUE_PRIORITIES = [
+  { value: 1, label: '일반', icon: '🟢', color: '#16a34a' },
+  { value: 2, label: '주요', icon: '🟡', color: '#d97706' },
+  { value: 3, label: '긴급', icon: '🔴', color: '#dc2626' },
+];
+export const DEFAULT_PRIORITY = 1;
+
 /* ── Intelligence Score 카테고리 ── */
 /* inputType: 'text'(단답), 'textarea'(장문), 'select'(선택), 'number'(숫자)
    입력된 값이 있으면 자동으로 해당 항목 checked 처리 */

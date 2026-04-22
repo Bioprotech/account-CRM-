@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useAccount } from '../../context/AccountContext';
-import { ISSUE_TYPES, ISSUE_STATUSES, ORDER_ACTIVITY_TYPES, CUSTOMER_TYPE_GUIDE } from '../../lib/constants';
+import { ISSUE_TYPES, ISSUE_STATUSES, ORDER_ACTIVITY_TYPES, CUSTOMER_TYPE_GUIDE, ISSUE_PRIORITIES, DEFAULT_PRIORITY } from '../../lib/constants';
 import { today, genId, fmtDate } from '../../lib/utils';
 
 /* ── 금액 포맷: 억/만 단위 ── */
@@ -17,6 +17,7 @@ const INITIAL_LOG = {
   content: '',
   next_action: '',
   due_date: '',
+  priority: DEFAULT_PRIORITY,
   order_sub_type: '',
   expected_amount: '',
   related_order_no: '',
@@ -56,6 +57,7 @@ export default function ActivityLog({ accountId, draft }) {
       account_id: accountId,
       date: today(),
       issue_type: newLog.issue_type,
+      priority: Number(newLog.priority) || DEFAULT_PRIORITY,
       sales_rep: currentUser,
       content: newLog.content.trim(),
       status: 'Open',
@@ -91,6 +93,10 @@ export default function ActivityLog({ accountId, draft }) {
       status: newStatus,
       closed_at: newStatus === 'Closed' ? today() : log.closed_at,
     });
+  };
+
+  const updatePriority = (log, newPriority) => {
+    saveLog({ ...log, priority: Number(newPriority) || DEFAULT_PRIORITY });
   };
 
   /* ── 필터 적용 ── */
@@ -179,6 +185,12 @@ export default function ActivityLog({ accountId, draft }) {
               </select>
             </div>
             <div className="form-group">
+              <label>중요도</label>
+              <select value={newLog.priority || DEFAULT_PRIORITY} onChange={e => setNewLog(p => ({ ...p, priority: Number(e.target.value) }))}>
+                {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {p.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
               <label>기한</label>
               <input type="date" value={newLog.due_date} onChange={e => setNewLog(p => ({ ...p, due_date: e.target.value }))} />
             </div>
@@ -258,11 +270,18 @@ export default function ActivityLog({ accountId, draft }) {
             const isOrder = log.issue_type === '수주활동';
             const isCross = log.issue_type === '크로스셀링';
 
+            const priorityInfo = ISSUE_PRIORITIES.find(p => p.value === (log.priority ?? DEFAULT_PRIORITY)) || ISSUE_PRIORITIES[0];
             return (
               <div key={log.id} className={`timeline-item ${statusClass}`}>
                 <div className="timeline-header">
                   <span className="timeline-date">{log.date}</span>
                   <span className={`issue-badge ${log.issue_type?.replace('·', '')}`}>{log.issue_type}</span>
+                  {(log.priority ?? DEFAULT_PRIORITY) > 1 && (
+                    <span style={{
+                      fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 700,
+                      background: priorityInfo.color + '22', color: priorityInfo.color,
+                    }}>{priorityInfo.icon} {priorityInfo.label}</span>
+                  )}
                   {isOrder && log.order_sub_type && (
                     <span className="issue-badge" style={{
                       background: 'var(--primary-light, #e8edff)',
@@ -312,7 +331,7 @@ export default function ActivityLog({ accountId, draft }) {
                     {log.due_date && <span>기한: {fmtDate(log.due_date)}</span>}
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: 4, marginTop: 8, alignItems: 'center' }}>
                   {log.status !== 'In Progress' && log.status !== 'Closed' && (
                     <button className="btn btn-ghost btn-sm" onClick={() => updateStatus(log, 'In Progress')}>진행 중</button>
                   )}
@@ -322,6 +341,14 @@ export default function ActivityLog({ accountId, draft }) {
                   {log.status === 'Closed' && (
                     <button className="btn btn-ghost btn-sm" onClick={() => updateStatus(log, 'Open')}>재오픈</button>
                   )}
+                  <select
+                    value={log.priority ?? DEFAULT_PRIORITY}
+                    onChange={e => updatePriority(log, e.target.value)}
+                    style={{ fontSize: 11, padding: '2px 4px', marginLeft: 4 }}
+                    title="중요도 변경"
+                  >
+                    {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {p.label}</option>)}
+                  </select>
                   <button className="btn btn-danger btn-sm" onClick={() => removeLog(log.id)} style={{ marginLeft: 'auto' }}>삭제</button>
                 </div>
               </div>
