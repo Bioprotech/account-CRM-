@@ -734,6 +734,13 @@ export default function Settings() {
           targets[t] = {};
           for (let m = 1; m <= 12; m++) targets[t][String(m).padStart(2, '0')] = 0;
         });
+        // ⚠️ 각 팀의 "첫 번째 데이터 행만" 사용 (중복 방지):
+        //   Excel 레이아웃상 "국내" 팀은 종종 3개 행으로 분리:
+        //     국내 (합계 행, 이것만 취함)
+        //     국내 (국내 대리점만, 중복으로 무시)
+        //     국내(직판) (세부 행, 중복으로 무시)
+        //   Total 행 값으로 검증하여 정확성 보장
+        const teamSeenCount = { '해외': 0, 'BPU': 0, '국내': 0 };
         let dataFound = false;
         for (let i = headerRowIdx + 1; i < Math.min(headerRowIdx + 15, sRows.length); i++) {
           const row = sRows[i] || [];
@@ -747,6 +754,10 @@ export default function Settings() {
           if (!teamName) continue;
           if (teamName === 'Total' || teamName === 'Total ') break;
           const mappedTeam = teamName.startsWith('국내') ? '국내' : teamName;
+          // 이미 한 번 본 팀은 중복이므로 무시 (첫 행이 합계 행)
+          if (teamSeenCount[mappedTeam] >= 1) continue;
+          teamSeenCount[mappedTeam]++;
+
           if (!targets[mappedTeam]) {
             targets[mappedTeam] = {};
             for (let m = 1; m <= 12; m++) targets[mappedTeam][String(m).padStart(2, '0')] = 0;
@@ -757,9 +768,8 @@ export default function Settings() {
             if (col < 0) continue;
             const val = parseFloat(row[col]) || 0;
             if (val > 0) rowHasValue = true;
-            // ⚠️ 단위 중요: 사업계획 Excel 헤더에 "[단위: 천원]"으로 표기되어 있지만
-            //    실제 셀 값은 "원" 단위 (수주 목표도 동일 방식으로 원 단위 저장됨)
-            //    따라서 단위 변환 없이 그대로 사용해야 수주↔매출 비교 가능
+            // ⚠️ 단위: 사업계획 Excel 헤더에 "[단위: 천원]" 표기지만 실제 셀 값은 "원" 단위
+            //   (수주 목표도 동일 방식으로 원 단위 저장)
             targets[mappedTeam][String(m).padStart(2, '0')] += val;
           }
           if (rowHasValue) dataFound = true;
@@ -773,10 +783,19 @@ export default function Settings() {
       };
 
       // 여러 후보 시트 중 데이터가 있는 것 우선
+      // ⚠️ 시트 우선순위 (중요):
+      // 같은 사업계획 파일 내 여러 시트에 매출 목표가 있을 수 있음.
+      // - 월별매출 시트 = 구버전/보수적 목표
+      // - 26년도 월별수주매출S_* 시트 = 최신 시뮬레이션 (사용자가 운영에 쓰는 공식 값)
+      // 따라서 "수주매출S" 패턴을 최우선으로 선택.
       const candidateSheetNames = [
+        // 1순위: 통합 시뮬레이션 시트 (S suffix, 날짜 포함)
+        ...wb.SheetNames.filter(s => /수주매출S/.test(s) || /수주\s*매출\s*S/.test(s)),
+        // 2순위: 다른 수주매출 통합 시트
+        ...wb.SheetNames.filter(s => /월별.*수주.*매출/.test(s) && !s.includes('세부')),
+        // 3순위: 월별매출 단독 시트
         ...wb.SheetNames.filter(s => s === '월별매출'),
-        ...wb.SheetNames.filter(s => /월별.*매출/.test(s) && !s.includes('세부')),
-        ...wb.SheetNames.filter(s => /월별.*수주.*매출/.test(s)),
+        ...wb.SheetNames.filter(s => /월별.*매출/.test(s) && !s.includes('세부') && !s.includes('수주')),
       ];
       const uniqueCandidates = [...new Set(candidateSheetNames)];
 
