@@ -757,8 +757,10 @@ export default function Settings() {
             if (col < 0) continue;
             const val = parseFloat(row[col]) || 0;
             if (val > 0) rowHasValue = true;
-            // 단위: 천원 → 원 변환
-            targets[mappedTeam][String(m).padStart(2, '0')] += (val * 1000);
+            // ⚠️ 단위 중요: 사업계획 Excel 헤더에 "[단위: 천원]"으로 표기되어 있지만
+            //    실제 셀 값은 "원" 단위 (수주 목표도 동일 방식으로 원 단위 저장됨)
+            //    따라서 단위 변환 없이 그대로 사용해야 수주↔매출 비교 가능
+            targets[mappedTeam][String(m).padStart(2, '0')] += val;
           }
           if (rowHasValue) dataFound = true;
         }
@@ -959,10 +961,20 @@ export default function Settings() {
 
       if (plans.length > 0) importBusinessPlans(plans);
 
-      const parts = [`사업계획 ${plans.length}건 import`];
-      if (teamSalesCount > 0) parts.push(`(팀별 매출목표 ${teamSalesCount}팀 포함)`);
-      if (newAccountCount > 0) parts.push(`(신규 고객 ${newAccountCount}사 자동생성)`);
-      showToast(parts.join(' '), 'success');
+      const parts = [`사업계획 ${plans.length}건 import 완료`];
+      if (teamSalesCount > 0) {
+        // 매출 목표 연간 합계 계산해서 토스트에 표시
+        const salesAnnual = Object.values(planPreview.teamSalesTargets || {})
+          .reduce((sum, months) => sum + Object.values(months).reduce((s, v) => s + v, 0), 0);
+        const salesAnnualStr = salesAnnual >= 100000000
+          ? `${(salesAnnual / 100000000).toFixed(1)}억`
+          : `${Math.round(salesAnnual / 10000).toLocaleString()}만`;
+        parts.push(`💰 팀별 매출목표 ${teamSalesCount}팀 (연간 ${salesAnnualStr})`);
+      } else {
+        parts.push('⚠ 매출목표 미추출 (수주목표 기반 대체 사용)');
+      }
+      if (newAccountCount > 0) parts.push(`신규 고객 ${newAccountCount}사 자동생성`);
+      showToast(parts.join(' · '), 'success');
       setPlanPreview(null);
     } catch (err) {
       showToast('Import 실패: ' + err.message, 'error');

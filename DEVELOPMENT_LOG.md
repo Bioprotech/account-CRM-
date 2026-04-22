@@ -433,3 +433,5 @@ account-crm/src/
 | 2026-04-20 | ⚠️ 담당자 분류 절대 규칙 문서화: customerClassification.js 주석 + WORKFLOW.md + MEMORY.md (재발 방지) |
 | 2026-04-20 | 💰 매출 목표 Fallback 로직: team_sales 없으면 customerPlans 수주목표 자동 사용 (주간+월간 모두) |
 | 2026-04-20 | UI 투명성: Fallback 사용 시 "수주목표 기반 대체" 라벨 표시 (사업부별 매출 Import 안내) |
+| 2026-04-20 | 🐛 매출 목표 Import 단위 버그 수정 (×1000 제거) — 사업계획 Excel 값은 이미 원 단위 |
+| 2026-04-20 | Import 완료 토스트에 매출목표 연간 금액 명시 + 미추출 시 "수주목표 기반 대체" 안내 |

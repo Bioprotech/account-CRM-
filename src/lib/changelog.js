@@ -1,5 +1,17 @@
 export const CHANGELOG = [
   {
+    version: 'v3.0.1',
+    date: '2026-04-20',
+    title: '매출 목표 Import 단위 오류 수정',
+    items: [
+      '🐛 매출 목표 Import 단위 변환 오류 수정 (×1000 곱셈 제거)',
+      '  ↳ 사업계획 Excel은 헤더에 "[단위: 천원]"이지만 실제 셀 값은 원 단위',
+      '  ↳ 수주 목표와 동일 방식으로 값 그대로 저장',
+      '📢 Import 성공 메시지에 연간 매출목표 금액 명시 (검증 용이)',
+      '⚠ 기존 Import된 team_sales plan은 Settings에서 재 Import 필요 (값이 1000배 큼)',
+    ],
+  },
+  {
     version: 'v3.0',
     date: '2026-04-20',
     title: '매출 목표 대비 실적 반드시 표시 (Fallback 로직)',
