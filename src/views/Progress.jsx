@@ -29,7 +29,7 @@ export default function Progress() {
 
   // 고객별 사업계획 (product plans 제외)
   const customerPlans = useMemo(() =>
-    businessPlans.filter(p => p.year === CURRENT_YEAR && p.type !== 'product'),
+    businessPlans.filter(p => p.year === CURRENT_YEAR && (p.type === 'customer' || !p.type)),
     [businessPlans]
   );
 

@@ -82,7 +82,7 @@ export default function Dashboard() {
   }, [businessPlans, myAccountIds, isAdmin, currentUser]);
 
   const customerPlans = useMemo(() =>
-    myBusinessPlans.filter(p => p.year === CURRENT_YEAR && p.type !== 'product'),
+    myBusinessPlans.filter(p => p.year === CURRENT_YEAR && (p.type === 'customer' || !p.type)),
     [myBusinessPlans]
   );
   const yearOrders = useMemo(() =>
@@ -419,7 +419,7 @@ export default function Dashboard() {
   // account_id 또는 customer_name으로 매칭
   const syncInfo = useMemo(() => {
     const currentYear = new Date().getFullYear();
-    const plans = businessPlans.filter(p => p.year === currentYear && p.type !== 'product' && p.sales_rep);
+    const plans = businessPlans.filter(p => p.year === currentYear && (p.type === 'customer' || !p.type) && p.sales_rep);
     const repMap = {};
 
     plans.forEach(p => {

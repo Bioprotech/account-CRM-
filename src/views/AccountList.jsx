@@ -21,7 +21,7 @@ export default function AccountList() {
 
   // account_id 및 customer_name 기반 연간 목표 매핑
   const targetByAccount = useMemo(() => {
-    const customerPlans = businessPlans.filter(p => p.year === CURRENT_YEAR && p.type !== 'product');
+    const customerPlans = businessPlans.filter(p => p.year === CURRENT_YEAR && (p.type === 'customer' || !p.type));
     const byId = {};
     const byName = {};
     customerPlans.forEach(p => {

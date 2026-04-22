@@ -1,5 +1,17 @@
 export const CHANGELOG = [
   {
+    version: 'v3.0.4',
+    date: '2026-04-20',
+    title: '🚨 근본 원인 수정 — customerPlans 필터에 team_sales 섞임 버그',
+    items: [
+      '🐛 전 시스템 동일 버그: p.type !== "product" 필터 → team_sales까지 포함됨',
+      '  ↳ 결과: 수주 목표 계산에 매출 목표(team_sales)가 섞여 "수주 = 매출" 동일 출력',
+      '  ↳ 수정: p.type === "customer" || !p.type 로 명시적 필터',
+      '📁 14개 파일 일괄 수정 — Report/Dashboard/OrderReport/Progress/Settings/GapAnalysis/AccountList',
+      '💡 이 버그로 인해 이전 v3.0~3.0.3 Fallback 로직이 반대로 작동: team_sales 있어도 수주 목표로 잘못 사용',
+    ],
+  },
+  {
     version: 'v3.0.3',
     date: '2026-04-20',
     title: '사업계획 Import 버그 수정 — 고객별 시트 없어도 Import 가능',

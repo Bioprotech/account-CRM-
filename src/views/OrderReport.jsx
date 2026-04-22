@@ -43,7 +43,7 @@ export default function OrderReport() {
   [orders, viewYear]);
 
   const yearPlans = useMemo(() =>
-    businessPlans.filter(p => p.year === viewYear && p.type !== 'product'),
+    businessPlans.filter(p => p.year === viewYear && (p.type === 'customer' || !p.type)),
   [businessPlans, viewYear]);
 
   const yearForecasts = useMemo(() =>

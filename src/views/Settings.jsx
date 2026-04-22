@@ -103,7 +103,7 @@ export default function Settings() {
 
   const masterSyncPreview = useMemo(() => {
     const year = new Date().getFullYear();
-    const plans = businessPlans.filter(p => p.year === year && p.type !== 'product');
+    const plans = businessPlans.filter(p => p.year === year && (p.type === 'customer' || !p.type));
     if (plans.length === 0) return null;
 
     const accountMap = {};
@@ -192,7 +192,7 @@ export default function Settings() {
         if (a.company_name) freshAccountMap[a.company_name.toLowerCase().trim()] = a.id;
       });
 
-      const unlinked = businessPlans.filter(p => p.year === year && p.type !== 'product' && !p.account_id);
+      const unlinked = businessPlans.filter(p => p.year === year && (p.type === 'customer' || !p.type) && !p.account_id);
       if (unlinked.length > 0) {
         const updatedPlans = [];
         for (const p of unlinked) {
@@ -1026,7 +1026,7 @@ export default function Settings() {
     setRelinking(true);
     try {
       const year = new Date().getFullYear();
-      const unlinked = businessPlans.filter(p => p.year === year && p.type !== 'product' && !p.account_id);
+      const unlinked = businessPlans.filter(p => p.year === year && (p.type === 'customer' || !p.type) && !p.account_id);
       if (unlinked.length === 0) {
         showToast('연결이 필요한 사업계획이 없습니다', 'info');
         setRelinking(false);
@@ -1111,7 +1111,7 @@ export default function Settings() {
     setSyncing(true);
     try {
       const year = new Date().getFullYear();
-      const plans = businessPlans.filter(p => p.year === year && p.type !== 'product' && p.biz_type);
+      const plans = businessPlans.filter(p => p.year === year && (p.type === 'customer' || !p.type) && p.biz_type);
 
       // customer_name 기반으로 plan → account 매칭
       const nameToType = {};
@@ -1141,7 +1141,7 @@ export default function Settings() {
   // 동기화 필요 건수 계산
   const bizTypeSyncNeeded = (() => {
     const year = new Date().getFullYear();
-    const plans = businessPlans.filter(p => p.year === year && p.type !== 'product' && p.biz_type);
+    const plans = businessPlans.filter(p => p.year === year && (p.type === 'customer' || !p.type) && p.biz_type);
     const nameToType = {};
     plans.forEach(p => {
       const key = (p.customer_name || '').toLowerCase().trim();
@@ -1343,7 +1343,7 @@ export default function Settings() {
 
   const planYear = new Date().getFullYear();
   const currentPlanCount = businessPlans.filter(p => p.year === planYear).length;
-  const customerPlanCount = businessPlans.filter(p => p.year === planYear && p.type !== 'product').length;
+  const customerPlanCount = businessPlans.filter(p => p.year === planYear && (p.type === 'customer' || !p.type)).length;
   const productPlanCount = businessPlans.filter(p => p.year === planYear && p.type === 'product').length;
   const currentOrderImports = orders.filter(o => o.source === 'excel_import_영업현황').length;
   const currentFcstImports = forecasts.filter(f => f.source === 'excel_import_fcst').length;
@@ -1641,7 +1641,7 @@ export default function Settings() {
         </div>
 
         {currentPlanCount > 0 && (() => {
-          const unlinkedCount = businessPlans.filter(p => p.year === planYear && p.type !== 'product' && !p.account_id).length;
+          const unlinkedCount = businessPlans.filter(p => p.year === planYear && (p.type === 'customer' || !p.type) && !p.account_id).length;
           return (
             <div className="alert-banner warning" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
@@ -1841,7 +1841,7 @@ export default function Settings() {
         </div>
         {(() => {
           const currentYear = new Date().getFullYear();
-          const plans = businessPlans.filter(p => p.year === currentYear && p.type !== 'product' && p.sales_rep);
+          const plans = businessPlans.filter(p => p.year === currentYear && (p.type === 'customer' || !p.type) && p.sales_rep);
           // 고객별 담당자 매핑 (account_id 또는 customer_name으로 매칭)
           const repMap = {};
           plans.forEach(p => {

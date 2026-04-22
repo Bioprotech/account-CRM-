@@ -205,8 +205,10 @@ export default function Report() {
   const toggleRepDrill = (key) => setRepDrillOpen(prev => ({ ...prev, [key]: !prev[key] }));
 
   /* ── Base data ── */
+  // ⚠️ customer plan만 명시적으로 (team_sales와 product 제외)
+  //   이전에 (p.type === 'customer' || !p.type) 로 필터해서 team_sales가 섞여 수주·매출 목표 동일 출력 버그
   const customerPlans = useMemo(() =>
-    businessPlans.filter(p => p.year === CURRENT_YEAR && p.type !== 'product'),
+    businessPlans.filter(p => p.year === CURRENT_YEAR && (p.type === 'customer' || !p.type)),
     [businessPlans]
   );
   const productPlans = useMemo(() =>

@@ -34,7 +34,7 @@ export default function GapAnalysis({ draft, update }) {
 
     // Find plans for this account
     const plans = businessPlans.filter(p =>
-      p.year === year && p.type !== 'product' &&
+      p.year === year && (p.type === 'customer' || !p.type) &&
       (p.account_id === draft.id || (p.customer_name || '').toLowerCase().trim() === name)
     );
     if (plans.length === 0) return null;
