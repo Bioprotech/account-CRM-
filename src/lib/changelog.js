@@ -1,5 +1,22 @@
 export const CHANGELOG = [
   {
+    version: 'v3.0.3',
+    date: '2026-04-20',
+    title: '사업계획 Import 버그 수정 — 고객별 시트 없어도 Import 가능',
+    items: [
+      '🐛 버그 수정: 고객별 시트 없는 사업계획 파일 Import 실패 문제',
+      '  ↳ 이전: `wb.SheetNames[0]`(Sheet1, 메모) 선택 → 헤더 못찾아 에러',
+      '  ↳ 이후: 고객별 시트 없어도 매출 목표/품목별 있으면 Import 진행',
+      '🔐 Type별 plan 교체 로직 (중요!)',
+      '  ↳ 이전: 매출 목표만 있는 파일 Import 시 기존 수주목표 모두 삭제됨',
+      '  ↳ 이후: 해당 type(team_sales / customer / product)만 교체, 다른 type 유지',
+      '📘 Settings UI 재정리 — 두 파일 유형 명확 안내',
+      '  ↳ ① 수주목표 파일 (고객별 시트)',
+      '  ↳ ② 사업계획 파일 (수주매출S 시트)',
+      '  ↳ 각각 순서대로 업로드 가능',
+    ],
+  },
+  {
     version: 'v3.0.2',
     date: '2026-04-20',
     title: '매출 목표 시트 선택 + 중복 행 문제 완전 해결',

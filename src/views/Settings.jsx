@@ -608,98 +608,100 @@ export default function Settings() {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data);
 
-      // 고객별 시트 찾기
-      const mainSheet = wb.SheetNames.find(s => s.includes('고객별')) || wb.SheetNames[0];
-      const ws = wb.Sheets[mainSheet];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      // 고객별 시트 찾기 (선택적 — 없어도 매출 목표만 Import 가능)
+      const mainSheet = wb.SheetNames.find(s => s.includes('고객별'));
 
       // 헤더 행 찾기 (고객사 + 담당자 포함)
       let headerIdx = -1;
       let colMap = {};
-      for (let i = 0; i < Math.min(rows.length, 15); i++) {
-        const row = (rows[i] || []).map(c => String(c || '').trim());
-        const hasCustomer = row.some(c => c.includes('고객') && (c.includes('사') || c.includes('명')));
-        const hasRep = row.some(c => c === '담당자');
-        if (hasCustomer && hasRep) {
-          headerIdx = i;
-          row.forEach((h, j) => {
-            if (h.includes('고객') && (h.includes('사') || h.includes('명'))) colMap.customer = j;
-            if (h === '지역') colMap.region = j;
-            if (h === '국가') colMap.country = j;
-            if (h.includes('영업팀') || h === '팀') colMap.team = j;
-            if (h === '구분') colMap.bizType = j;
-            if (h === '담당자') colMap.rep = j;
-            if (h === '1월') colMap.m01 = j;
-            if (h === '2월') colMap.m02 = j;
-            if (h === '3월') colMap.m03 = j;
-            if (h === '4월') colMap.m04 = j;
-            if (h === '5월') colMap.m05 = j;
-            if (h === '6월') colMap.m06 = j;
-            if (h === '7월') colMap.m07 = j;
-            if (h === '8월') colMap.m08 = j;
-            if (h === '9월') colMap.m09 = j;
-            if (h === '10월') colMap.m10 = j;
-            if (h === '11월') colMap.m11 = j;
-            if (h === '12월') colMap.m12 = j;
-            if (h.includes('목표') && h.includes('202')) colMap.annual = j;
-          });
-          break;
-        }
-      }
-
-      if (headerIdx === -1) {
-        showToast('헤더 행을 찾을 수 없습니다 (고객사, 담당자 컬럼 필요)', 'error');
-        return;
-      }
-
-      // 연간 합계 컬럼 보조 탐색
-      if (colMap.annual === undefined) {
-        const lastRow = (rows[headerIdx] || []).map(c => String(c || '').trim());
-        for (let j = lastRow.length - 1; j >= 0; j--) {
-          if (lastRow[j].includes('목표') && !lastRow[j].includes('분기') && !lastRow[j].includes('반기')) {
-            colMap.annual = j;
+      let rows = [];
+      if (mainSheet) {
+        const ws = wb.Sheets[mainSheet];
+        rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        for (let i = 0; i < Math.min(rows.length, 15); i++) {
+          const row = (rows[i] || []).map(c => String(c || '').trim());
+          const hasCustomer = row.some(c => c.includes('고객') && (c.includes('사') || c.includes('명')));
+          const hasRep = row.some(c => c === '담당자');
+          if (hasCustomer && hasRep) {
+            headerIdx = i;
+            row.forEach((h, j) => {
+              if (h.includes('고객') && (h.includes('사') || h.includes('명'))) colMap.customer = j;
+              if (h === '지역') colMap.region = j;
+              if (h === '국가') colMap.country = j;
+              if (h.includes('영업팀') || h === '팀') colMap.team = j;
+              if (h === '구분') colMap.bizType = j;
+              if (h === '담당자') colMap.rep = j;
+              if (h === '1월') colMap.m01 = j;
+              if (h === '2월') colMap.m02 = j;
+              if (h === '3월') colMap.m03 = j;
+              if (h === '4월') colMap.m04 = j;
+              if (h === '5월') colMap.m05 = j;
+              if (h === '6월') colMap.m06 = j;
+              if (h === '7월') colMap.m07 = j;
+              if (h === '8월') colMap.m08 = j;
+              if (h === '9월') colMap.m09 = j;
+              if (h === '10월') colMap.m10 = j;
+              if (h === '11월') colMap.m11 = j;
+              if (h === '12월') colMap.m12 = j;
+              if (h.includes('목표') && h.includes('202')) colMap.annual = j;
+            });
             break;
           }
         }
       }
+      // 고객별 시트 없거나 헤더 못 찾음 — 매출 목표 Import 전용 파일일 수 있음 (경고만)
+      const hasCustomerSheet = !!mainSheet && headerIdx >= 0;
 
-      const monthCols = [colMap.m01, colMap.m02, colMap.m03, colMap.m04, colMap.m05, colMap.m06,
-                         colMap.m07, colMap.m08, colMap.m09, colMap.m10, colMap.m11, colMap.m12];
-
-      // 고객 데이터 파싱
       const planRows = [];
-      for (let i = headerIdx + 1; i < rows.length; i++) {
-        const r = rows[i];
-        if (!r) continue;
-        const customer = String(r[colMap.customer] || '').trim();
-        if (!customer || customer === 'Total' || customer.includes('소계') || customer.includes('합계')) continue;
-
-        const monthTargets = {};
-        let hasAny = false;
-        monthCols.forEach((col, idx) => {
-          if (col !== undefined) {
-            const val = parseFloat(r[col]) || 0;
-            monthTargets[String(idx + 1).padStart(2, '0')] = val;
-            if (val > 0) hasAny = true;
+      if (hasCustomerSheet) {
+        // 연간 합계 컬럼 보조 탐색
+        if (colMap.annual === undefined) {
+          const lastRow = (rows[headerIdx] || []).map(c => String(c || '').trim());
+          for (let j = lastRow.length - 1; j >= 0; j--) {
+            if (lastRow[j].includes('목표') && !lastRow[j].includes('분기') && !lastRow[j].includes('반기')) {
+              colMap.annual = j;
+              break;
+            }
           }
-        });
+        }
 
-        const annual = colMap.annual !== undefined
-          ? (parseFloat(r[colMap.annual]) || 0)
-          : Object.values(monthTargets).reduce((s, v) => s + v, 0);
+        const monthCols = [colMap.m01, colMap.m02, colMap.m03, colMap.m04, colMap.m05, colMap.m06,
+                           colMap.m07, colMap.m08, colMap.m09, colMap.m10, colMap.m11, colMap.m12];
 
-        if (!hasAny && annual <= 0) continue;
+        // 고객 데이터 파싱
+        for (let i = headerIdx + 1; i < rows.length; i++) {
+          const r = rows[i];
+          if (!r) continue;
+          const customer = String(r[colMap.customer] || '').trim();
+          if (!customer || customer === 'Total' || customer.includes('소계') || customer.includes('합계')) continue;
 
-        planRows.push({
-          customerName: customer,
-          region: mapRegion(String(r[colMap.region] || '').trim()),
-          country: String(r[colMap.country] || '').trim(),
-          team: String(r[colMap.team] || '').trim(),
-          bizType: String(r[colMap.bizType] || '').trim(),
-          salesRep: String(r[colMap.rep] || '').trim(),
-          monthTargets,
-          annual,
-        });
+          const monthTargets = {};
+          let hasAny = false;
+          monthCols.forEach((col, idx) => {
+            if (col !== undefined) {
+              const val = parseFloat(r[col]) || 0;
+              monthTargets[String(idx + 1).padStart(2, '0')] = val;
+              if (val > 0) hasAny = true;
+            }
+          });
+
+          const annual = colMap.annual !== undefined
+            ? (parseFloat(r[colMap.annual]) || 0)
+            : Object.values(monthTargets).reduce((s, v) => s + v, 0);
+
+          if (!hasAny && annual <= 0) continue;
+
+          planRows.push({
+            customerName: customer,
+            region: mapRegion(String(r[colMap.region] || '').trim()),
+            country: String(r[colMap.country] || '').trim(),
+            team: String(r[colMap.team] || '').trim(),
+            bizType: String(r[colMap.bizType] || '').trim(),
+            salesRep: String(r[colMap.rep] || '').trim(),
+            monthTargets,
+            annual,
+          });
+        }
       }
 
       // 월별매출 시트 파싱 — 사업부별 매출 목표 추출 (해외/BPU/국내)
@@ -855,8 +857,19 @@ export default function Settings() {
 
       const annualTotal = planRows.reduce((s, r) => s + r.annual, 0);
 
+      // 최소 검증: 고객별 수주목표 OR 매출목표 OR 품목별 중 하나는 있어야 함
+      if (planRows.length === 0 && productPlans.length === 0 && !salesTargetFound) {
+        showToast('사업계획 데이터를 찾을 수 없습니다. 다음 시트 중 하나가 필요합니다:\n'
+          + '- 고객별 수주목표 (예: 고객별.담당별.지역별.사업구분)\n'
+          + '- 매출 목표 (예: 월별매출, 26년도 월별수주매출S_*)\n'
+          + '- 품목별 목표', 'error');
+        return;
+      }
+
       setPlanPreview({
-        fileName: file.name, sheetName: mainSheet,
+        fileName: file.name,
+        sheetName: mainSheet || '(고객별 시트 없음)',
+        hasCustomerSheet,
         planRows, productPlans,
         teamSalesTargets, salesTargetFound, salesSheetUsed,
         salesCandidateSheets: uniqueCandidates,
@@ -864,15 +877,17 @@ export default function Settings() {
         matched: matchedSet.size, unmatched: unmatchedNames.length,
         unmatchedNames, annualTotal,
       });
-      let salesMsg = '';
+
+      // 토스트 메시지
+      const msgParts = [];
+      if (planRows.length > 0) msgParts.push(`고객별 수주목표 ${planRows.length}건`);
+      if (productPlans.length > 0) msgParts.push(`품목별 ${productPlans.length}건`);
       if (salesTargetFound) {
-        salesMsg = `, 매출목표 "${salesSheetUsed}" 시트에서 추출 (해외/BPU/국내)`;
+        msgParts.push(`매출목표 "${salesSheetUsed}" 시트 추출`);
       } else if (uniqueCandidates.length > 0) {
-        salesMsg = `, ⚠ 매출목표 시트(${uniqueCandidates.join(', ')}) 있으나 값이 비어있음 — 다른 사업계획 파일 확인 필요`;
-      } else {
-        salesMsg = ', 매출목표 시트 없음';
+        msgParts.push(`⚠ 매출목표 시트 값 비어있음`);
       }
-      showToast(`${file.name} 로드 (${planRows.length}개 고객, ${productPlans.length}개 품목${salesMsg})`, salesTargetFound ? 'info' : 'warn');
+      showToast(`${file.name} 로드: ${msgParts.join(', ')}`, salesTargetFound || planRows.length > 0 ? 'info' : 'warn');
     } catch (err) {
       showToast('파일 읽기 실패: ' + err.message, 'error');
     }
@@ -1608,11 +1623,22 @@ export default function Settings() {
       {/* ── 사업계획 Import ── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-title">📊 사업계획 Import (수주목표 + 매출목표)</div>
-        <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
-          <strong>수주목표 엑셀</strong>(고객별 월별 목표) 또는 <strong>사업계획 엑셀</strong>(수주 + 매출 목표)을 업로드합니다.<br />
-          • <strong>고객별</strong> 시트 있으면 → 고객별 수주 목표 + 품목별 목표 import<br />
-          • <strong>월별매출</strong> 시트 있으면 → <strong>사업부별 매출 목표</strong>(해외/BPU/국내) 자동 추출 (단위: 천원 → 원)
-        </p>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+          <div style={{ marginBottom: 8 }}>두 유형의 파일 모두 지원하며 필요에 따라 <strong>한 파일씩 순서대로</strong> 업로드 가능합니다:</div>
+          <div style={{ padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4, marginBottom: 6, fontSize: 11 }}>
+            <strong>① 수주목표 파일 (예: <code>26년 수주목표_월별_담당별_고객별.xlsx</code>)</strong><br />
+            → <strong>고객별.담당별.지역별.사업구분</strong> 시트 → 고객별 수주 목표 (<code>type: customer</code>)<br />
+            → <strong>품목별</strong> 시트 → 품목별 목표 (<code>type: product</code>)
+          </div>
+          <div style={{ padding: '6px 10px', background: 'rgba(59,130,246,.06)', borderRadius: 4, marginBottom: 6, fontSize: 11 }}>
+            <strong>② 사업계획 파일 (예: <code>2026년 영업 사업계획_v10_251229.xlsx</code>)</strong><br />
+            → <strong>26년도 월별수주매출S_*</strong> 또는 <strong>월별매출</strong> 시트 → 사업부별 매출 목표 해외/BPU/국내 (<code>type: team_sales</code>)<br />
+            → 단위: 원 / 중복 "국내" 행 자동 스킵
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--green, #16a34a)', fontWeight: 600 }}>
+            💡 Type별 교체: 한 파일만 업로드해도 다른 type(수주/매출)의 기존 데이터는 유지됩니다.
+          </div>
+        </div>
 
         {currentPlanCount > 0 && (() => {
           const unlinkedCount = businessPlans.filter(p => p.year === planYear && p.type !== 'product' && !p.account_id).length;

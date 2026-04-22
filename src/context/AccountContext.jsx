@@ -314,13 +314,31 @@ export default function AccountProvider({ children }) {
 
   /* ── Business Plans ── */
   const importBusinessPlans = useCallback(async (plans) => {
-    // 기존 같은 연도 데이터 교체
+    // ⚠️ Type별 교체 (기존 다른 type의 plan은 보존)
+    //   - 매출 목표(team_sales)만 import하는 경우 → 기존 customer/product plan 유지
+    //   - 고객별(customer) + 품목별(product)만 있는 경우 → 기존 team_sales 유지
+    //   - 이 로직이 없으면 매출 파일 import 시 수주 목표가 모두 삭제됨
     const year = plans[0]?.year;
-    setBusinessPlans(prev => [...prev.filter(p => p.year !== year), ...plans]);
+    const importedTypes = [...new Set(plans.map(p => p.type))];
+
+    // 삭제할 기존 plan (같은 year + import에 포함된 type)
+    let toRemove = [];
+    setBusinessPlans(prev => {
+      toRemove = prev.filter(p => p.year === year && importedTypes.includes(p.type));
+      const keep = prev.filter(p => !(p.year === year && importedTypes.includes(p.type)));
+      return [...keep, ...plans];
+    });
+
     if (FIREBASE_ENABLED) {
+      // Firestore에서 기존 plan 삭제 (같은 id면 저장 시 덮어쓰기지만, 이 import에 포함 안 된 기존 id는 남음)
+      const newIds = new Set(plans.map(p => p.id));
+      const orphanToDelete = toRemove.filter(p => !newIds.has(p.id));
+      for (const p of orphanToDelete) {
+        try { await fbDeletePlan(p.id); } catch {}
+      }
       try { await batchSaveBusinessPlans(plans); } catch (e) { console.error('사업계획 import 실패:', e); }
     }
-    showToast(`${plans.length}건 사업계획 import 완료`, 'success');
+    showToast(`${plans.length}건 사업계획 import 완료 (유형: ${importedTypes.join(', ')})`, 'success');
   }, []);
 
   const clearBusinessPlans = useCallback(async (year) => {
