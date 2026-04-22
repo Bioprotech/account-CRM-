@@ -256,9 +256,42 @@ export default function Report() {
       .reduce((s, o) => s + (o.order_amount || 0), 0);
 
     // rep-level YTD
+    // ⚠️ 담당자 분류 절대 규칙 (재발 방지):
+    //   - 영업현황 o.sales_rep 그대로 쓰면 안 됨 (비유효 담당자 다수)
+    //   - classifyForRepView로 사업계획 매칭 실패 시 국내기타/해외기타/국내신규/해외신규 버킷
     const byRep = {};
+    const planByNameForPS = {};
     customerPlans.forEach(p => {
-      const rep = p.sales_rep || '미배정';
+      if (!p.customer_name) return;
+      if (['해외기타', '직판영업', '국내 신규', '국내 기타'].includes(p.customer_name.trim())) return;
+      planByNameForPS[p.customer_name.toLowerCase().trim()] = p;
+    });
+    const priorSet = (appSettings?.priorYearCustomers && Array.isArray(appSettings.priorYearCustomers))
+      ? new Set(appSettings.priorYearCustomers) : (typeof loadPriorYearCustomers === 'function' ? loadPriorYearCustomers() : new Set());
+    // 초기화: 사업계획 담당자 + teamMembers + 4버킷
+    customerPlans.forEach(p => {
+      if (p.sales_rep && !['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) {
+        if (!byRep[p.sales_rep]) byRep[p.sales_rep] = { ytdTarget: 0, ytdActual: 0, annualTarget: 0, monthTarget: 0, monthActual: 0 };
+      }
+    });
+    (teamMembers || []).forEach(r => {
+      if (!byRep[r]) byRep[r] = { ytdTarget: 0, ytdActual: 0, annualTarget: 0, monthTarget: 0, monthActual: 0 };
+    });
+    ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => {
+      if (!byRep[k]) byRep[k] = { ytdTarget: 0, ytdActual: 0, annualTarget: 0, monthTarget: 0, monthActual: 0 };
+    });
+    // 목표
+    customerPlans.forEach(p => {
+      const cname = (p.customer_name || '').trim();
+      let rep;
+      if (['해외기타', '국내 기타', '국내 신규', '직판영업'].includes(cname)) {
+        if (cname === '해외기타') rep = '해외기타';
+        else if (cname === '국내 기타') rep = '국내기타';
+        else if (cname === '국내 신규') rep = '국내신규';
+        else return; // 직판영업 bucket은 스킵
+      } else {
+        rep = p.sales_rep || '미배정';
+      }
       if (!byRep[rep]) byRep[rep] = { ytdTarget: 0, ytdActual: 0, annualTarget: 0, monthTarget: 0, monthActual: 0 };
       byRep[rep].annualTarget += (p.annual_target || 0);
       byRep[rep].monthTarget += (p.targets?.[monthKey] || 0);
@@ -266,9 +299,17 @@ export default function Report() {
         byRep[rep].ytdTarget += (p.targets?.[String(m).padStart(2, '0')] || 0);
       }
     });
+    // 실적 — classifyForRepView로 버킷 자동 분류
     yearOrders.forEach(o => {
-      const plan = findPlanForOrder(o);
-      const rep = plan?.sales_rep || '기타';
+      const acc = o.account_id ? accounts.find(a => a.id === o.account_id)
+        : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (o.customer_name || '').toLowerCase().trim()) || null;
+      const { rep } = classifyForRepView({
+        account: acc,
+        customerName: o.customer_name || acc?.company_name,
+        planByName: planByNameForPS,
+        priorSet,
+      });
+      if (!rep) return;
       if (!byRep[rep]) byRep[rep] = { ytdTarget: 0, ytdActual: 0, annualTarget: 0, monthTarget: 0, monthActual: 0 };
       byRep[rep].ytdActual += (o.order_amount || 0);
       if ((o.order_date || '').startsWith(thisMonthStr)) {
@@ -302,7 +343,7 @@ export default function Report() {
     accountPlanVsActual.sort((a, b) => b.target - a.target);
 
     return { annualTarget, ytdTarget, ytdActual, monthTarget, monthActual, byRep, accountPlanVsActual };
-  }, [customerPlans, orders, yearOrders, hasPlan, planLookup]);
+  }, [customerPlans, orders, yearOrders, hasPlan, planLookup, accounts, teamMembers, appSettings]);
 
   /* ── Category breakdown builder ── */
   const buildCategoryBreakdown = (periodOrders, periodLabel) => {
@@ -1773,12 +1814,80 @@ export default function Report() {
         .map(([label, v]) => ({ label, ...v }));
     };
 
-    // Rep breakdown with month targets (기존 간단 버전 — 상세 분석용)
-    const repMonthRows = buildMonthlyRows(
-      monthOrders, customerPlans,
-      p => p.sales_rep || '미배정',
-      o => { const plan = findPlanForOrder(o); return plan?.sales_rep || o.sales_rep || '기타'; }
-    );
+    // Rep breakdown with month targets
+    // ⚠️ 담당자 분류 절대 규칙 (재발 방지):
+    //   - 주문/매출의 sales_rep을 그대로 쓰면 안 됨 (영업현황에 Lijian/Milena/이다은 등 비유효 rep 다수 존재)
+    //   - 반드시 classifyForRepView() 사용 → 사업계획 매칭 失 시 국내기타/해외기타/국내신규/해외신규 버킷
+    //   - 참고: src/lib/customerClassification.js, src/lib/salesReps.js
+    const planByNameForMonthlyData = {};
+    customerPlans.forEach(p => {
+      if (!p.customer_name) return;
+      if (['해외기타', '직판영업', '국내 신규', '국내 기타'].includes(p.customer_name.trim())) return;
+      planByNameForMonthlyData[p.customer_name.toLowerCase().trim()] = p;
+    });
+    const classifyForRepMD = (tx) => {
+      const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
+        : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (tx.customer_name || '').toLowerCase().trim()) || null;
+      return classifyForRepView({
+        account: acc,
+        customerName: tx.customer_name || acc?.company_name,
+        planByName: planByNameForMonthlyData,
+        priorSet: priorYearSet,
+      });
+    };
+
+    const repMapMD = {};
+    // 사업계획 담당자 + teamMembers 초기화
+    customerPlans.forEach(p => {
+      if (p.sales_rep && !['해외기타', '직판영업', '국내 신규', '국내 기타'].includes((p.customer_name || '').trim())) {
+        if (!repMapMD[p.sales_rep]) repMapMD[p.sales_rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      }
+    });
+    (teamMembers || []).forEach(r => {
+      if (!repMapMD[r]) repMapMD[r] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+    });
+    ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => {
+      if (!repMapMD[k]) repMapMD[k] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+    });
+    // 목표 (사업계획 담당자 + 버킷 플랜)
+    customerPlans.forEach(p => {
+      const name = (p.customer_name || '').trim();
+      if (['해외기타', '국내 기타', '국내 신규', '직판영업'].includes(name)) {
+        let key = null;
+        if (name === '해외기타') key = '해외기타';
+        else if (name === '국내 기타') key = '국내기타';
+        else if (name === '국내 신규') key = '국내신규';
+        if (key && repMapMD[key]) {
+          repMapMD[key].monthTarget += (p.targets?.[monthKey] || 0);
+          repMapMD[key].annualTarget += (p.annual_target || 0);
+        }
+        return;
+      }
+      const rep = p.sales_rep || '미배정';
+      if (!repMapMD[rep]) repMapMD[rep] = { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 };
+      repMapMD[rep].monthTarget += (p.targets?.[monthKey] || 0);
+      repMapMD[rep].annualTarget += (p.annual_target || 0);
+    });
+    // 실적 (classifyForRepView로 버킷 자동 분류)
+    monthOrders.forEach(o => {
+      const { rep } = classifyForRepMD(o);
+      if (!rep || !repMapMD[rep]) return;
+      repMapMD[rep].monthActual += (o.order_amount || 0);
+    });
+    yearOrders.forEach(o => {
+      const { rep } = classifyForRepMD(o);
+      if (!rep || !repMapMD[rep]) return;
+      repMapMD[rep].ytdActual += (o.order_amount || 0);
+    });
+    const repMonthRows = Object.entries(repMapMD)
+      .filter(([, v]) => v.monthTarget > 0 || v.monthActual > 0 || v.ytdActual > 0 || v.annualTarget > 0)
+      .sort((a, b) => {
+        const pa = a[1].monthTarget > 0 ? a[1].monthActual / a[1].monthTarget : -1;
+        const pb = b[1].monthTarget > 0 ? b[1].monthActual / b[1].monthTarget : -1;
+        if (pa !== pb) return pb - pa;
+        return b[1].monthActual - a[1].monthActual;
+      })
+      .map(([label, v]) => ({ label, ...v }));
 
     // Product breakdown with month targets
     const prodMonthRows = buildMonthlyRows(

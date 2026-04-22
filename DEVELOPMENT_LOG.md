@@ -428,3 +428,6 @@ account-crm/src/
 | 2026-04-20 | 주간 리포트 팀별 통합 블록 신규 — 금주활동·주요이슈·Open이슈·차주계획·리스크 |
 | 2026-04-20 | Open 이슈 고객 단위 그룹핑 + P1/P2/P3 자동 우선순위 + 토글 드릴다운 |
 | 2026-04-20 | 주간 Excel Export: 팀별 블록 구조로 재구성 |
+| 2026-04-20 | 🚨 분류별 실적 상세 - 담당자별 완전 수정: monthlyData.repMonthRows + planSummary.byRep 모두 classifyForRepView 강제 |
+| 2026-04-20 | 매출목표 Import 강화: 여러 후보 시트 자동 탐색, 빈 시트 경고 + 권장 파일명 안내 |
+| 2026-04-20 | ⚠️ 담당자 분류 절대 규칙 문서화: customerClassification.js 주석 + WORKFLOW.md + MEMORY.md (재발 방지) |

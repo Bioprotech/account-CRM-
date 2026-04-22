@@ -1,5 +1,21 @@
 export const CHANGELOG = [
   {
+    version: 'v2.9',
+    date: '2026-04-20',
+    title: '담당자 분류 일관성 완성 + 매출목표 Import 강화',
+    items: [
+      '🚨 담당자 분류 최종 통합 — "분류별 실적 상세 > 담당자별"의 영업현황 rep(Lijian/Milena/이다은 등) 완전 제거',
+      '  ↳ monthlyData.repMonthRows 및 planSummary.byRep 모두 classifyForRepView() 강제 사용',
+      '  ↳ 사업계획 담당자 + teamMembers + 4개 버킷(국내기타/해외기타/국내신규/해외신규)만 노출',
+      '💰 매출 목표 Import 유연성 강화 — 여러 후보 시트 자동 탐색 ("월별매출", "월별수주매출S" 등)',
+      '  ↳ 데이터가 있는 시트 우선 선택, 비어있으면 명확한 경고 메시지',
+      '  ↳ 담당자배정 버전(_v10_담당자배정.xlsx)은 매출목표 비어있음 → _251229 버전 사용 안내',
+      '📋 재발 방지: 담당자 분류 규칙 문서·코드 주석 강화',
+      '  ↳ customerClassification.js 상단 주석에 ⚠️ 절대 규칙 명기',
+      '  ↳ WORKFLOW.md / MEMORY.md에도 금지 패턴 + 점검 명령어 추가',
+    ],
+  },
+  {
     version: 'v2.8',
     date: '2026-04-20',
     title: '주간 리포트 팀별 블록 전면 재구성 — 금주활동·주요이슈·Open·차주·리스크',

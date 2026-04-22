@@ -106,6 +106,48 @@ Claude Code 새 세션 시작 시:
 
 ---
 
+## ⚠️⚠️⚠️ Account CRM — 담당자 분류 절대 규칙
+
+사용자가 여러 차례 강조한 **반드시 준수해야 할** 규칙입니다. 위반 시 리포트에 의미 없는 담당자(Lijian/Milena/이다은 등)가 계속 노출되어 사용자 신뢰를 잃습니다.
+
+### 문제 상황
+영업현황 Excel에는 사업계획과 무관한 담당자 이름이 다수 포함되어 있음.
+
+### 반드시 준수
+
+**1. 유효 담당자 = 사업계획 담당자 ∪ teamMembers**
+```js
+import { getValidSalesReps, getSortedValidReps } from '../lib/salesReps';
+const validReps = getSortedValidReps({ businessPlans, teamMembers });
+```
+
+**2. 주문/매출 담당자 집계 시 `classifyForRepView()` 사용**
+```js
+import { classifyForRepView } from '../lib/customerClassification';
+const { rep, bucket } = classifyForRepView({
+  account, customerName, planByName, priorSet
+});
+// rep = 사업계획 매칭 시 plan.sales_rep
+//     = 외+전년수주有 → '국내기타' | '해외기타'
+//     = 외+전년수주無 → '국내신규' | '해외신규'
+```
+
+**3. 금지된 패턴 — 절대 사용 금지**
+- ❌ `p.sales_rep || o.sales_rep || '기타'`
+- ❌ `o.sales_rep || '미배정'`
+- ❌ `plan?.sales_rep || o.sales_rep`
+
+**4. 적용 범위 — 전 시스템**
+주간 리포트 · 월간 리포트 · 대시보드 · OrderReport · 진도관리 · GAP 분석 — 모두 위 규칙 준수.
+
+**5. 점검 명령**: 위반 코드 검색
+```bash
+grep -rn "o\.sales_rep \|\|" src/
+grep -rn "|| '미배정'" src/
+```
+
+---
+
 ## 🔐 보안 및 주의사항
 
 - **관리자 비밀번호**: 두 프로젝트 모두 `1208` (동일)
