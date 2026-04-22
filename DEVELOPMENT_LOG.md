@@ -431,3 +431,5 @@ account-crm/src/
 | 2026-04-20 | 🚨 분류별 실적 상세 - 담당자별 완전 수정: monthlyData.repMonthRows + planSummary.byRep 모두 classifyForRepView 강제 |
 | 2026-04-20 | 매출목표 Import 강화: 여러 후보 시트 자동 탐색, 빈 시트 경고 + 권장 파일명 안내 |
 | 2026-04-20 | ⚠️ 담당자 분류 절대 규칙 문서화: customerClassification.js 주석 + WORKFLOW.md + MEMORY.md (재발 방지) |
+| 2026-04-20 | 💰 매출 목표 Fallback 로직: team_sales 없으면 customerPlans 수주목표 자동 사용 (주간+월간 모두) |
+| 2026-04-20 | UI 투명성: Fallback 사용 시 "수주목표 기반 대체" 라벨 표시 (사업부별 매출 Import 안내) |

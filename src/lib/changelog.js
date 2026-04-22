@@ -1,5 +1,18 @@
 export const CHANGELOG = [
   {
+    version: 'v3.0',
+    date: '2026-04-20',
+    title: '매출 목표 대비 실적 반드시 표시 (Fallback 로직)',
+    items: [
+      '💰 매출 목표 표시 보장 — team_sales plan 미Import 상태에서도 매출 달성률 표시',
+      '  ↳ 1순위: 사업계획 월별매출 시트 → team_sales plan (전용 매출목표)',
+      '  ↳ 2순위 Fallback: customerPlans 수주목표를 팀별 집계하여 자동 사용',
+      '  ↳ 주간·월간 리포트 모두 동일 로직 적용',
+      '🏷 UI 투명성 — Fallback 사용 중일 때 "수주목표 기반 대체" 라벨 명시',
+      '  ↳ 사용자가 전용 매출목표 Import 필요성 인지 가능',
+    ],
+  },
+  {
     version: 'v2.9',
     date: '2026-04-20',
     title: '담당자 분류 일관성 완성 + 매출목표 Import 강화',

@@ -690,13 +690,30 @@ export default function Report() {
       salesTeamData[team].monthCum += (s.sale_amount || 0);
     });
 
-    // 매출 목표: businessPlans의 type === 'team_sales' 에서 가져오기
+    // 매출 목표 우선순위:
+    //   1순위: businessPlans의 type === 'team_sales' (사업계획 월별매출 시트에서 추출한 전용 매출목표)
+    //   2순위 (Fallback): customerPlans의 수주 목표를 팀별로 집계해 매출목표로 사용
+    //     → team_sales가 Import 안 됐더라도 "매출 목표 대비 실적"이 반드시 표시됨
     const teamSalesPlans = businessPlans.filter(p => p.type === 'team_sales' && p.year === wkYear);
-    teamSalesPlans.forEach(p => {
-      const team = p.team;
-      if (!salesTeamData[team]) salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
-      salesTeamData[team].monthTarget += (p.targets?.[monthKey] || 0);
-    });
+    let salesTargetSource = 'none';
+    if (teamSalesPlans.length > 0) {
+      teamSalesPlans.forEach(p => {
+        const team = p.team;
+        if (!salesTeamData[team]) salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+        salesTeamData[team].monthTarget += (p.targets?.[monthKey] || 0);
+      });
+      salesTargetSource = 'team_sales';
+    } else {
+      // Fallback: 수주목표(customerPlans) → 팀별로 집계 (해외영업/영업지원/국내영업 → 해외/BPU/국내 매핑)
+      customerPlans.forEach(p => {
+        const orderTeam = p.team;
+        const salesTeam = ORDER_TEAM_TO_SALES[orderTeam];
+        if (!salesTeam) return;
+        if (!salesTeamData[salesTeam]) salesTeamData[salesTeam] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
+        salesTeamData[salesTeam].monthTarget += (p.targets?.[monthKey] || 0);
+      });
+      salesTargetSource = 'fallback_order_target';
+    }
 
     const salesTotal = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
     Object.values(salesTeamData).forEach(d => {
@@ -706,7 +723,7 @@ export default function Report() {
       salesTotal.monthTarget += d.monthTarget;
     });
     const hasSalesData = (sales || []).length > 0;
-    const hasSalesTarget = teamSalesPlans.length > 0;
+    const hasSalesTarget = salesTotal.monthTarget > 0;
 
     // 매출 표시 팀 목록 (3사업부만, region fallback으로 '기타' 발생 안 함)
     const displaySalesTeams = [...SALES_TEAM_ORDER];
@@ -833,7 +850,7 @@ export default function Report() {
       teamData,
       displayTeams,
       total,
-      salesTeamData, salesTotal, hasSalesData, hasSalesTarget, displaySalesTeams,
+      salesTeamData, salesTotal, hasSalesData, hasSalesTarget, displaySalesTeams, salesTargetSource,
       mtdActual, mtdTarget, mtdPct,
       quarterData,
       weekRepRows, wkNewDetails, wkEtcDetails,
@@ -1176,8 +1193,9 @@ export default function Report() {
     const prevMonthStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
 
     // ── 섹션 B-1: 월별 추이 (수주 + 매출, 1~12월) ──
-    // 매출 목표 합계 (team_sales plans)
+    // 매출 목표 Fallback: team_sales 없으면 customerPlans 수주목표 사용
     const teamSalesPlansTrend = businessPlans.filter(p => p.type === 'team_sales' && p.year === selYear);
+    const useOrderTargetAsFallback = teamSalesPlansTrend.length === 0;
     const monthlyTrend = [];
     const salesMonthlyTrend = [];
     for (let m = 1; m <= 12; m++) {
@@ -1202,13 +1220,15 @@ export default function Report() {
       const salesPrevYearActual = (sales || [])
         .filter(s => (s.sale_date || '').startsWith(prevYearMonth))
         .reduce((sum, s) => sum + (s.sale_amount || 0), 0);
-      // 매출 목표: team_sales plans의 월별 합계
-      const salesTarget = teamSalesPlansTrend.reduce((s, p) => s + (p.targets?.[mKey] || 0), 0);
+      // 매출 목표: team_sales 있으면 우선, 없으면 수주목표 fallback
+      const salesTarget = useOrderTargetAsFallback
+        ? target
+        : teamSalesPlansTrend.reduce((s, p) => s + (p.targets?.[mKey] || 0), 0);
 
       salesMonthlyTrend.push({
         month: m,
         prevYearActual: salesPrevYearActual,
-        target: salesTarget, // 매출 목표 (사업계획 team_sales)
+        target: salesTarget,
         actual: salesActual,
         yoyPct: salesPrevYearActual > 0 ? Math.round((salesActual / salesPrevYearActual) * 100) : 0,
         targetPct: salesTarget > 0 ? Math.round((salesActual / salesTarget) * 100) : 0,
@@ -1291,13 +1311,25 @@ export default function Report() {
 
     const salesTeamMonthly = {};
     SALES_TEAM_ORDER.forEach(t => { salesTeamMonthly[t] = { target: 0, actual: 0, prevYearActual: 0 }; });
-    // 매출 목표: businessPlans의 team_sales
+    // 매출 목표: team_sales 있으면 사용, 없으면 customerPlans(수주목표) fallback
     const teamSalesPlansM = businessPlans.filter(p => p.type === 'team_sales' && p.year === selYear);
-    teamSalesPlansM.forEach(p => {
-      const team = p.team;
-      if (!salesTeamMonthly[team]) salesTeamMonthly[team] = { target: 0, actual: 0, prevYearActual: 0 };
-      salesTeamMonthly[team].target += (p.targets?.[selMonthKey] || 0);
-    });
+    const salesTargetSourceM = teamSalesPlansM.length > 0 ? 'team_sales' : 'fallback_order_target';
+    if (teamSalesPlansM.length > 0) {
+      teamSalesPlansM.forEach(p => {
+        const team = p.team;
+        if (!salesTeamMonthly[team]) salesTeamMonthly[team] = { target: 0, actual: 0, prevYearActual: 0 };
+        salesTeamMonthly[team].target += (p.targets?.[selMonthKey] || 0);
+      });
+    } else {
+      // Fallback: 수주목표를 팀별로 집계
+      customerPlans.forEach(p => {
+        const orderTeam = p.team;
+        const salesTeam = ORDER_TEAM_TO_SALES[orderTeam];
+        if (!salesTeam) return;
+        if (!salesTeamMonthly[salesTeam]) salesTeamMonthly[salesTeam] = { target: 0, actual: 0, prevYearActual: 0 };
+        salesTeamMonthly[salesTeam].target += (p.targets?.[selMonthKey] || 0);
+      });
+    }
     monthSales.forEach(s => {
       const team = getSalesTeamForSaleLocal(s);
       if (!salesTeamMonthly[team]) salesTeamMonthly[team] = { target: 0, actual: 0, prevYearActual: 0 };
@@ -1724,7 +1756,7 @@ export default function Report() {
       selYear, selMonth, selMonthStr, selMonthKey,
       monthLabel: `${selYear}년 ${selMonth}월`,
       monthlyTrend, trendTotal,
-      salesMonthlyTrend, salesTrendTotal, hasSalesData,
+      salesMonthlyTrend, salesTrendTotal, hasSalesData, salesTargetSource: salesTargetSourceM,
       teamRows, teamTotal,
       salesTeamRows, salesTeamTotal,
       teamActivity,
@@ -2749,8 +2781,12 @@ export default function Report() {
                 </table>
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                ※ 매출: Import S시트(B/L Date 기준, 매출금액 확정분) / 목표: 사업계획 월별매출 시트(사업부별)
-                {!sectionAData.hasSalesTarget && ' ⚠ 매출 목표 미Import — 설정에서 월별매출 시트 포함 사업계획 파일 재업로드 필요'}
+                ※ 매출: Import S시트(B/L Date 기준, 매출금액 확정분) /
+                {sectionAData.salesTargetSource === 'team_sales'
+                  ? ' 목표: 사업계획 월별매출 시트(사업부별)'
+                  : sectionAData.salesTargetSource === 'fallback_order_target'
+                  ? <span style={{ color: '#d97706' }}> 목표: <strong>수주목표 기반 대체</strong> (사업계획 월별매출 시트 Import 시 별도 매출목표로 교체됨)</span>
+                  : ' 매출 목표 없음'}
               </div>
             </div>
           )}
@@ -3428,9 +3464,14 @@ export default function Report() {
           {/* ══ 섹션 B-1-2 — 매출 현황 월별 실적 (B/L date 기준) ══ */}
           {monthlyReportData.hasSalesData && (
             <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span>■ 1-2. 매출현황 — 월별 실적</span>
                 <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[B/L date 기준, 단위: 백만원]</span>
+                {monthlyReportData.salesTargetSource === 'fallback_order_target' && (
+                  <span style={{ fontSize: 10, color: '#d97706', fontWeight: 600, background: '#fef3c7', padding: '1px 6px', borderRadius: 4 }}>
+                    목표: 수주목표 기반 대체
+                  </span>
+                )}
               </div>
               <div className="table-wrap">
                 <table className="data-table" style={{ fontSize: 11 }}>
