@@ -467,43 +467,9 @@ export default function Report() {
       .sort((a, b) => b[1].annualTarget - a[1].annualTarget || b[1].ytdActual - a[1].ytdActual)
       .map(([label, v]) => ({ label, ...v }));
 
-    // 5. By customer type (business_type on account)
-    const typeMap = {};
-    accounts.forEach(a => {
-      if (!a.business_type) return;
-      if (!typeMap[a.business_type]) typeMap[a.business_type] = { periodActual: 0, ytdActual: 0, annualTarget: 0, count: 0, activeCount: 0 };
-      typeMap[a.business_type].count++;
-    });
-    if (hasPlan) {
-      customerPlans.forEach(p => {
-        const acc = p.account_id ? accounts.find(a => a.id === p.account_id) : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (p.customer_name || '').toLowerCase().trim());
-        const bt = acc?.business_type || p.biz_type || '';
-        if (!bt) return;
-        if (!typeMap[bt]) typeMap[bt] = { periodActual: 0, ytdActual: 0, annualTarget: 0, count: 0, activeCount: 0 };
-        typeMap[bt].annualTarget += (p.annual_target || 0);
-      });
-    }
-    periodOrders.forEach(o => {
-      const acc = accounts.find(a => a.id === o.account_id);
-      const bt = acc?.business_type || '';
-      if (!bt) return;
-      if (!typeMap[bt]) typeMap[bt] = { periodActual: 0, ytdActual: 0, annualTarget: 0, count: 0, activeCount: 0 };
-      typeMap[bt].periodActual += (o.order_amount || 0);
-    });
-    yearOrders.forEach(o => {
-      const acc = accounts.find(a => a.id === o.account_id);
-      const bt = acc?.business_type || '';
-      if (!bt) return;
-      if (!typeMap[bt]) typeMap[bt] = { periodActual: 0, ytdActual: 0, annualTarget: 0, count: 0, activeCount: 0 };
-      typeMap[bt].ytdActual += (o.order_amount || 0);
-      typeMap[bt].activeCount++;
-    });
-    const typeRows = Object.entries(typeMap)
-      .filter(([, v]) => v.periodActual > 0 || v.ytdActual > 0 || v.annualTarget > 0)
-      .sort((a, b) => b[1].annualTarget - a[1].annualTarget || b[1].ytdActual - a[1].ytdActual)
-      .map(([label, v]) => ({ label, ...v }));
+    // v3.1: 고객유형별(typeRows) 제거 — 사업구분별(bizRows)과 중복, 사용처 없음
 
-    return { repRows, prodRows, regRows, bizRows, typeRows };
+    return { repRows, prodRows, regRows, bizRows };
   };
 
   /* ══════════════════════════════
@@ -1465,7 +1431,7 @@ export default function Report() {
     // 목표 > 0 인 모든 고객 포함 (실적 0 포함), 달성률 낮은 순 (미달 우선 노출)
     const monthlyByCustomer = Object.values(planByCustomerM)
       .filter(p => p.monthTarget > 0)
-      .sort((a, b) => a.monthPct - b.monthPct);
+      .sort((a, b) => b.monthPct - a.monthPct); // 달성률 높은 순 (사용자 요청 v3.1)
 
     // ══════════════════════════════════════════════════════
     // 담당자별 월간 실적 (신 분류 체계) — 사업계획 담당자 + 국내기타/해외기타/국내신규/해외신규
@@ -1952,15 +1918,7 @@ export default function Report() {
       o => { const plan = findPlanForOrder(o); const acc = accounts.find(a => a.id === o.account_id); return plan?.biz_type || acc?.business_type || '기타'; }
     );
 
-    // Customer type breakdown with month targets
-    const typeMonthRows = buildMonthlyRows(
-      monthOrders, customerPlans,
-      p => {
-        const acc = p.account_id ? accounts.find(a => a.id === p.account_id) : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (p.customer_name || '').toLowerCase().trim());
-        return acc?.business_type || p.biz_type || '';
-      },
-      o => { const acc = accounts.find(a => a.id === o.account_id); return acc?.business_type || ''; }
-    ).filter(r => r.label);
+    // v3.1: typeMonthRows 제거 — bizMonthRows와 중복, 사용처 없음
 
     // Cross-selling aggregation from all accounts
     const csStats = { '미접촉': { count: 0, amount: 0 }, '제안중': { count: 0, amount: 0 }, '샘플진행': { count: 0, amount: 0 }, '수주완료': { count: 0, amount: 0 } };
@@ -2027,7 +1985,6 @@ export default function Report() {
       prodMonthRows,
       regMonthRows,
       bizMonthRows,
-      typeMonthRows,
       csStats,
       csTopOpps,
       fcstVsActual,
@@ -2517,13 +2474,12 @@ export default function Report() {
             const amRows = [
               ['AM별 활동 품질 지표'],
               [],
-              ['담당자', '고객수', '90일 컨택', '고객당 빈도', '평균 Score', '액션 실행률', 'YTD 달성률', '주요 Gap 원인'],
+              ['담당자', '고객수', '90일 컨택', '고객당 빈도', '평균 Score', 'YTD 달성률', '주요 Gap 원인'],
               ...amEntries
                 .sort((a, b) => b[1].achieveRate - a[1].achieveRate)
                 .map(([rep, m]) => [
                   rep, m.accountCount, `${m.contactCount90d}건`, m.avgContactFreq,
                   `${m.avgScore}%`,
-                  m.actionTotal > 0 ? `${m.actionRate}% (${m.actionDone}/${m.actionTotal})` : '미설정',
                   m.ytdTarget > 0 ? `${m.achieveRate}%` : '-',
                   m.gapCauses.map(([k, cnt]) => {
                     const c = GAP_CAUSES.find(gc => gc.key === k);
@@ -2532,7 +2488,7 @@ export default function Report() {
                 ]),
             ];
             const wg3 = XLSX.utils.aoa_to_sheet(amRows);
-            wg3['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 30 }];
+            wg3['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 30 }];
             XLSX.utils.book_append_sheet(wb, wg3, 'AM 활동 품질');
           }
         }
@@ -3040,187 +2996,7 @@ export default function Report() {
             );
           })}
 
-          {/* ── 기존 상세 분석 ── */}
-          <div className="report-section-title no-print" style={{ marginTop: 8 }}>상세 분석 ({weeklyData.weekStart} ~ {weeklyData.weekEnd})</div>
-
-          {/* Section 2: 금주 수주 현황 */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">금주 수주 현황</div>
-            {weeklyData.weekOrders.length === 0 ? (
-              <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>금주 수주 없음</div>
-            ) : (
-              <div className="table-wrap" style={{ maxHeight: 250 }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>고객명</th>
-                      <th>제품군</th>
-                      <th style={{ textAlign: 'right' }}>수주금액</th>
-                      <th>담당자</th>
-                      <th>오더일</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {weeklyData.weekOrders
-                      .sort((a, b) => (b.order_amount || 0) - (a.order_amount || 0))
-                      .map((o, i) => {
-                        const acc = accounts.find(a => a.id === o.account_id);
-                        return (
-                          <tr key={o.id || i}>
-                            <td style={{ fontWeight: 600 }}>{o.customer_name || acc?.company_name || '?'}</td>
-                            <td>{o.product_category || '-'}</td>
-                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(o.order_amount)}</td>
-                            <td>{o.sales_rep || acc?.sales_rep || '-'}</td>
-                            <td style={{ fontSize: 11 }}>{o.order_date || '-'}</td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Section 3: 금주 활동 요약 (전원 표시, 배정 고객수 포함) */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">금주 활동 요약 (담당자별)</div>
-            <div className="table-wrap" style={{ maxHeight: 350 }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>담당자</th>
-                    <th style={{ textAlign: 'right' }}>배정 고객수</th>
-                    <th style={{ textAlign: 'right' }}>컨택건수</th>
-                    <th style={{ textAlign: 'right' }}>컨택율</th>
-                    <th style={{ textAlign: 'right' }}>수주활동</th>
-                    <th style={{ textAlign: 'right' }}>크로스셀링</th>
-                    <th>주요 내용</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(weeklyData.repActivity)
-                    .sort((a, b) => b[1].contacts - a[1].contacts || b[1].assignedCount - a[1].assignedCount)
-                    .map(([rep, v]) => {
-                      const contactRate = v.assignedCount > 0 ? Math.round((v.contacts / v.assignedCount) * 100) : 0;
-                      return (
-                        <tr key={rep} style={{ opacity: v.contacts === 0 ? 0.6 : 1 }}>
-                          <td style={{ fontWeight: 600 }}>{rep}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{v.assignedCount}사</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, color: v.contacts === 0 ? 'var(--red)' : 'var(--accent)' }}>{v.contacts}</td>
-                          <td style={{ textAlign: 'right', fontSize: 11, color: contactRate >= 20 ? 'var(--green, #16a34a)' : contactRate >= 10 ? 'var(--text2)' : 'var(--red)' }}>
-                            {v.assignedCount > 0 ? `${contactRate}%` : '-'}
-                          </td>
-                          <td style={{ textAlign: 'right' }}>{v.orderActivity}</td>
-                          <td style={{ textAlign: 'right' }}>{v.crossSelling}</td>
-                          <td style={{ fontSize: 11, color: 'var(--text2)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {v.latestContent || (v.contacts === 0 ? '⚠ 금주 활동 없음' : '-')}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
-              ※ 컨택율 = 컨택건수 ÷ 배정 고객수 × 100
-            </div>
-          </div>
-
-          {/* Section 5b: 당월 분류별 실적 (MTD 기준) */}
-          {(monthlyData.repMonthRows.length > 0 || monthlyData.prodMonthRows.length > 0) && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">당월 분류별 실적 (상세)</div>
-              {[
-                { title: '담당자별 당월 실적', rows: monthlyData.repMonthRows },
-                { title: '품목별 당월 실적', rows: monthlyData.prodMonthRows },
-                { title: '지역별 당월 실적', rows: monthlyData.regMonthRows },
-                { title: '사업구분별 당월 실적', rows: monthlyData.bizMonthRows },
-              ].map(({ title, rows }) => {
-                if (!rows || rows.length === 0) return null;
-                return (
-                  <div key={title} style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{title}</div>
-                    <div className="table-wrap" style={{ maxHeight: 250 }}>
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>구분</th>
-                            <th style={{ textAlign: 'right' }}>당월 목표</th>
-                            <th style={{ textAlign: 'right' }}>당월 실적</th>
-                            <th style={{ textAlign: 'right' }}>당월 달성률</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rows.map(r => {
-                            const mp = pct(r.monthActual, r.monthTarget);
-                            return (
-                              <tr key={r.label}>
-                                <td style={{ fontWeight: 600 }}>{r.label}</td>
-                                <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(r.monthTarget)}</td>
-                                <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtKRW(r.monthActual)}</td>
-                                <td style={{ textAlign: 'right' }}>
-                                  {r.monthTarget > 0
-                                    ? <span className={`score-badge ${pctColor(mp)}`}>{mp}%</span>
-                                    : '-'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })}
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
-                ※ 당월(MTD) 기준 · YTD 누적과 연간 달성률은 월간 리포트에서 확인
-              </div>
-            </div>
-          )}
-
-          {/* Section 6: 주요 이슈 & 다음 주 계획 */}
-          <div className="two-col">
-            <div className="card">
-              <div className="card-title">Open 이슈 (Top 10)</div>
-              {openIssues.length === 0 ? (
-                <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--green)', fontSize: 12 }}>진행 중인 이슈가 없습니다</div>
-              ) : (
-                <div className="issue-list">
-                  {openIssues
-                    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                    .slice(0, 10)
-                    .map(l => {
-                      const account = accounts.find(a => a.id === l.account_id);
-                      return (
-                        <div key={l.id} className="issue-row">
-                          <span className="issue-company">{account?.company_name || '?'}</span>
-                          <span className={`issue-badge ${l.issue_type?.replace('\xb7', '')}`}>{l.issue_type}</span>
-                          <span className={`status-badge ${l.status === 'Open' ? 'open' : 'in-progress'}`}>{l.status}</span>
-                          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{l.date}</span>
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-
-            <div className="card">
-              <div className="card-title">기한 초과 이슈 (14일+)</div>
-              {weeklyData.overdueIssues.length === 0 ? (
-                <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--green)', fontSize: 12 }}>해당 없음</div>
-              ) : (
-                <div className="issue-list">
-                  {weeklyData.overdueIssues.slice(0, 10).map(l => (
-                    <div key={l.id} className="issue-row">
-                      <span className="issue-company">{l.company_name}</span>
-                      <span className={`issue-badge ${l.issue_type?.replace('\xb7', '')}`}>{l.issue_type}</span>
-                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--red)' }}>{daysSince(l.date)}일 경과</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          {/* ── v3.1: 상세 분석 섹션 전체 제거 (팀별 통합 블록으로 정보 충분, 월간과 중복 방지) ── */}
         </div>
       )}
 
@@ -3580,53 +3356,7 @@ export default function Report() {
             </div>
           </div>
 
-          {/* ══ 섹션 B-2-2 — 팀별 월간 매출 ══ */}
-          {monthlyReportData.hasSalesData && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>■ 2-2. 팀별 월간 매출</span>
-                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[{monthlyReportData.monthLabel} / B/L date 기준]</span>
-              </div>
-              <div className="table-wrap">
-                <table className="data-table" style={{ fontSize: 12 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ minWidth: 100 }}>팀</th>
-                      <th style={{ textAlign: 'right' }}>목표</th>
-                      <th style={{ textAlign: 'right' }}>매출</th>
-                      <th style={{ textAlign: 'right' }}>달성률</th>
-                      <th style={{ textAlign: 'right' }}>전년 동월</th>
-                      <th style={{ textAlign: 'right' }}>전년대비</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {monthlyReportData.salesTeamRows.map(r => (
-                      <tr key={r.team}>
-                        <td style={{ fontWeight: 600 }}>{r.display}</td>
-                        <td style={{ textAlign: 'right' }}>{fmtM(r.target)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: '#2563eb' }}>{fmtM(r.actual)}</td>
-                        <td style={{ textAlign: 'right', ...achieveStyle(r.achieveRate) }}>{r.target > 0 && r.actual > 0 ? `${r.achieveRate}%` : '-'}</td>
-                        <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmtM(r.prevYearActual)}</td>
-                        <td style={{ textAlign: 'right', ...achieveStyle(r.yoyRate) }}>{r.prevYearActual > 0 && r.actual > 0 ? `${r.yoyRate}%` : '-'}</td>
-                      </tr>
-                    ))}
-                    <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
-                      <td>Total</td>
-                      <td style={{ textAlign: 'right' }}>{fmtM(monthlyReportData.salesTeamTotal.target)}</td>
-                      <td style={{ textAlign: 'right', color: '#2563eb' }}>{fmtM(monthlyReportData.salesTeamTotal.actual)}</td>
-                      <td style={{ textAlign: 'right', ...achieveStyle(pct(monthlyReportData.salesTeamTotal.actual, monthlyReportData.salesTeamTotal.target)) }}>
-                        {monthlyReportData.salesTeamTotal.target > 0 && monthlyReportData.salesTeamTotal.actual > 0 ? `${pct(monthlyReportData.salesTeamTotal.actual, monthlyReportData.salesTeamTotal.target)}%` : '-'}
-                      </td>
-                      <td style={{ textAlign: 'right' }}>{fmtM(monthlyReportData.salesTeamTotal.prevYearActual)}</td>
-                      <td style={{ textAlign: 'right', ...achieveStyle(pct(monthlyReportData.salesTeamTotal.actual, monthlyReportData.salesTeamTotal.prevYearActual)) }}>
-                        {monthlyReportData.salesTeamTotal.prevYearActual > 0 && monthlyReportData.salesTeamTotal.actual > 0 ? `${pct(monthlyReportData.salesTeamTotal.actual, monthlyReportData.salesTeamTotal.prevYearActual)}%` : '-'}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          {/* [v3.1 제거] 섹션 2-2 팀별 월간 매출 — 매출은 1-2 월별 추이 + KPI 카드로 충분 */}
 
           {/* ══ 섹션 2-3 — 담당자별 월간 수주 실적 (신 분류 체계) ══ */}
           {monthlyReportData.repMonthRows.length > 0 && (
@@ -3755,48 +3485,15 @@ export default function Report() {
             </div>
           </div>
 
-          {/* ══ 섹션 D — 주요 거래처별 실적 (상위 10사) ══ */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">■ 4. 주요 거래처별 수주 현황 (상위 10사)</div>
-            {monthlyReportData.topAccounts.length === 0 ? (
-              <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>당월 수주 없음</div>
-            ) : (
-              <div className="table-wrap">
-                <table className="data-table" style={{ fontSize: 12 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ minWidth: 30, textAlign: 'center' }}>#</th>
-                      <th>거래처명</th>
-                      <th style={{ textAlign: 'right' }}>당월 수주</th>
-                      <th style={{ textAlign: 'right' }}>전월 수주</th>
-                      <th style={{ textAlign: 'right' }}>증감률</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {monthlyReportData.topAccounts.map((a, i) => (
-                      <tr key={i}>
-                        <td style={{ textAlign: 'center', color: 'var(--text3)' }}>{i + 1}</td>
-                        <td style={{ fontWeight: 600 }}>{a.name}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{fmtM(a.thisMonth)}</td>
-                        <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(a.lastMonth)}</td>
-                        <td style={{ textAlign: 'right', color: a.changeRate === null ? 'var(--text3)' : a.changeRate > 0 ? 'var(--green, #16a34a)' : a.changeRate < 0 ? 'var(--red)' : 'var(--text2)', fontWeight: 600 }}>
-                          {a.changeRate === null ? '신규' : a.changeRate > 0 ? `+${a.changeRate}%` : `${a.changeRate}%`}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          {/* [v3.1 제거] 섹션 4 Top 10 거래처 (전월비교) — 시즌성 고객은 의미 없음, GAP 심층분석으로 통합 */}
 
-          {/* ══ 섹션 D-2 — 고객별 당월 실적 (목표 설정된 모든 고객, 미달 우선 정렬) ══ */}
+          {/* ══ 섹션 4-2 — 고객별 당월 실적 (목표 설정된 모든 고객) ══ */}
           {monthlyReportData.monthlyByCustomer.length > 0 && (
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>■ 4-2. 고객별 당월 수주 실적</span>
                 <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
-                  ({monthlyReportData.monthLabel} 목표 설정 고객 {monthlyReportData.monthlyByCustomer.length}사, 달성률 낮은 순)
+                  ({monthlyReportData.monthLabel} 목표 설정 고객 {monthlyReportData.monthlyByCustomer.length}사, 달성률 높은 순)
                 </span>
               </div>
               <div className="table-wrap" style={{ maxHeight: 400 }}>
@@ -3843,7 +3540,7 @@ export default function Report() {
                 </table>
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                ※ 목표가 설정된 모든 고객 표시 (실적 0 포함) · 달성률 낮은 순 · 고객명 클릭 시 상세 카드 열림
+                ※ 목표가 설정된 모든 고객 표시 (실적 0 포함) · 달성률 높은 순 · 고객명 클릭 시 상세 카드 열림
               </div>
             </div>
           )}
@@ -4094,7 +3791,7 @@ export default function Report() {
             )}
           </div>
 
-          <div className="report-section-title" style={{ marginTop: 8 }}>상세 분석 ({monthlyData.thisMonthStr})</div>
+          {/* v3.1: "상세 분석" 타이틀 제거 — 월간 리포트 자체가 상세 분석이므로 중복 표현 */}
 
           {/* Section 1: 월간 실적 Summary */}
           {planSummary ? (
@@ -4510,7 +4207,6 @@ export default function Report() {
                           <th style={{ textAlign: 'right' }}>90일 컨택</th>
                           <th style={{ textAlign: 'right' }}>고객당 빈도</th>
                           <th style={{ textAlign: 'right' }}>평균 Score</th>
-                          <th style={{ textAlign: 'right' }}>액션 실행률</th>
                           <th style={{ textAlign: 'right' }}>YTD 달성률</th>
                           <th>주요 Gap 원인</th>
                         </tr>
@@ -4532,13 +4228,6 @@ export default function Report() {
                                 <span className={`score-badge ${m.avgScore >= 70 ? 'green' : m.avgScore >= 50 ? 'yellow' : 'red'}`} style={{ fontSize: 10 }}>
                                   {m.avgScore}%
                                 </span>
-                              </td>
-                              <td style={{ textAlign: 'right' }}>
-                                {m.actionTotal > 0 ? (
-                                  <span style={{ color: m.actionRate >= 70 ? 'var(--green)' : m.actionRate >= 40 ? 'var(--yellow)' : 'var(--red)', fontWeight: 600, fontSize: 11 }}>
-                                    {m.actionRate}% <span style={{ fontSize: 9, fontWeight: 400 }}>({m.actionDone}/{m.actionTotal})</span>
-                                  </span>
-                                ) : <span style={{ fontSize: 10, color: 'var(--text3)' }}>미설정</span>}
                               </td>
                               <td style={{ textAlign: 'right' }}>
                                 {m.ytdTarget > 0 ? (
