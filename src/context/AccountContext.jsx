@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting } from '../lib/firebase';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -79,6 +79,8 @@ export default function AccountProvider({ children }) {
   const [contracts, setContracts] = useState([]);
   const [forecasts, setForecasts] = useState([]);
   const [businessPlans, setBusinessPlans] = useState([]);
+  const [teamTasks, setTeamTasks] = useState([]);              // Phase C v3.2
+  const [pipelineCustomers, setPipelineCustomers] = useState([]);  // Phase C v3.2 (read-only)
   const [fbStatus, setFbStatus] = useState(FIREBASE_ENABLED ? 'connecting' : 'disabled');
 
   useEffect(() => {
@@ -106,8 +108,10 @@ export default function AccountProvider({ children }) {
     const unsub5 = subscribeForecasts((data) => setForecasts(data));
     const unsub6 = subscribeBusinessPlans((data) => setBusinessPlans(data));
     const unsub7 = subscribeSales((data) => setSales(data));
+    const unsub8 = subscribeTeamTasks((data) => setTeamTasks(data));
+    const unsub9 = subscribePipelineCustomers((data) => setPipelineCustomers(data));
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); };
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); };
   }, []);
 
   // localStorage 백업
@@ -354,6 +358,24 @@ export default function AccountProvider({ children }) {
   const getPlansForAccount = useCallback((accountId, year) => {
     return businessPlans.filter(p => p.account_id === accountId && (!year || p.year === year));
   }, [businessPlans]);
+
+  /* ── Team Tasks (Phase C v3.2) ── */
+  const saveTeamTask = useCallback(async (task) => {
+    const clean = { ...task, updated_at: new Date().toISOString().slice(0, 10) };
+    setTeamTasks(prev => {
+      const idx = prev.findIndex(t => t.id === clean.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
+      return [...prev, clean];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveTask(clean); } catch (e) { console.error('TASK 저장 실패:', e); }
+    }
+  }, []);
+
+  const removeTeamTask = useCallback(async (id) => {
+    setTeamTasks(prev => prev.filter(t => t.id !== id));
+    if (FIREBASE_ENABLED) { try { await fbDeleteTask(id); } catch {} }
+  }, []);
 
   /* ── Filters ── */
   const [filters, setFilters] = useState({
@@ -666,7 +688,7 @@ export default function AccountProvider({ children }) {
     currentUser, isAdmin, login, logout,
     accounts, filteredAccounts, visibleAccounts,
     activityLogs, openIssues,
-    orders, sales, contracts, forecasts, businessPlans, alarms,
+    orders, sales, contracts, forecasts, businessPlans, teamTasks, pipelineCustomers, alarms,
     filters, setFilters,
     currentTab, setCurrentTab,
     editingAccount, setEditingAccount,
@@ -678,6 +700,7 @@ export default function AccountProvider({ children }) {
     saveContractItem, removeContract, getContractsForAccount,
     saveForecast, removeForecast, getForecastsForAccount,
     importBusinessPlans, clearBusinessPlans, getPlansForAccount,
+    saveTeamTask, removeTeamTask,
     toast, showToast,
     fbStatus,
     teamMembers, saveTeamMembers,

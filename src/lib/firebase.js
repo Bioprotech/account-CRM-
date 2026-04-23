@@ -29,6 +29,8 @@ const SALES_COL = 'sales_history';
 const CONTRACTS_COL = 'price_contracts';
 const FORECASTS_COL = 'forecasts';
 const PLANS_COL = 'business_plans';
+const TASKS_COL = 'team_tasks';           // Phase C v3.2 — 팀별 TASK
+const PIPELINE_COL = 'customers';          // Phase C v3.2 — Pipeline CRM 하이브리드 (read-only)
 
 let db = null;
 export let FIREBASE_ENABLED = false;
@@ -224,6 +226,38 @@ export async function batchSaveBusinessPlans(plans) {
     chunk.forEach(p => batch.set(doc(db, PLANS_COL, p.id), p));
     await batch.commit();
   }
+}
+
+/* ── Team Tasks (Phase C v3.2) ── */
+
+export function subscribeTeamTasks(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  const col = collection(db, TASKS_COL);
+  return onSnapshot(col,
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] team_tasks onSnapshot 오류:', err)
+  );
+}
+
+export async function saveTeamTask(task) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, TASKS_COL, task.id), task);
+}
+
+export async function deleteTeamTask(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, TASKS_COL, id));
+}
+
+/* ── Pipeline CRM Customers (read-only 구독, Phase C v3.2) ── */
+
+export function subscribePipelineCustomers(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  const col = collection(db, PIPELINE_COL);
+  return onSnapshot(col,
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] pipeline customers onSnapshot 오류:', err)
+  );
 }
 
 /* ── Batch ── */
