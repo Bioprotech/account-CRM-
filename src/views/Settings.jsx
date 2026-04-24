@@ -4,52 +4,12 @@ import { genId, today } from '../lib/utils';
 import { saveSnapshot, listSnapshots, deleteSnapshot as removeSnapshot } from '../lib/snapshots';
 import { savePriorYearCustomers, loadPriorYearCustomers } from '../lib/customerClassification';
 
-// 엑셀 날짜 시리얼 또는 문자열 → YYYY-MM-DD 변환
-// v3.3: 다양한 문자열 형식 정규화 (주간/월간 범위 필터 실패 방지)
+// 엑셀 날짜 시리얼 → YYYY-MM-DD 변환
 function excelDateToStr(serial) {
-  if (!serial && serial !== 0) return '';
-  // Date 객체
-  if (serial instanceof Date) {
-    if (isNaN(serial.getTime())) return '';
-    // UTC 오프셋 문제 피하려면 로컬 날짜 사용
-    const y = serial.getFullYear();
-    const m = String(serial.getMonth() + 1).padStart(2, '0');
-    const d = String(serial.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  // 숫자 (Excel serial)
-  if (typeof serial === 'number') {
-    const d = new Date((serial - 25569) * 86400000);
-    if (isNaN(d.getTime())) return '';
-    return d.toISOString().slice(0, 10);
-  }
-  // 문자열 — 다양한 형식 정규화
-  if (typeof serial === 'string') {
-    const s = serial.trim();
-    if (!s) return '';
-    // 이미 ISO YYYY-MM-DD[...]
-    const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
-    // YYYY/M/D or YYYY.M.D
-    let m = s.match(/^(\d{4})[\/.](\d{1,2})[\/.](\d{1,2})/);
-    if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
-    // M/D/YYYY (미국식) or M-D-YYYY
-    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-    if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-    // D-M-YYYY (유럽식) - 앞 숫자가 12 초과일 때만 적용
-    m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-    if (m && parseInt(m[1], 10) > 12) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-    // Date 파싱 최후 시도
-    const d = new Date(s);
-    if (!isNaN(d.getTime())) {
-      const y = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      return `${y}-${mm}-${dd}`;
-    }
-    return s; // 마지막 fallback
-  }
-  return '';
+  if (!serial) return '';
+  if (typeof serial === 'string') return serial;
+  const d = new Date((serial - 25569) * 86400000);
+  return d.toISOString().slice(0, 10);
 }
 
 // 지역명 영→한 매핑
@@ -263,8 +223,7 @@ export default function Settings() {
   const fileRef = useRef();
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState(null);
-  // v3.3: 기본값 "" = 전체 연도 (전년도 실적 포함해야 전년대비 비교 가능)
-  const [importYear, setImportYear] = useState('');
+  const [importYear, setImportYear] = useState(String(new Date().getFullYear()));
 
   // 파일 데이터를 ref로 보관 (React state에 13k 행 넣지 않음)
   const parsedDataRef = useRef(null);
@@ -1611,28 +1570,13 @@ export default function Settings() {
             </div>
 
             {/* 연도 선택 (수주 기준) */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
               <span style={{ fontSize: 12, fontWeight: 600 }}>Import 연도:</span>
               <select value={importYear} onChange={e => setImportYear(e.target.value)} style={{ padding: '4px 8px', fontSize: 12 }}>
-                {(() => {
-                  const years = [...new Set([...Object.keys(preview.oYearCounts), ...Object.keys(preview.sYearCounts)])].sort().reverse();
-                  const totalO = years.reduce((s, y) => s + (preview.oYearCounts[y] || 0), 0);
-                  const totalS = years.reduce((s, y) => s + (preview.sYearCounts[y] || 0), 0);
-                  return (
-                    <>
-                      <option value="">🌐 전체 연도 (수주 {totalO.toLocaleString()} / 매출 {totalS.toLocaleString()})</option>
-                      {years.map(y => (
-                        <option key={y} value={y}>{y}년 (수주 {(preview.oYearCounts[y] || 0).toLocaleString()} / 매출 {(preview.sYearCounts[y] || 0).toLocaleString()})</option>
-                      ))}
-                    </>
-                  );
-                })()}
+                {[...new Set([...Object.keys(preview.oYearCounts), ...Object.keys(preview.sYearCounts)])].sort().reverse().map(y => (
+                  <option key={y} value={y}>{y}년 (수주 {(preview.oYearCounts[y] || 0).toLocaleString()} / 매출 {(preview.sYearCounts[y] || 0).toLocaleString()})</option>
+                ))}
               </select>
-              <span style={{ fontSize: 10, color: importYear ? 'var(--red)' : 'var(--green, #16a34a)', fontWeight: 600 }}>
-                {importYear
-                  ? `⚠ ${importYear}년만 Import → 전년대비 비교 불가`
-                  : '✅ 모든 연도 Import → 전년대비 비교 가능'}
-              </span>
             </div>
 
             {/* 매칭 현황 */}
@@ -1646,23 +1590,15 @@ export default function Settings() {
                 <div className="kpi-value" style={{ fontSize: 18 }}>{preview.unmatchedCustomers}사</div>
               </div>
               <div className="kpi accent" style={{ padding: 10 }}>
-                <div className="kpi-label">{importYear || '전체'} 수주</div>
-                <div className="kpi-value" style={{ fontSize: 18 }}>
-                  {importYear
-                    ? (preview.oYearCounts[importYear] || 0).toLocaleString()
-                    : Object.values(preview.oYearCounts).reduce((s, v) => s + v, 0).toLocaleString()}
-                </div>
+                <div className="kpi-label">{importYear}년 수주</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{(preview.oYearCounts[importYear] || 0).toLocaleString()}</div>
               </div>
               <div className="kpi" style={{ padding: 10, background: 'rgba(59,130,246,.08)' }}>
-                <div className="kpi-label">{importYear || '전체'} 매출</div>
-                <div className="kpi-value" style={{ fontSize: 18 }}>
-                  {importYear
-                    ? (preview.sYearCounts[importYear] || 0).toLocaleString()
-                    : Object.values(preview.sYearCounts).reduce((s, v) => s + v, 0).toLocaleString()}
-                </div>
+                <div className="kpi-label">{importYear}년 매출</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{(preview.sYearCounts[importYear] || 0).toLocaleString()}</div>
               </div>
               <div className="kpi" style={{ padding: 10 }}>
-                <div className="kpi-label">{Number(new Date().getFullYear()) - 1}년 고객</div>
+                <div className="kpi-label">{Number(importYear) - 1}년 고객</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>{preview.priorYearUniqueCount || 0}사</div>
               </div>
             </div>
@@ -1676,7 +1612,7 @@ export default function Settings() {
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-primary" onClick={handleImport} disabled={importing}>
-                {importing ? 'Import 중...' : `${importYear || '전체 연도'} 수주+매출 Import`}
+                {importing ? 'Import 중...' : `${importYear}년 수주+매출 Import`}
               </button>
               <button className="btn btn-ghost" onClick={() => { setPreview(null); parsedDataRef.current = null; }}>취소</button>
             </div>
