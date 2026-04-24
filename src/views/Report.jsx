@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useAccount } from '../context/AccountContext';
-import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES, SALES_TEAMS } from '../lib/constants';
+import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES, SALES_TEAMS, TASK_TYPES, TASK_STATUSES, TASK_PRIORITIES } from '../lib/constants';
 import { daysSince } from '../lib/utils';
 import { HBarChart, DonutChart, ProgressBars } from '../components/Charts';
 import { aggregateByRep, classifyForRepView, loadPriorYearCustomers } from '../lib/customerClassification';
@@ -80,6 +80,283 @@ function getWeekRange() {
 }
 function getMonthStr() {
   return new Date().toISOString().slice(0, 7);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Phase C v3.3 — 5페이지 스토리텔링 구조 (#13)
+   페이지 구분 배너 (화면 + 인쇄 겸용)
+   ══════════════════════════════════════════════════════════════════ */
+function ChapterHeader({ page, total, title, subtitle, color = 'var(--accent)' }) {
+  return (
+    <div className="print-page-break" style={{ marginTop: page === 1 ? 0 : 20, marginBottom: 14 }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 14px',
+        background: `linear-gradient(135deg, ${color}, rgba(46,125,50,0.05))`,
+        borderRadius: 8,
+        borderLeft: `4px solid ${color}`,
+      }}>
+        <div style={{
+          fontSize: 11,
+          fontWeight: 700,
+          padding: '3px 10px',
+          background: color,
+          color: '#fff',
+          borderRadius: 12,
+          whiteSpace: 'nowrap',
+        }}>
+          📖 Page {page} / {total}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{subtitle}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Phase C v3.3 — 팀별 TASK 섹션 (#14)
+   team_tasks Firestore collection 활용
+   ══════════════════════════════════════════════════════════════════ */
+function TeamTasksSection({ yearMonth, teamTasks, saveTeamTask, removeTeamTask, showToast }) {
+  const [addingTeam, setAddingTeam] = useState(null); // '해외영업' | '국내영업' | '영업지원'
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ task_type: 'quota_recovery', content: '', assignee: '', due_date: '', priority: 'P2', status: 'Open' });
+
+  const resetForm = () => {
+    setForm({ task_type: 'quota_recovery', content: '', assignee: '', due_date: '', priority: 'P2', status: 'Open' });
+    setAddingTeam(null);
+    setEditingId(null);
+  };
+
+  const handleSave = (team) => {
+    if (!form.content.trim()) {
+      showToast?.('내용을 입력하세요', 'error');
+      return;
+    }
+    const now = new Date().toISOString();
+    const id = editingId || `task_${yearMonth}_${team}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const task = {
+      id,
+      year_month: yearMonth,
+      team,
+      task_type: form.task_type,
+      content: form.content.trim(),
+      assignee: form.assignee.trim() || '',
+      due_date: form.due_date || '',
+      priority: form.priority,
+      status: form.status,
+      created_at: editingId ? (teamTasks.find(t => t.id === editingId)?.created_at || now) : now,
+      updated_at: now,
+    };
+    saveTeamTask(task);
+    showToast?.(editingId ? 'TASK 수정' : 'TASK 추가', 'success');
+    resetForm();
+  };
+
+  const handleEdit = (task) => {
+    setEditingId(task.id);
+    setAddingTeam(task.team);
+    setForm({
+      task_type: task.task_type || 'quota_recovery',
+      content: task.content || '',
+      assignee: task.assignee || '',
+      due_date: task.due_date || '',
+      priority: task.priority || 'P2',
+      status: task.status || 'Open',
+    });
+  };
+
+  const handleDelete = (id) => {
+    if (confirm('이 TASK를 삭제하시겠습니까?')) {
+      removeTeamTask(id);
+      showToast?.('TASK 삭제', 'success');
+    }
+  };
+
+  const handleStatusToggle = (task) => {
+    const nextStatus = task.status === 'Open' ? 'In Progress' : task.status === 'In Progress' ? 'Done' : 'Open';
+    saveTeamTask({ ...task, status: nextStatus, updated_at: new Date().toISOString() });
+  };
+
+  const teams = [
+    { key: '해외영업', label: '해외영업팀' },
+    { key: '영업지원', label: 'BPU' },
+    { key: '국내영업', label: '국내영업팀' },
+  ];
+
+  const tasksForMonth = (teamTasks || []).filter(t => t.year_month === yearMonth);
+  const countByTeam = teams.reduce((acc, t) => {
+    const list = tasksForMonth.filter(x => x.team === t.key);
+    acc[t.key] = {
+      total: list.length,
+      open: list.filter(x => x.status === 'Open').length,
+      inProgress: list.filter(x => x.status === 'In Progress').length,
+      done: list.filter(x => x.status === 'Done').length,
+    };
+    return acc;
+  }, {});
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>■ 6. 팀별 월간 TASK</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[{yearMonth} · 고정 5유형 + 자유 입력]</span>
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>
+          전체 {tasksForMonth.length}건 · Open {tasksForMonth.filter(t => t.status === 'Open').length} · 진행중 {tasksForMonth.filter(t => t.status === 'In Progress').length} · 완료 {tasksForMonth.filter(t => t.status === 'Done').length}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
+        {teams.map(t => {
+          const teamTasksList = tasksForMonth.filter(x => x.team === t.key);
+          const c = countByTeam[t.key];
+          return (
+            <div key={t.key} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>[{t.label}]</div>
+                <div style={{ fontSize: 9, color: 'var(--text3)' }}>{c.total}건 · 완료 {c.done}</div>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => { resetForm(); setAddingTeam(t.key); }}
+                  style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: 'var(--accent)', color: '#fff', borderRadius: 3, border: 'none', cursor: 'pointer' }}
+                >
+                  + TASK
+                </button>
+              </div>
+
+              {/* 입력 폼 */}
+              {addingTeam === t.key && (
+                <div style={{ padding: 8, marginBottom: 8, background: 'var(--bg)', borderRadius: 4, border: '1px dashed var(--accent)' }}>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <select
+                        value={form.task_type}
+                        onChange={e => setForm(f => ({ ...f, task_type: e.target.value }))}
+                        style={{ flex: 1, fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 3 }}
+                      >
+                        {TASK_TYPES.map(tt => (
+                          <option key={tt.key} value={tt.key}>{tt.icon} {tt.label}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={form.priority}
+                        onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
+                        style={{ fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 3 }}
+                      >
+                        {TASK_PRIORITIES.map(p => (
+                          <option key={p.key} value={p.key}>{p.key}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <textarea
+                      value={form.content}
+                      onChange={e => setForm(f => ({ ...f, content: e.target.value }))}
+                      placeholder="TASK 내용 (필수)"
+                      rows={2}
+                      style={{ fontSize: 11, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 3, resize: 'vertical' }}
+                    />
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <input
+                        type="text"
+                        value={form.assignee}
+                        onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))}
+                        placeholder="담당자"
+                        style={{ flex: 1, fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 3 }}
+                      />
+                      <input
+                        type="date"
+                        value={form.due_date}
+                        onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))}
+                        style={{ fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 3 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={resetForm}
+                        style={{ fontSize: 10, padding: '3px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}
+                      >취소</button>
+                      <button
+                        onClick={() => handleSave(t.key)}
+                        style={{ fontSize: 10, padding: '3px 10px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', fontWeight: 600 }}
+                      >{editingId ? '수정' : '저장'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TASK 리스트 */}
+              {teamTasksList.length === 0 ? (
+                <div style={{ padding: '10px 0', textAlign: 'center', fontSize: 11, color: 'var(--text3)' }}>
+                  TASK 없음
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 5 }}>
+                  {teamTasksList
+                    .sort((a, b) => {
+                      const prioOrder = { P1: 1, P2: 2, P3: 3 };
+                      const statusOrder = { 'Open': 1, 'In Progress': 2, 'Done': 3 };
+                      if (statusOrder[a.status] !== statusOrder[b.status]) return statusOrder[a.status] - statusOrder[b.status];
+                      return (prioOrder[a.priority] || 4) - (prioOrder[b.priority] || 4);
+                    })
+                    .map(task => {
+                      const tt = TASK_TYPES.find(x => x.key === task.task_type) || TASK_TYPES[4];
+                      const ps = TASK_PRIORITIES.find(x => x.key === task.priority) || TASK_PRIORITIES[1];
+                      const ss = TASK_STATUSES.find(x => x.key === task.status) || TASK_STATUSES[0];
+                      const isDone = task.status === 'Done';
+                      return (
+                        <div key={task.id} style={{
+                          padding: 6,
+                          background: isDone ? 'rgba(22,163,74,0.05)' : 'var(--bg)',
+                          borderRadius: 4,
+                          borderLeft: `3px solid ${ps.color}`,
+                          opacity: isDone ? 0.7 : 1,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 10, fontWeight: 600 }}>{tt.icon} {tt.label}</span>
+                            <span style={{ fontSize: 9, padding: '1px 4px', background: ps.color, color: '#fff', borderRadius: 2, fontWeight: 700 }}>{task.priority}</span>
+                            <button
+                              onClick={() => handleStatusToggle(task)}
+                              style={{ fontSize: 9, padding: '1px 5px', background: ss.color, color: '#fff', border: 'none', borderRadius: 2, cursor: 'pointer', fontWeight: 600 }}
+                              title="클릭으로 상태 순환: Open → In Progress → Done"
+                            >{ss.label}</button>
+                            <div style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
+                              <button
+                                onClick={() => handleEdit(task)}
+                                style={{ fontSize: 10, padding: '0 4px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)' }}
+                                title="편집"
+                              >✎</button>
+                              <button
+                                onClick={() => handleDelete(task.id)}
+                                style={{ fontSize: 10, padding: '0 4px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)' }}
+                                title="삭제"
+                              >×</button>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, marginBottom: 2, textDecoration: isDone ? 'line-through' : 'none' }}>{task.content}</div>
+                          {(task.assignee || task.due_date) && (
+                            <div style={{ fontSize: 10, color: 'var(--text3)', display: 'flex', gap: 8 }}>
+                              {task.assignee && <span>👤 {task.assignee}</span>}
+                              {task.due_date && <span>📅 {task.due_date}</span>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
+        ※ 고정 유형(🎯 수주만회 / 📋 계약갱신 / 🚀 신규딜 / 🔀 Cross-Selling / 📌 기타) + 자유 입력 · 상태 배지 클릭 시 Open → In Progress → Done 순환
+      </div>
+    </div>
+  );
 }
 
 /* ── Reusable breakdown table component ── */
@@ -3256,6 +3533,15 @@ export default function Report() {
             )}
           </div>
 
+          {/* ══ Page 1 — Executive Summary ══ */}
+          <ChapterHeader
+            page={1}
+            total={5}
+            title="Executive Summary — 이번 달 한눈에"
+            subtitle="KPI · 전년동기 비교 · 자동 요약 · 영업본부장 핵심 메시지"
+            color="#2e7d32"
+          />
+
           {/* ══ KPI 카드 — 당월 + YTD, 수주 + 매출 ══ */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
             {/* 수주 MTD */}
@@ -3430,6 +3716,15 @@ export default function Report() {
               </div>
             </div>
           </div>
+
+          {/* ══ Page 2 — Key Metrics ══ */}
+          <ChapterHeader
+            page={2}
+            total={5}
+            title="Key Metrics — 월별/팀별/담당자별 실적"
+            subtitle="수주·매출 월별 추이 · 팀별 실적 · 담당자별 수주"
+            color="#0ea5e9"
+          />
 
           {/* ══ 섹션 B-1 — 월별 수주 실적 현황 ══ */}
           <div className="card" style={{ marginBottom: 16 }}>
@@ -3706,6 +4001,15 @@ export default function Report() {
               </div>
             </div>
           )}
+
+          {/* ══ Page 3 — Strategic Analysis ══ */}
+          <ChapterHeader
+            page={3}
+            total={5}
+            title="Strategic Analysis — 팀 활동 & GAP 심층 분석"
+            subtitle="팀별 활동 + 미달 원인 · 고객별 당월 실적 · GAP 요약 + 상세 (미달/초과)"
+            color="#d97706"
+          />
 
           {/* ══ 섹션 C — 팀별 월간 활동 분석 ══ */}
           <div className="card" style={{ marginBottom: 16 }}>
@@ -4042,6 +4346,15 @@ export default function Report() {
             </div>
           )}
 
+          {/* ══ Page 4 — Next Month Actions ══ */}
+          <ChapterHeader
+            page={4}
+            total={5}
+            title="Next Month Actions — 차월 계획 & 팀별 TASK"
+            subtitle="다음 달 주요 계획 · 차월 수주 파이프라인 · 계약 만료 · 팀별 TASK"
+            color="#7c3aed"
+          />
+
           {/* ══ 섹션 E — 다음 달 사업 계획 (반자동) ══ */}
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title">■ 5. 다음 달 주요 계획</div>
@@ -4143,6 +4456,83 @@ export default function Report() {
               </div>
             )}
           </div>
+
+          {/* ══ 섹션 F — 팀별 TASK (Phase C #14) ══ */}
+          <TeamTasksSection
+            yearMonth={monthlyReportData.selMonthStr}
+            teamTasks={teamTasks}
+            saveTeamTask={saveTeamTask}
+            removeTeamTask={removeTeamTask}
+            showToast={showToast}
+          />
+
+          {/* ══ Page 5 — Pipeline CRM & Deep Analysis ══ */}
+          <ChapterHeader
+            page={5}
+            total={5}
+            title="Pipeline CRM & Deep Analysis — 신규 딜 + 심층 GAP"
+            subtitle="Pipeline CRM 하이라이트 (하이브리드 연동) · 심층 Gap 원인 · AM 활동 품질"
+            color="#2563eb"
+          />
+
+          {/* ══ 섹션 G — Pipeline CRM 신규 딜 하이라이트 (Phase C #15) ══ */}
+          {monthlyReportData.pipelineHighlights.length > 0 && (
+            <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #2563eb' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span>■ 7. Pipeline CRM — 신규 딜 하이라이트</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                  [Proposal/Evaluation/Closing 단계, 상위 {monthlyReportData.pipelineHighlights.length}건]
+                </span>
+                <a
+                  href="https://bioprotech-crm.web.app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: '#2563eb', color: '#fff', borderRadius: 4, textDecoration: 'none', fontWeight: 600 }}
+                >
+                  Pipeline CRM 열기 ↗
+                </a>
+              </div>
+              <div className="table-wrap" style={{ maxHeight: 280 }}>
+                <table className="data-table" style={{ fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th>고객사</th>
+                      <th>단계</th>
+                      <th>품목</th>
+                      <th style={{ textAlign: 'right' }}>예상금액</th>
+                      <th style={{ textAlign: 'right' }}>확률</th>
+                      <th style={{ textAlign: 'right' }}>가중금액</th>
+                      <th>예상 종료</th>
+                      <th>담당</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyReportData.pipelineHighlights.map(d => {
+                      const stageBg = d.stage === 'Closing' ? 'rgba(220,38,38,0.1)' : d.stage === 'Evaluation' ? 'rgba(217,119,6,0.1)' : 'rgba(37,99,235,0.1)';
+                      const stageColor = d.stage === 'Closing' ? 'var(--red)' : d.stage === 'Evaluation' ? '#d97706' : '#2563eb';
+                      return (
+                        <tr key={d.id}>
+                          <td style={{ fontWeight: 600 }}>{d.company}</td>
+                          <td><span style={{ fontSize: 10, padding: '2px 6px', background: stageBg, color: stageColor, borderRadius: 3, fontWeight: 600 }}>{d.stage}</span></td>
+                          <td style={{ fontSize: 11 }}>{d.product || '-'}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{d.amount > 0 ? fmtKRW(d.amount) : '-'}</td>
+                          <td style={{ textAlign: 'right' }}>{d.probability > 0 ? `${d.probability}%` : '-'}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--green, #16a34a)' }}>
+                            {d.amount > 0 && d.probability > 0 ? fmtKRW(d.amount * d.probability / 100) : '-'}
+                          </td>
+                          <td style={{ fontSize: 10, color: 'var(--text3)' }}>{d.closeDate || '-'}</td>
+                          <td style={{ fontSize: 10 }}>{d.sales_rep || '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '4px 8px', background: 'rgba(37,99,235,0.06)', borderRadius: 4 }}>
+                ※ Pipeline CRM (신규 딜 관리)의 활성 딜을 실시간 연동 · 상세 관리는 Pipeline CRM에서 진행
+              </div>
+            </div>
+          )}
 
           {/* ── v3.2: 레거시 Section 1~5 전면 제거 (KPI/차트/분류별/고객별/Cross-Selling/FCST) ──
                     - Section 1 (KPI): 상단 KPI 4카드(수주·매출×MTD·YTD)로 대체됨

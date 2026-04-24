@@ -232,6 +232,27 @@ export const GAP_CAUSES = [
   { key: 'internal', label: '내부 이슈', icon: '🏭', desc: '납기 지연, 품질 문제, 생산 차질' },
 ];
 
+/* ── 팀별 TASK 유형 (Phase C v3.3) ── */
+export const TASK_TYPES = [
+  { key: 'quota_recovery',   label: '수주 만회',     icon: '🎯', desc: '미달 고객 만회 액션' },
+  { key: 'contract_renewal', label: '계약 갱신',     icon: '📋', desc: '만료 임박 계약 갱신' },
+  { key: 'new_deal',         label: '신규 딜 클로징', icon: '🚀', desc: 'Pipeline CRM 후반 단계 딜' },
+  { key: 'cross_selling',    label: 'Cross-Selling', icon: '🔀', desc: '기존 고객 신규 품목 확대' },
+  { key: 'other',            label: '기타',           icon: '📌', desc: '자유 입력' },
+];
+
+export const TASK_STATUSES = [
+  { key: 'Open',        label: 'Open',        color: '#6b7280' },
+  { key: 'In Progress', label: 'In Progress', color: '#d97706' },
+  { key: 'Done',        label: 'Done',        color: '#16a34a' },
+];
+
+export const TASK_PRIORITIES = [
+  { key: 'P1', label: 'P1 (최우선)', color: '#dc2626' },
+  { key: 'P2', label: 'P2 (중요)',   color: '#d97706' },
+  { key: 'P3', label: 'P3 (일반)',   color: '#6b7280' },
+];
+
 /* ── GAP 분석: 기회 유형 ── */
 export const OPPORTUNITY_TYPES = [
   { key: 'upsell', label: '업셀링', desc: '기존 품목 물량 확대' },

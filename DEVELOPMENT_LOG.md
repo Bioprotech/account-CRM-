@@ -442,3 +442,4 @@ account-crm/src/
 | 2026-04-20 | 🚨 근본 원인 수정: customerPlans 필터(!== 'product')에 team_sales 섞여 수주=매출 동일 출력 — 14개 파일 일괄 수정 |
 | 2026-04-23 | 📊 v3.1 Phase A 월간/주간 리포트 간소화: #3 팀별 매출 제거, #5 Top10 제거, #6 달성률 높은순, #9 상세분석 제거, #10 고객유형별 제거, #12 액션실행률 제거 |
 | 2026-04-23 | 🎯 v3.2 Phase B 경영진 스토리텔링: #1 자동 Exec Summary, #7 GAP 요약박스, #4 팀별 GAP 통합, #8 차월 수주 파이프라인 (신뢰도 가중 P1/P2/P3), 레거시 Section 1~5 전면 제거, Firebase team_tasks/pipeline 인프라 추가 |
+| 2026-04-24 | 🏆 v3.3 Phase C 월간 리포트 재구성: #13 5페이지 스토리텔링 (Chapter Header + 인쇄 페이지 구분), #14 팀별 월간 TASK CRUD (5유형 프리셋 + 자유입력 + 우선순위/상태), #15 Pipeline CRM 하이브리드 (신규 딜 하이라이트 + 가중금액) |
