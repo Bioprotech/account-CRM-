@@ -1,5 +1,25 @@
 export const CHANGELOG = [
   {
+    version: 'v3.3.1',
+    date: '2026-04-24',
+    title: '🐛 영업현황 Import 개선 — 전년도 데이터 + 날짜 파싱 강화',
+    items: [
+      '🐛 **버그 수정**: 전년동월/전년YTD 비교가 빈 상태로 표시되던 문제',
+      '  ↳ 원인: Import 시 단일 연도만 선택 가능 → 전년도 데이터 미포함',
+      '  ↳ 수정: Import UI에 "🌐 전체 연도" 옵션 추가 (기본값)',
+      '  ↳ 경고 표시: 단일 연도 선택 시 "⚠ 전년대비 비교 불가" 빨강 안내',
+      '',
+      '🐛 **버그 수정**: 금주 수주/매출이 데이터 있어도 비어있던 문제',
+      '  ↳ 원인: excelDateToStr이 string 날짜를 그대로 반환 → "4/23/2026" 등 비표준 형식이 YYYY-MM-DD 범위 비교에서 실패',
+      '  ↳ 수정: 문자열 날짜 정규화 강화',
+      '    · ISO YYYY-MM-DD · YYYY/M/D · M/D/YYYY (미국식) · D.M.YYYY (유럽식)',
+      '    · Date 파싱 fallback 추가',
+      '',
+      '📢 **사용자 조치 필요**: 기존 import된 데이터는 재Import 필요',
+      '  ↳ Settings → "영업현황 엑셀 선택" → "전체 연도" 선택 후 Import',
+    ],
+  },
+  {
     version: 'v3.3',
     date: '2026-04-24',
     title: '🏆 월간 리포트 Phase C — 5페이지 스토리텔링 + 팀별 TASK + Pipeline 하이브리드',
