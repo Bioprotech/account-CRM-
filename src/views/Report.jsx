@@ -87,8 +87,9 @@ function getMonthStr() {
    페이지 구분 배너 (화면 + 인쇄 겸용)
    ══════════════════════════════════════════════════════════════════ */
 function ChapterHeader({ page, total, title, subtitle, color = 'var(--accent)' }) {
+  // Page 1은 리포트의 첫 섹션이므로 페이지 break 제외 (break 넣으면 앞에 빈 페이지 생김)
   return (
-    <div className="print-page-break" style={{ marginTop: page === 1 ? 0 : 20, marginBottom: 14 }}>
+    <div className={page > 1 ? 'print-page-break' : ''} style={{ marginTop: page === 1 ? 0 : 20, marginBottom: 14 }}>
       <div style={{
         display: 'flex',
         alignItems: 'center',
