@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES, SALES_TEAMS, TASK_TYPES, TASK_STATUSES, TASK_PRIORITIES } from '../lib/constants';
 import { daysSince } from '../lib/utils';
@@ -454,7 +454,7 @@ function MonthlyBreakdownTable({ title, rows }) {
    REPORT COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function Report() {
-  const { accounts, activityLogs, orders, sales, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, showToast } = useAccount();
+  const { accounts, activityLogs, orders, sales, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, showToast } = useAccount();
 
   // 전년도 수주 고객 Set (신규 vs 기타 판별용) — appSettings 우선, localStorage fallback
   const priorYearSet = useMemo(() => {
@@ -2254,32 +2254,73 @@ export default function Report() {
   }, [monthOffset, orders, sales, customerPlans, businessPlans, activityLogs, accounts, contracts, forecasts, alarms, planLookup, teamMembers, priorYearSet, pipelineCustomers]);
 
   /* ══════════════════════════════════════════════════════
-     Executive Summary / 다음 달 계획 localStorage 로드·저장
+     v3.4: Executive Summary / 다음 달 계획 — Firestore 이전
+     - 이전: localStorage (해당 브라우저에서만 보임, 손실 위험)
+     - 이후: app_settings 컬렉션 (여러 PC/브라우저 공유, 안전)
      ══════════════════════════════════════════════════════ */
-  const execSummaryKey = `bioprotech_account_crm_exec_summary_${monthlyReportData.selMonthStr}`;
-  const nextMonthPlanKey = `bioprotech_account_crm_next_month_plan_${monthlyReportData.selMonthStr}`;
+  const execSummaryKey = `exec_summary_${monthlyReportData.selMonthStr}`;
+  const nextMonthPlanKey = `next_month_plan_${monthlyReportData.selMonthStr}`;
 
+  // Firestore (appSettings) 값으로부터 현재 월 상태 동기화
   useEffect(() => {
+    const savedExec = appSettings?.[execSummaryKey];
+    setExecSummary(savedExec && typeof savedExec === 'object'
+      ? savedExec
+      : { msg1: '', msg2: '', msg3: '', status: '🟢', nextMonthFocus: '' });
+    const savedPlan = appSettings?.[nextMonthPlanKey];
+    setNextMonthPlan(savedPlan && typeof savedPlan === 'object'
+      ? savedPlan
+      : { overseas: '', domestic: '', support: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthlyReportData.selMonthStr, appSettings[execSummaryKey], appSettings[nextMonthPlanKey]]);
+
+  // 일회성 마이그레이션: 기존 localStorage 값이 있으면 Firestore로 이관 (여러 PC 공유 가능하게)
+  useEffect(() => {
+    if (!saveAppSetting) return;
+    const localExecKey = `bioprotech_account_crm_exec_summary_${monthlyReportData.selMonthStr}`;
+    const localPlanKey = `bioprotech_account_crm_next_month_plan_${monthlyReportData.selMonthStr}`;
     try {
-      const saved = JSON.parse(localStorage.getItem(execSummaryKey));
-      setExecSummary(saved || { msg1: '', msg2: '', msg3: '', status: '🟢', nextMonthFocus: '' });
+      const savedExec = localStorage.getItem(localExecKey);
+      if (savedExec && !appSettings?.[execSummaryKey]) {
+        const parsed = JSON.parse(savedExec);
+        if (parsed && typeof parsed === 'object') {
+          saveAppSetting(execSummaryKey, parsed);
+          localStorage.removeItem(localExecKey); // 이관 후 삭제
+        }
+      }
     } catch {}
     try {
-      const saved = JSON.parse(localStorage.getItem(nextMonthPlanKey));
-      setNextMonthPlan(saved || { overseas: '', domestic: '', support: '' });
+      const savedPlan = localStorage.getItem(localPlanKey);
+      if (savedPlan && !appSettings?.[nextMonthPlanKey]) {
+        const parsed = JSON.parse(savedPlan);
+        if (parsed && typeof parsed === 'object') {
+          saveAppSetting(nextMonthPlanKey, parsed);
+          localStorage.removeItem(localPlanKey);
+        }
+      }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthlyReportData.selMonthStr]);
 
+  // 디바운싱 타이머 (타이핑 즉시 Firestore 쓰기 방지)
+  const execSaveTimer = useRef(null);
+  const planSaveTimer = useRef(null);
+
   const saveExecSummary = (updates) => {
     const next = { ...execSummary, ...updates };
-    setExecSummary(next);
-    localStorage.setItem(execSummaryKey, JSON.stringify(next));
+    setExecSummary(next); // 즉시 UI 반영
+    if (execSaveTimer.current) clearTimeout(execSaveTimer.current);
+    execSaveTimer.current = setTimeout(() => {
+      if (saveAppSetting) saveAppSetting(execSummaryKey, next);
+    }, 500);
   };
   const saveNextMonthPlan = (updates) => {
     const next = { ...nextMonthPlan, ...updates };
     setNextMonthPlan(next);
-    localStorage.setItem(nextMonthPlanKey, JSON.stringify(next));
+    if (planSaveTimer.current) clearTimeout(planSaveTimer.current);
+    planSaveTimer.current = setTimeout(() => {
+      if (saveAppSetting) saveAppSetting(nextMonthPlanKey, next);
+    }, 500);
   };
 
   /* ══════════════════════════════

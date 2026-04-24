@@ -114,26 +114,23 @@ export default function AccountProvider({ children }) {
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); };
   }, []);
 
-  // localStorage 백업 (v3.3.1 fix: quota 초과로 앱 크래시 방지)
-  // Firebase가 활성화된 경우 localStorage는 선택적 캐시일 뿐이므로, quota 초과 시 안전하게 skip
+  // v3.4: 대용량 localStorage 백업 완전 제거 — Firebase가 원본 소스로 충분
+  // (이전: quota 초과로 흰 화면 크래시. Firebase 실시간 구독으로 fallback 불필요)
+  // 기존에 쌓여있던 대용량 백업은 한 번 cleanup
   useEffect(() => {
-    if (!(accounts.length || activityLogs.length || orders.length || sales.length || contracts.length || forecasts.length || businessPlans.length)) return;
-    try {
-      const payload = JSON.stringify({ accounts, activityLogs, orders, sales, contracts, forecasts, businessPlans });
-      // 4MB 초과 시 사전 차단 (브라우저 quota는 보통 5MB)
-      if (payload.length > 4 * 1024 * 1024) {
-        console.warn(`[AccountCRM] localStorage backup skipped — payload too large (${(payload.length/1024/1024).toFixed(2)}MB)`);
-        // 기존 백업도 제거 (오래된 일부 데이터 유지 방지)
-        try { localStorage.removeItem(STORAGE_KEY); } catch {}
-        return;
-      }
-      localStorage.setItem(STORAGE_KEY, payload);
-    } catch (e) {
-      // QuotaExceededError 포함 모든 localStorage 오류 safely swallow
-      console.warn(`[AccountCRM] localStorage backup failed (${e.name}): ${e.message}`);
-      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  }, []);
+
+  /* ── App Settings 저장 (Firestore 통합) ── */
+  // Exec Summary / 다음 달 계획 등 경영진 수동 입력을 Firestore에 보관
+  // 다른 PC/브라우저에서도 공유, localStorage 의존 없음
+  const saveAppSetting = useCallback(async (key, value) => {
+    setAppSettings(prev => ({ ...prev, [key]: value }));
+    if (FIREBASE_ENABLED) {
+      try { await saveSetting(key, value); }
+      catch (e) { console.error('Setting 저장 실패:', e); }
     }
-  }, [accounts, activityLogs, orders, sales, contracts, forecasts, businessPlans]);
+  }, []);
 
   /* ── Save / Delete ── */
   const saveAccount = useCallback(async (account) => {
@@ -718,7 +715,7 @@ export default function AccountProvider({ children }) {
     toast, showToast,
     fbStatus,
     teamMembers, saveTeamMembers,
-    appSettings,
+    appSettings, saveAppSetting,
     restoreSnapshot,
   };
 
