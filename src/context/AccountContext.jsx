@@ -114,10 +114,24 @@ export default function AccountProvider({ children }) {
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); };
   }, []);
 
-  // localStorage 백업
+  // localStorage 백업 (v3.3.1 fix: quota 초과로 앱 크래시 방지)
+  // Firebase가 활성화된 경우 localStorage는 선택적 캐시일 뿐이므로, quota 초과 시 안전하게 skip
   useEffect(() => {
-    if (accounts.length || activityLogs.length || orders.length || sales.length || contracts.length || forecasts.length || businessPlans.length) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ accounts, activityLogs, orders, sales, contracts, forecasts, businessPlans }));
+    if (!(accounts.length || activityLogs.length || orders.length || sales.length || contracts.length || forecasts.length || businessPlans.length)) return;
+    try {
+      const payload = JSON.stringify({ accounts, activityLogs, orders, sales, contracts, forecasts, businessPlans });
+      // 4MB 초과 시 사전 차단 (브라우저 quota는 보통 5MB)
+      if (payload.length > 4 * 1024 * 1024) {
+        console.warn(`[AccountCRM] localStorage backup skipped — payload too large (${(payload.length/1024/1024).toFixed(2)}MB)`);
+        // 기존 백업도 제거 (오래된 일부 데이터 유지 방지)
+        try { localStorage.removeItem(STORAGE_KEY); } catch {}
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, payload);
+    } catch (e) {
+      // QuotaExceededError 포함 모든 localStorage 오류 safely swallow
+      console.warn(`[AccountCRM] localStorage backup failed (${e.name}): ${e.message}`);
+      try { localStorage.removeItem(STORAGE_KEY); } catch {}
     }
   }, [accounts, activityLogs, orders, sales, contracts, forecasts, businessPlans]);
 
