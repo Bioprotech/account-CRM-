@@ -232,6 +232,18 @@ export const GAP_CAUSES = [
   { key: 'internal', label: '내부 이슈', icon: '🏭', desc: '납기 지연, 품질 문제, 생산 차질' },
 ];
 
+/* ── Activity Log 이슈 종결 — 해결 방법 (Phase C v3.5) ── */
+export const RESOLUTION_METHODS = [
+  { key: 'agreement',   label: '합의',     icon: '🤝', desc: '양사 협의로 종결' },
+  { key: 'accepted',    label: '요청 수용', icon: '✅', desc: '고객 요청 수용하여 종결' },
+  { key: 'refund',      label: '환불',     icon: '💰', desc: '전액/부분 환불 처리' },
+  { key: 'exchange',    label: '교환',     icon: '🔄', desc: '제품 교환/재공급' },
+  { key: 'rejected',    label: '거절',     icon: '❌', desc: '요청 거절 / 합의 실패' },
+  { key: 'pending',     label: '보류',     icon: '⏸',  desc: '장기 보류 (차기 검토)' },
+  { key: 'transferred', label: '타부서 이관', icon: '📤', desc: '생산/품질/재무 등 타부서로 이관' },
+  { key: 'other',       label: '기타',     icon: '📌', desc: '위 항목 외' },
+];
+
 /* ── 팀별 TASK 유형 (Phase C v3.3) ── */
 export const TASK_TYPES = [
   { key: 'quota_recovery',   label: '수주 만회',     icon: '🎯', desc: '미달 고객 만회 액션' },

@@ -444,3 +444,5 @@ account-crm/src/
 | 2026-04-23 | 🎯 v3.2 Phase B 경영진 스토리텔링: #1 자동 Exec Summary, #7 GAP 요약박스, #4 팀별 GAP 통합, #8 차월 수주 파이프라인 (신뢰도 가중 P1/P2/P3), 레거시 Section 1~5 전면 제거, Firebase team_tasks/pipeline 인프라 추가 |
 | 2026-04-24 | 🏆 v3.3 Phase C 월간 리포트 재구성: #13 5페이지 스토리텔링 (Chapter Header + 인쇄 페이지 구분), #14 팀별 월간 TASK CRUD (5유형 프리셋 + 자유입력 + 우선순위/상태), #15 Pipeline CRM 하이브리드 (신규 딜 하이라이트 + 가중금액) |
 | 2026-04-24 | 🏗️ v3.4 localStorage 의존 근본 제거: (1) 대용량 STORAGE_KEY 백업 완전 제거 → quota 초과 흰 화면 방지 (2) Exec Summary / 다음 달 계획 app_settings Firestore 이전 (500ms 디바운싱 + 자동 localStorage 마이그레이션) (3) Import excelDateToStr 강화 + "전체 연도" 옵션 재적용 |
+| 2026-04-25 | 📅 v3.4.1 Import 연도 다중 체크박스 선택: 당해+전년도 기본 자동 체크 (2025+2026), 원하는 연도만 Import 가능 — 경영 리포트 필요 데이터만 최적화 |
+| 2026-04-25 | ✎ v3.5 Activity Log 전면 개편: (1) 활동 발생일 사용자 입력 (이전: today() 자동 고정 → 리포트 왜곡) (2) 폼 필드 재배치 — 기한을 다음 액션과 짝으로 묶음 (3) 편집 기능 추가 — 본인 로그/관리자 (4) 수정 이력 자동 기록 + 카드에 N회 수정 배지 (5) 완료 시 처리결과 팝업 (필수 설명 + 해결방법 8종 태그 + 실제 해결일) |

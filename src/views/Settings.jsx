@@ -262,8 +262,14 @@ export default function Settings() {
   const fileRef = useRef();
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState(null);
-  // v3.4: 기본값 "" = 전체 연도 (전년도 실적 포함해야 전년대비 비교 가능)
+  // v3.4.1: 다중 연도 체크박스 선택 — 기본: 당해 + 전년도 (전년대비 비교용)
+  // importYear: 하위 호환용 단일 연도 state (''  = 전체)
+  // importYears: Set<string> — 선택된 연도들 (비어있으면 "전체"로 간주)
   const [importYear, setImportYear] = useState('');
+  const [importYears, setImportYears] = useState(() => {
+    const y = new Date().getFullYear();
+    return new Set([String(y), String(y - 1)]); // 당해 + 전년
+  });
 
   // 파일 데이터를 ref로 보관 (React state에 13k 행 넣지 않음)
   const parsedDataRef = useRef(null);
@@ -461,7 +467,10 @@ export default function Settings() {
         const dateVal = row[oColIdx.orderDate];
         if (!dateVal) return;
         const orderDate = excelDateToStr(dateVal);
-        if (importYear && !orderDate.startsWith(importYear)) return;
+        // v3.4.1: 다중 연도 필터 (importYears Set 우선, 비어있으면 importYear 단일 필터 fallback)
+        const yearPart = orderDate.slice(0, 4);
+        if (importYears && importYears.size > 0 && !importYears.has(yearPart)) return;
+        if ((!importYears || importYears.size === 0) && importYear && !orderDate.startsWith(importYear)) return;
 
         const customer = String(row[oColIdx.customer] || '').trim();
         if (!customer) return;
@@ -496,7 +505,10 @@ export default function Settings() {
           const dateVal = row[sColIdx.orderDate];
           if (!dateVal) { sFiltered++; return; } // B/L Date 없으면 매출 미확정 → 제외
           const saleDate = excelDateToStr(dateVal);
-          if (importYear && !saleDate.startsWith(importYear)) return;
+          // v3.4.1: 다중 연도 필터
+          const yearPart = saleDate.slice(0, 4);
+          if (importYears && importYears.size > 0 && !importYears.has(yearPart)) return;
+          if ((!importYears || importYears.size === 0) && importYear && !saleDate.startsWith(importYear)) return;
 
           const customer = String(row[sColIdx.customer] || '').trim();
           if (!customer) return;
@@ -1609,29 +1621,108 @@ export default function Settings() {
               </span>
             </div>
 
-            {/* 연도 선택 (수주 기준) */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>Import 연도:</span>
-              <select value={importYear} onChange={e => setImportYear(e.target.value)} style={{ padding: '4px 8px', fontSize: 12 }}>
+            {/* v3.4.1: 연도 다중 선택 (체크박스) — 경영보고에 필요한 연도만 Import */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 12, flexWrap: 'wrap', padding: 10, background: 'var(--bg2)', borderRadius: 6 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>📅 Import 연도 선택</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)' }}>필요한 연도만 체크 (권장: 당해 + 전년도)</span>
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1, alignItems: 'center' }}>
                 {(() => {
-                  const years = [...new Set([...Object.keys(preview.oYearCounts), ...Object.keys(preview.sYearCounts)])].sort().reverse();
-                  const totalO = years.reduce((s, y) => s + (preview.oYearCounts[y] || 0), 0);
-                  const totalS = years.reduce((s, y) => s + (preview.sYearCounts[y] || 0), 0);
+                  const years = [...new Set([...Object.keys(preview.oYearCounts), ...Object.keys(preview.sYearCounts)])]
+                    .filter(y => y && y.startsWith('20'))
+                    .sort()
+                    .reverse();
+                  const toggleYear = (y) => {
+                    setImportYears(prev => {
+                      const next = new Set(prev);
+                      if (next.has(y)) next.delete(y);
+                      else next.add(y);
+                      return next;
+                    });
+                  };
+                  const currentY = String(new Date().getFullYear());
+                  const prevY = String(new Date().getFullYear() - 1);
                   return (
                     <>
-                      <option value="">🌐 전체 연도 (수주 {totalO.toLocaleString()} / 매출 {totalS.toLocaleString()})</option>
-                      {years.map(y => (
-                        <option key={y} value={y}>{y}년 (수주 {(preview.oYearCounts[y] || 0).toLocaleString()} / 매출 {(preview.sYearCounts[y] || 0).toLocaleString()})</option>
-                      ))}
+                      {years.map(y => {
+                        const checked = importYears.has(y);
+                        const isRecommended = y === currentY || y === prevY;
+                        return (
+                          <label key={y} style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '4px 10px',
+                            borderRadius: 6,
+                            border: checked ? '2px solid var(--accent)' : '1px solid var(--border)',
+                            background: checked ? 'rgba(46,125,50,0.08)' : 'var(--bg)',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            fontWeight: checked ? 700 : 400,
+                            userSelect: 'none',
+                          }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleYear(y)}
+                              style={{ margin: 0, cursor: 'pointer' }}
+                            />
+                            <span>{y}년</span>
+                            {isRecommended && <span style={{ fontSize: 9, color: 'var(--green, #16a34a)' }}>⭐</span>}
+                            <span style={{ fontSize: 9, color: 'var(--text3)' }}>
+                              (수주 {(preview.oYearCounts[y] || 0).toLocaleString()} / 매출 {(preview.sYearCounts[y] || 0).toLocaleString()})
+                            </span>
+                          </label>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => setImportYears(new Set([currentY, prevY]))}
+                        style={{ fontSize: 10, padding: '3px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
+                        title="당해+전년만 선택 (권장)"
+                      >
+                        ⭐ 당해+전년만
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImportYears(new Set(years))}
+                        style={{ fontSize: 10, padding: '3px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
+                      >
+                        전체
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImportYears(new Set())}
+                        style={{ fontSize: 10, padding: '3px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
+                      >
+                        해제
+                      </button>
                     </>
                   );
                 })()}
-              </select>
-              <span style={{ fontSize: 10, color: importYear ? 'var(--red)' : 'var(--green, #16a34a)', fontWeight: 600 }}>
-                {importYear
-                  ? `⚠ ${importYear}년만 Import → 전년대비 비교 불가`
-                  : '✅ 모든 연도 Import → 전년대비 비교 가능'}
-              </span>
+              </div>
+              {/* 상태 안내 */}
+              <div style={{ width: '100%', marginTop: 4 }}>
+                {importYears.size === 0 ? (
+                  <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 600 }}>
+                    ⚠ 연도를 1개 이상 선택하세요
+                  </span>
+                ) : importYears.size === 1 ? (
+                  <span style={{ fontSize: 10, color: '#d97706', fontWeight: 600 }}>
+                    ⚠ {[...importYears][0]}년만 선택 — 전년대비 비교 불가
+                  </span>
+                ) : (() => {
+                  const selected = [...importYears].sort().reverse();
+                  const totalO = selected.reduce((s, y) => s + (preview.oYearCounts[y] || 0), 0);
+                  const totalS = selected.reduce((s, y) => s + (preview.sYearCounts[y] || 0), 0);
+                  return (
+                    <span style={{ fontSize: 10, color: 'var(--green, #16a34a)', fontWeight: 600 }}>
+                      ✅ {selected.join(', ')} 선택됨 — 수주 {totalO.toLocaleString()} / 매출 {totalS.toLocaleString()} · 전년대비 비교 가능
+                    </span>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* 매칭 현황 */}
@@ -1645,19 +1736,23 @@ export default function Settings() {
                 <div className="kpi-value" style={{ fontSize: 18 }}>{preview.unmatchedCustomers}사</div>
               </div>
               <div className="kpi accent" style={{ padding: 10 }}>
-                <div className="kpi-label">{importYear || '전체'} 수주</div>
+                <div className="kpi-label">선택 연도 수주</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>
-                  {importYear
-                    ? (preview.oYearCounts[importYear] || 0).toLocaleString()
-                    : Object.values(preview.oYearCounts).reduce((s, v) => s + v, 0).toLocaleString()}
+                  {(() => {
+                    if (!importYears || importYears.size === 0) return '0';
+                    const total = [...importYears].reduce((s, y) => s + (preview.oYearCounts[y] || 0), 0);
+                    return total.toLocaleString();
+                  })()}
                 </div>
               </div>
               <div className="kpi" style={{ padding: 10, background: 'rgba(59,130,246,.08)' }}>
-                <div className="kpi-label">{importYear || '전체'} 매출</div>
+                <div className="kpi-label">선택 연도 매출</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>
-                  {importYear
-                    ? (preview.sYearCounts[importYear] || 0).toLocaleString()
-                    : Object.values(preview.sYearCounts).reduce((s, v) => s + v, 0).toLocaleString()}
+                  {(() => {
+                    if (!importYears || importYears.size === 0) return '0';
+                    const total = [...importYears].reduce((s, y) => s + (preview.sYearCounts[y] || 0), 0);
+                    return total.toLocaleString();
+                  })()}
                 </div>
               </div>
               <div className="kpi" style={{ padding: 10 }}>
@@ -1674,8 +1769,12 @@ export default function Settings() {
             )}
 
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary" onClick={handleImport} disabled={importing}>
-                {importing ? 'Import 중...' : `${importYear || '전체 연도'} 수주+매출 Import`}
+              <button className="btn btn-primary" onClick={handleImport} disabled={importing || importYears.size === 0}>
+                {importing
+                  ? 'Import 중...'
+                  : importYears.size === 0
+                    ? '⚠ 연도 선택 필요'
+                    : `${[...importYears].sort().reverse().join('+')} 수주+매출 Import`}
               </button>
               <button className="btn btn-ghost" onClick={() => { setPreview(null); parsedDataRef.current = null; }}>취소</button>
             </div>
