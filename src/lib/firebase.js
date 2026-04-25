@@ -228,6 +228,31 @@ export async function batchSaveBusinessPlans(plans) {
   }
 }
 
+/* ── v3.5.1: Source 기반 일괄 삭제 (Import 시 어제 잔여 데이터까지 깔끔히 정리) ── */
+// React state가 아닌 Firestore에서 직접 query 기반 삭제 (state 외부의 잔여 데이터까지 처리)
+async function deleteByQuerySource(colName, source) {
+  if (!FIREBASE_ENABLED) return 0;
+  const q = query(collection(db, colName), where('source', '==', source));
+  const snap = await getDocs(q);
+  const docs = snap.docs;
+  if (docs.length === 0) return 0;
+  const CHUNK = 500;
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return docs.length;
+}
+
+export async function deleteOrdersBySource(source) {
+  return await deleteByQuerySource(ORDERS_COL, source);
+}
+
+export async function deleteSalesBySource(source) {
+  return await deleteByQuerySource(SALES_COL, source);
+}
+
 /* ── Team Tasks (Phase C v3.2) ── */
 
 export function subscribeTeamTasks(callback) {

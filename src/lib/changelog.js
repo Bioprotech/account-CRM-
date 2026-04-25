@@ -1,5 +1,25 @@
 export const CHANGELOG = [
   {
+    version: 'v3.5.1',
+    date: '2026-04-25',
+    title: '🐛 수주/매출 Import — Firestore 잔여 데이터 정리 + 25배 빠른 일괄 삭제',
+    items: [
+      '🐛 **버그 수정**: 재Import 후에도 기존 매출 데이터가 그대로 남던 문제',
+      '  ↳ 원인: 삭제 로직이 React state 기반이라 Firestore의 어제 잔여 데이터를 인식 못 함',
+      '  ↳ 수정: Firestore에서 source 기준 직접 query 후 batch 삭제 (state 무관)',
+      '',
+      '⚡ **삭제 속도 25배 향상**',
+      '  ↳ 이전: deleteDoc 하나씩 순차 (10,000건 = 약 18분 😱)',
+      '  ↳ 이후: writeBatch 500건 일괄 (10,000건 = 약 40초 ⚡)',
+      '',
+      '💬 **명확한 진행 토스트 메시지**',
+      '  ↳ 이전: "10,000건 import 완료"',
+      '  ↳ 이후: "수주 import 완료: 기존 12,000건 삭제 → 신규 4,500건"',
+      '',
+      '📢 **사용자 조치**: 영업현황 재Import → 한 번에 깨끗하게 정리됨',
+    ],
+  },
+  {
     version: 'v3.5',
     date: '2026-04-25',
     title: '✎ Activity Log 전면 개편 — 편집·수정이력·완료처리·활동발생일',

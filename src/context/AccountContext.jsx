@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers } from '../lib/firebase';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -215,26 +215,40 @@ export default function AccountProvider({ children }) {
   }, []);
 
   const importOrders = useCallback(async (newOrders, replaceSource) => {
-    // replaceSource가 지정되면 해당 source의 기존 데이터를 교체
-    const toRemoveIds = replaceSource
-      ? orders.filter(o => o.source === replaceSource).map(o => o.id)
-      : [];
+    // v3.5.1: Firestore source 기반 직접 삭제 (React state가 아닌 DB 기준)
+    // → 어제 잔여, 다른 브라우저에서 저장된 데이터까지 모두 정리됨
 
-    setOrders(prev => {
-      const filtered = replaceSource ? prev.filter(o => o.source !== replaceSource) : prev;
-      return [...filtered, ...newOrders];
-    });
-
-    if (FIREBASE_ENABLED) {
-      // 기존 데이터 삭제
-      for (const id of toRemoveIds) {
-        try { await fbDeleteOrder(id); } catch {}
+    if (FIREBASE_ENABLED && replaceSource) {
+      // 1) 기존 source 데이터 일괄 삭제 (Firestore query 기반, 빠름)
+      let deletedCount = 0;
+      try {
+        deletedCount = await deleteOrdersBySource(replaceSource);
+      } catch (e) {
+        console.error('수주 일괄 삭제 실패:', e);
       }
-      // 새 데이터 저장
-      try { await batchSaveOrders(newOrders); } catch (e) { console.error('일괄 import 실패:', e); }
+      // 2) React state도 동기화 (즉시 UI 반영)
+      setOrders(prev => prev.filter(o => o.source !== replaceSource));
+      // 3) 새 데이터 저장 (batch)
+      try {
+        await batchSaveOrders(newOrders);
+        // React state에 새 데이터 추가 (구독 onSnapshot이 곧 동기화하지만 즉시 반영 위해)
+        setOrders(prev => [...prev, ...newOrders]);
+      } catch (e) {
+        console.error('수주 batch 저장 실패:', e);
+        showToast('수주 import 실패: ' + e.message, 'error');
+        return;
+      }
+      console.log(`[Import] 수주 ${replaceSource}: 기존 ${deletedCount}건 삭제 + ${newOrders.length}건 저장`);
+      showToast(`수주 import 완료: 기존 ${deletedCount}건 삭제 → 신규 ${newOrders.length}건`, 'success');
+    } else {
+      // Firebase 비활성 또는 replaceSource 미지정 시 기존 동작
+      setOrders(prev => {
+        const filtered = replaceSource ? prev.filter(o => o.source !== replaceSource) : prev;
+        return [...filtered, ...newOrders];
+      });
+      showToast(`${newOrders.length}건 수주이력 import 완료`, 'success');
     }
-    showToast(`${newOrders.length}건 수주이력 import 완료`, 'success');
-  }, [orders]);
+  }, []);
 
   const getOrdersForAccount = useCallback((accountId) => {
     return orders.filter(o => o.account_id === accountId).sort((a, b) => (b.order_date || '').localeCompare(a.order_date || ''));
@@ -258,23 +272,33 @@ export default function AccountProvider({ children }) {
   }, []);
 
   const importSales = useCallback(async (newSales, replaceSource) => {
-    const toRemoveIds = replaceSource
-      ? sales.filter(s => s.source === replaceSource).map(s => s.id)
-      : [];
-
-    setSales(prev => {
-      const filtered = replaceSource ? prev.filter(s => s.source !== replaceSource) : prev;
-      return [...filtered, ...newSales];
-    });
-
-    if (FIREBASE_ENABLED) {
-      for (const id of toRemoveIds) {
-        try { await fbDeleteSale(id); } catch {}
+    // v3.5.1: Firestore source 기반 직접 삭제 (React state가 아닌 DB 기준)
+    if (FIREBASE_ENABLED && replaceSource) {
+      let deletedCount = 0;
+      try {
+        deletedCount = await deleteSalesBySource(replaceSource);
+      } catch (e) {
+        console.error('매출 일괄 삭제 실패:', e);
       }
-      try { await batchSaveSales(newSales); } catch (e) { console.error('일괄 매출 import 실패:', e); }
+      setSales(prev => prev.filter(s => s.source !== replaceSource));
+      try {
+        await batchSaveSales(newSales);
+        setSales(prev => [...prev, ...newSales]);
+      } catch (e) {
+        console.error('매출 batch 저장 실패:', e);
+        showToast('매출 import 실패: ' + e.message, 'error');
+        return;
+      }
+      console.log(`[Import] 매출 ${replaceSource}: 기존 ${deletedCount}건 삭제 + ${newSales.length}건 저장`);
+      showToast(`매출 import 완료: 기존 ${deletedCount}건 삭제 → 신규 ${newSales.length}건`, 'success');
+    } else {
+      setSales(prev => {
+        const filtered = replaceSource ? prev.filter(s => s.source !== replaceSource) : prev;
+        return [...filtered, ...newSales];
+      });
+      showToast(`${newSales.length}건 매출이력 import 완료`, 'success');
     }
-    showToast(`${newSales.length}건 매출이력 import 완료`, 'success');
-  }, [sales]);
+  }, []);
 
   const getSalesForAccount = useCallback((accountId) => {
     return sales.filter(s => s.account_id === accountId).sort((a, b) => (b.sale_date || '').localeCompare(a.sale_date || ''));
