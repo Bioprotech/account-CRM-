@@ -313,10 +313,14 @@ export default function Dashboard() {
 
       // 신 분류 체계로 실적 배분
       const planByName = {};
+      const planByAccountId = {};  // v3.9: 퍼지매칭 결과 활용
       customerPlans.forEach(p => {
         if (!p.customer_name) return;
         if (bucketNames.includes(p.customer_name.trim())) return;
         planByName[p.customer_name.toLowerCase().trim()] = p;
+        if (p.account_id && !planByAccountId[p.account_id]) {
+          planByAccountId[p.account_id] = p;
+        }
       });
       yearOrders.forEach(o => {
         const acc = o.account_id ? accounts.find(a => a.id === o.account_id)
@@ -325,6 +329,7 @@ export default function Dashboard() {
           account: acc,
           customerName: o.customer_name || acc?.company_name,
           planByName,
+          planByAccountId,
           priorSet: priorYearSet,
         });
         if (!rep) return;

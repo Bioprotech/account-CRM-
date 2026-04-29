@@ -40,28 +40,46 @@ const BUCKET_PLAN_NAMES = {
 };
 
 // 국내 지역 판별
-const DOMESTIC_REGIONS = ['한국', '국내', 'Korea', 'Domestic', ''];
-const DOMESTIC_COUNTRIES = ['한국', 'Korea', 'KR', 'KOR', ''];
+const DOMESTIC_REGIONS = ['한국', '국내', 'Korea', 'Domestic'];
+const DOMESTIC_COUNTRIES = ['한국', 'Korea', 'KR', 'KOR', '대한민국'];
 
 export function isHospital(name) {
   if (!name) return false;
   return HOSPITAL_KEYWORDS.some(kw => name.includes(kw));
 }
 
+/**
+ * v3.9: isDomestic 강력화 — 분류 오류 (고대안산병원 등) 방지
+ *
+ * 우선순위:
+ *   1. region/country가 명시적 한국 → 국내 ✓
+ *   2. 한글 회사명 → 국내 ✓ (region이 "Asia"여도 한글이면 국내)
+ *   3. 병원/의료원 키워드 (한글/영문 모두) → 국내 ✓
+ *   4. region이 명시적 해외 + 한글/병원 키워드 없음 → 해외
+ *   5. 그 외 (region/country 모두 비어있고 영문명) → 해외 (default)
+ */
 export function isDomestic(account) {
+  if (!account) return false;
   const region = (account.region || '').trim();
   const country = (account.country || '').trim();
+  const name = (account.company_name || '').trim();
 
+  // 1. 명시적 한국 표기 (가장 강력) — 어느 필드라도 한국이면 국내
+  if (DOMESTIC_REGIONS.includes(region)) return true;
+  if (DOMESTIC_COUNTRIES.includes(country)) return true;
+
+  // 2. 한글 회사명 → 무조건 국내 (region이 "Asia" 등으로 잘못 들어가도 무시)
+  if (/[가-힣]/.test(name)) return true;
+
+  // 3. 병원/의료원 키워드 (한글 외 영문 표기 병원도 포함)
+  if (HOSPITAL_KEYWORDS.some(kw => name.includes(kw))) return true;
+
+  // 4. 명시적 해외 region이면 해외
   const overseasRegions = ['북미', '중남미', '유럽', '아시아', '중동', '아프리카', 'CIS',
-    'N.America', 'Latin America', 'Europe', 'Asia', 'Middle East', 'Africa'];
+    'N.America', 'Latin America', 'Europe', 'Asia', 'Middle East', 'Africa', 'Oceania'];
   if (overseasRegions.includes(region)) return false;
 
-  if (DOMESTIC_REGIONS.includes(region) && region) return true;
-  if (DOMESTIC_COUNTRIES.includes(country) && country) return true;
-
-  // 한글 고객명이면 국내로 추정 (region/country 모두 비어있을 때)
-  if (!region && !country && /[가-힣]/.test(account.company_name || '')) return true;
-
+  // 5. region/country/한글명 모두 없으면 해외 (default)
   return false;
 }
 
@@ -139,51 +157,38 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
   // --- 1. 기존 고객 (버킷/병원 제외) ---
   const existingTarget = regularPlans.reduce((s, p) => s + (p.annual_target || 0), 0);
 
-  // --- 2. 대학병원 ---
+  // v3.9: 대학병원 → 국내기타로 통합 (사용자 요구사항)
+  // hospital 카테고리는 호환성 유지하지만 비어있게 반환 (Dashboard 등 호환성)
+  // "직판영업" plan target은 hospital 카테고리에 들어가지만, 실제 actual은 nonPlanByCustomer 흐름에서
+  // isDomestic=true인 병원은 domesticEtc/newCustomer로 자동 분류됨
   const hospitalTarget = sumBucketTarget(bucketPlans.hospital);
   const hospitalMonthTargets = sumBucketMonthTargets(bucketPlans.hospital);
-
-  // 병원 계정 ID
-  const hospitalAccountIds = new Set();
-  accounts.forEach(a => {
-    if (isHospital(a.company_name)) hospitalAccountIds.add(a.id);
-  });
-
-  // 병원 수주 합산
-  const hospitalOrders = yearOrders.filter(o => {
-    if (hospitalAccountIds.has(o.account_id)) return true;
-    return isHospital(o.customer_name);
-  });
-  const hospitalActual = hospitalOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
-
-  // 병원 고객명 목록
-  const hospitalNames = [...new Set([
-    ...bucketPlans.hospital.filter(p => !getBucketCategory(p.customer_name)).map(p => p.customer_name),
-    ...hospitalOrders.map(o => o.customer_name),
-  ].filter(Boolean))];
 
   // --- 3. 해외기타 목표 ---
   const overseasEtcTarget = sumBucketTarget(bucketPlans.overseasEtc);
   const overseasEtcMonthTargets = sumBucketMonthTargets(bucketPlans.overseasEtc);
 
-  // --- 4. 국내기타 목표 ---
-  const domesticEtcTarget = sumBucketTarget(bucketPlans.domesticEtc);
-  const domesticEtcMonthTargets = sumBucketMonthTargets(bucketPlans.domesticEtc);
+  // --- 4. 국내기타 목표 (직판영업 plan도 통합) ---
+  const domesticEtcTarget = sumBucketTarget(bucketPlans.domesticEtc) + hospitalTarget;
+  const domesticEtcMonthTargets = (() => {
+    const a = sumBucketMonthTargets(bucketPlans.domesticEtc);
+    const b = hospitalMonthTargets;
+    Object.entries(b).forEach(([m, v]) => { a[m] = (a[m] || 0) + v; });
+    return a;
+  })();
 
   // --- 5. 신규 목표 ---
   const newCustomerTarget = sumBucketTarget(bucketPlans.newCustomer);
   const newCustomerMonthTargets = sumBucketMonthTargets(bucketPlans.newCustomer);
 
-  // ── 계획 외 수주 분류 (비병원, 비버킷, 비기존) ──
+  // ── v3.9: 계획 외 수주 분류 (병원 분리 제거 — 사용자 요구로 국내기타에 통합) ──
   const nonPlanOrders = yearOrders.filter(o => {
     const name = (o.customer_name || '').toLowerCase().trim();
     // 기존 고객 플랜에 매칭되면 제외
     if (planNameSet.has(name)) return false;
-    // 병원이면 이미 hospital에서 처리
-    if (isHospital(o.customer_name)) return false;
     // 버킷 이름이면 제외
     if (getBucketCategory(o.customer_name)) return false;
-    return true;
+    return true; // 병원도 포함 (isDomestic으로 국내기타에 자동 분류됨)
   });
 
   // 고객별 그룹핑
@@ -243,14 +248,17 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
       plans: regularPlans,
       target: existingTarget,
     },
+    // v3.9: hospital 카테고리는 사용자 요청에 따라 폐지 (국내기타로 통합)
+    // 호환성을 위해 빈 객체 반환 (Dashboard 등에서 참조해도 0/빈값)
     hospital: {
-      target: hospitalTarget,
-      actual: hospitalActual,
-      monthTargets: hospitalMonthTargets,
-      plans: bucketPlans.hospital,
-      orders: hospitalOrders,
-      accountIds: hospitalAccountIds,
-      names: hospitalNames,
+      target: 0,
+      actual: 0,
+      monthTargets: {},
+      plans: [],
+      orders: [],
+      accountIds: new Set(),
+      names: [],
+      _deprecated: '병원은 국내기타로 통합됨 (v3.9)',
     },
     overseasEtc: {
       target: overseasEtcTarget,
@@ -282,37 +290,60 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
    ══════════════════════════════════════════════════════ */
 
 /**
- * 한 고객(account)의 담당자 뷰 버킷을 결정
- *   - 사업계획 매칭 → { bucket: 'plan', rep: '사업계획 담당자' }
- *   - 전년도 수주 無 → { bucket: 'new', domestic, label: '국내신규'|'해외신규' }
- *   - 전년도 수주 有 + 사업계획 外 → { bucket: 'etc', domestic, label: '국내기타'|'해외기타' }
+ * v3.9: classifyForRepView 강화
+ *
+ * 매칭 순서 (중요):
+ *   1. account_id 매칭 (퍼지매칭 결과 활용 — Settings에서 적용된 매칭)
+ *   2. customer_name 정확 매칭
+ *   3. 미매칭 → 4개 버킷 (국내/해외 × 기타/신규)
+ *
+ * 분류 정의 (사용자 명시):
+ *   - 해외기타: 사업계획 외 + 해외 + 전년도(2025) 수주 有
+ *   - 국내기타: 사업계획 외 + 국내(병원 포함) + 전년도 수주 有
+ *   - 해외신규: 사업계획 외 + 해외 + 전년도 수주 無
+ *   - 국내신규: 사업계획 외 + 국내(병원 포함) + 전년도 수주 無
  *
  * @param {object} params
- * @param {object} params.account - 고객 객체 (선택, null 가능)
+ * @param {object} params.account - 고객 객체
  * @param {string} params.customerName - 주문/매출의 customer_name
  * @param {Map|object} params.planByName - { name(lowercase trimmed) → plan }
- * @param {Set<string>} params.priorSet - 전년도 수주 고객명 Set (lowercase trimmed)
+ * @param {Map|object} [params.planByAccountId] - { account_id → plan } (옵셔널, 퍼지매칭 결과)
+ * @param {Set<string>} params.priorSet - 전년도 수주 고객명 Set
  */
-export function classifyForRepView({ account, customerName, planByName, priorSet }) {
+export function classifyForRepView({ account, customerName, planByName, planByAccountId, priorSet }) {
+  // 1. account_id 매칭 (가장 강력, 퍼지매칭 결과 활용)
+  if (account?.id && planByAccountId) {
+    const planById = planByAccountId instanceof Map
+      ? planByAccountId.get(account.id)
+      : planByAccountId[account.id];
+    if (planById && planById.sales_rep) {
+      return { bucket: 'plan', rep: planById.sales_rep, label: planById.sales_rep, planMatch: true, matchedBy: 'account_id' };
+    }
+  }
+
   const nameKey = (customerName || account?.company_name || '').toLowerCase().trim();
   if (!nameKey) return { bucket: 'unknown', label: '기타', rep: null };
 
-  // 1. 사업계획 매칭 (customer 플랜)
+  // 2. customer_name 정확 매칭
   const plan = planByName instanceof Map ? planByName.get(nameKey) : planByName[nameKey];
   if (plan && plan.sales_rep) {
-    return { bucket: 'plan', rep: plan.sales_rep, label: plan.sales_rep, planMatch: true };
+    return { bucket: 'plan', rep: plan.sales_rep, label: plan.sales_rep, planMatch: true, matchedBy: 'name' };
   }
 
-  // 2. 국내/해외 판별
-  const domestic = account
-    ? isDomestic(account)
-    : /[가-힣]/.test(customerName || '');
+  // 3. 국내/해외 판별 (강화된 isDomestic — 병원/한글명 우선)
+  let domestic;
+  if (account) {
+    domestic = isDomestic(account);
+  } else {
+    // account 없을 때: 한글명 또는 병원/의료원 키워드 → 국내
+    const nameStr = customerName || '';
+    domestic = /[가-힣]/.test(nameStr) || HOSPITAL_KEYWORDS.some(kw => nameStr.includes(kw));
+  }
 
-  // 3. 전년도 수주 여부
+  // 4. 전년도 수주 여부
   const hasPrior = priorSet && priorSet.has(nameKey);
 
   if (!hasPrior) {
-    // 신규
     return {
       bucket: 'new',
       rep: domestic ? '국내신규' : '해외신규',
@@ -322,7 +353,6 @@ export function classifyForRepView({ account, customerName, planByName, priorSet
     };
   }
 
-  // 기타
   return {
     bucket: 'etc',
     rep: domestic ? '국내기타' : '해외기타',
@@ -357,12 +387,16 @@ export function aggregateByRep({
   teamMembers = [],
   amountGetter = (t) => t.order_amount || t.sale_amount || 0,
 }) {
-  // plan name lookup
+  // plan name lookup + account_id lookup (v3.9: 퍼지매칭 결과 활용)
   const planByName = {};
+  const planByAccountId = {};
   (customerPlans || []).forEach(p => {
     if (!p.customer_name) return;
     if (getBucketCategory(p.customer_name)) return; // 버킷 플랜 제외
     planByName[p.customer_name.toLowerCase().trim()] = p;
+    if (p.account_id && !planByAccountId[p.account_id]) {
+      planByAccountId[p.account_id] = p;
+    }
   });
 
   const accountByName = {};
@@ -405,6 +439,7 @@ export function aggregateByRep({
       account: acc,
       customerName: tx.customer_name || acc?.company_name,
       planByName,
+      planByAccountId,  // v3.9
       priorSet: priorSet || new Set(),
     });
     if (!rep) return;

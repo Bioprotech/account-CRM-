@@ -568,10 +568,14 @@ export default function Report() {
     //   - classifyForRepView로 사업계획 매칭 실패 시 국내기타/해외기타/국내신규/해외신규 버킷
     const byRep = {};
     const planByNameForPS = {};
+    const planByAccountIdForPS = {};  // v3.9: 퍼지매칭 결과 활용
     customerPlans.forEach(p => {
       if (!p.customer_name) return;
       if (['해외기타', '직판영업', '국내 신규', '국내 기타'].includes(p.customer_name.trim())) return;
       planByNameForPS[p.customer_name.toLowerCase().trim()] = p;
+      if (p.account_id && !planByAccountIdForPS[p.account_id]) {
+        planByAccountIdForPS[p.account_id] = p;
+      }
     });
     const priorSet = (appSettings?.priorYearCustomers && Array.isArray(appSettings.priorYearCustomers))
       ? new Set(appSettings.priorYearCustomers) : (typeof loadPriorYearCustomers === 'function' ? loadPriorYearCustomers() : new Set());
@@ -606,7 +610,7 @@ export default function Report() {
         byRep[rep].ytdTarget += (p.targets?.[String(m).padStart(2, '0')] || 0);
       }
     });
-    // 실적 — classifyForRepView로 버킷 자동 분류
+    // 실적 — classifyForRepView로 버킷 자동 분류 (v3.9: account_id 매칭 포함)
     yearOrders.forEach(o => {
       const acc = o.account_id ? accounts.find(a => a.id === o.account_id)
         : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (o.customer_name || '').toLowerCase().trim()) || null;
@@ -614,6 +618,7 @@ export default function Report() {
         account: acc,
         customerName: o.customer_name || acc?.company_name,
         planByName: planByNameForPS,
+        planByAccountId: planByAccountIdForPS,
         priorSet,
       });
       if (!rep) return;
@@ -1008,11 +1013,15 @@ export default function Report() {
 
     // ── 담당자별 주간 실적 (신 분류 체계) ──
     const planByNameWk = {};
+    const planByAccountIdWk = {};  // v3.9
     customerPlans.forEach(p => {
       if (!p.customer_name) return;
       const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
       if (bucketNames.includes(p.customer_name.trim())) return;
       planByNameWk[p.customer_name.toLowerCase().trim()] = p;
+      if (p.account_id && !planByAccountIdWk[p.account_id]) {
+        planByAccountIdWk[p.account_id] = p;
+      }
     });
     const classifyTxWk = (tx) => {
       const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
@@ -1021,6 +1030,7 @@ export default function Report() {
         account: acc,
         customerName: tx.customer_name || acc?.company_name,
         planByName: planByNameWk,
+        planByAccountId: planByAccountIdWk,
         priorSet: priorYearSet,
       });
     };
@@ -1744,33 +1754,26 @@ export default function Report() {
     // ══════════════════════════════════════════════════════
     // 담당자별 월간 실적 (신 분류 체계) — 사업계획 담당자 + 국내기타/해외기타/국내신규/해외신규
     // ══════════════════════════════════════════════════════
+    // v3.9: classifyForRepView가 account_id 매칭 내장 — 직접 사용
     const planByNameForRep = {};
-    const planByAccountIdForRep = {};  // v3.8.1: account_id 매칭 추가 (퍼지매칭 결과 활용)
+    const planByAccountIdForRep = {};
     customerPlans.forEach(p => {
       if (!p.customer_name) return;
       const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
       if (bucketNames.includes(p.customer_name.trim())) return;
       planByNameForRep[p.customer_name.toLowerCase().trim()] = p;
-      // account_id 연결된 plan은 별도 맵 (이름이 달라도 매칭)
       if (p.account_id && !planByAccountIdForRep[p.account_id]) {
         planByAccountIdForRep[p.account_id] = p;
       }
     });
     const classifyTxRep = (tx) => {
-      // v3.8.1: account_id 매칭 우선 (퍼지매칭으로 연결된 plan도 매칭됨)
-      if (tx.account_id && planByAccountIdForRep[tx.account_id]) {
-        const matchedPlan = planByAccountIdForRep[tx.account_id];
-        if (matchedPlan.sales_rep) {
-          return { bucket: 'plan', rep: matchedPlan.sales_rep, label: matchedPlan.sales_rep, planMatch: true };
-        }
-      }
-      // fallback: customer_name 기반 매칭
       const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
         : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (tx.customer_name || '').toLowerCase().trim()) || null;
       return classifyForRepView({
         account: acc,
         customerName: tx.customer_name || acc?.company_name,
         planByName: planByNameForRep,
+        planByAccountId: planByAccountIdForRep,  // v3.9: 퍼지매칭 결과 활용
         priorSet: priorYearSet,
       });
     };
@@ -2477,10 +2480,14 @@ export default function Report() {
     //   - 반드시 classifyForRepView() 사용 → 사업계획 매칭 失 시 국내기타/해외기타/국내신규/해외신규 버킷
     //   - 참고: src/lib/customerClassification.js, src/lib/salesReps.js
     const planByNameForMonthlyData = {};
+    const planByAccountIdForMonthlyData = {};  // v3.9
     customerPlans.forEach(p => {
       if (!p.customer_name) return;
       if (['해외기타', '직판영업', '국내 신규', '국내 기타'].includes(p.customer_name.trim())) return;
       planByNameForMonthlyData[p.customer_name.toLowerCase().trim()] = p;
+      if (p.account_id && !planByAccountIdForMonthlyData[p.account_id]) {
+        planByAccountIdForMonthlyData[p.account_id] = p;
+      }
     });
     const classifyForRepMD = (tx) => {
       const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
@@ -2489,6 +2496,7 @@ export default function Report() {
         account: acc,
         customerName: tx.customer_name || acc?.company_name,
         planByName: planByNameForMonthlyData,
+        planByAccountId: planByAccountIdForMonthlyData,
         priorSet: priorYearSet,
       });
     };
