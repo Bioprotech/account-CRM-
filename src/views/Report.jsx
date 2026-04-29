@@ -1722,33 +1722,49 @@ export default function Report() {
       return m >= 1 && m <= selMonth;
     });
     Object.values(planByCustomerM).forEach(p => {
-      p.monthActual = monthOrders
-        .filter(o => (o.customer_name || '').toLowerCase().trim() === p.key)
-        .reduce((s, o) => s + (o.order_amount || 0), 0);
-      p.ytdActual = ytdOrdersForMonth
-        .filter(o => (o.customer_name || '').toLowerCase().trim() === p.key)
-        .reduce((s, o) => s + (o.order_amount || 0), 0);
+      // v3.8.1: account_id 매칭도 추가 (customer_name만으로는 누락 발생)
+      // - plan.account_id가 있으면 그 account의 모든 수주를 매칭
+      // - 또는 customer_name 정확 일치
+      const matchOrder = (o) => {
+        if (p.accountId && o.account_id === p.accountId) return true;
+        return (o.customer_name || '').toLowerCase().trim() === p.key;
+      };
+      p.monthActual = monthOrders.filter(matchOrder).reduce((s, o) => s + (o.order_amount || 0), 0);
+      p.ytdActual = ytdOrdersForMonth.filter(matchOrder).reduce((s, o) => s + (o.order_amount || 0), 0);
       p.monthPct = p.monthTarget > 0 ? Math.round((p.monthActual / p.monthTarget) * 100) : 0;
       p.ytdPct = p.ytdTarget > 0 ? Math.round((p.ytdActual / p.ytdTarget) * 100) : 0;
       p.monthGap = p.monthTarget - p.monthActual;
       p.ytdGap = p.ytdTarget - p.ytdActual;
     });
-    // 목표 > 0 인 모든 고객 포함 (실적 0 포함), 달성률 낮은 순 (미달 우선 노출)
+    // v3.8.1: 목표 0 이지만 actual 있는 plan도 포함 (합계 일치 보장)
     const monthlyByCustomer = Object.values(planByCustomerM)
-      .filter(p => p.monthTarget > 0)
-      .sort((a, b) => b.monthPct - a.monthPct); // 달성률 높은 순 (사용자 요청 v3.1)
+      .filter(p => p.monthTarget > 0 || p.ytdTarget > 0 || p.ytdActual > 0)
+      .sort((a, b) => b.monthPct - a.monthPct);
 
     // ══════════════════════════════════════════════════════
     // 담당자별 월간 실적 (신 분류 체계) — 사업계획 담당자 + 국내기타/해외기타/국내신규/해외신규
     // ══════════════════════════════════════════════════════
     const planByNameForRep = {};
+    const planByAccountIdForRep = {};  // v3.8.1: account_id 매칭 추가 (퍼지매칭 결과 활용)
     customerPlans.forEach(p => {
       if (!p.customer_name) return;
       const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
       if (bucketNames.includes(p.customer_name.trim())) return;
       planByNameForRep[p.customer_name.toLowerCase().trim()] = p;
+      // account_id 연결된 plan은 별도 맵 (이름이 달라도 매칭)
+      if (p.account_id && !planByAccountIdForRep[p.account_id]) {
+        planByAccountIdForRep[p.account_id] = p;
+      }
     });
     const classifyTxRep = (tx) => {
+      // v3.8.1: account_id 매칭 우선 (퍼지매칭으로 연결된 plan도 매칭됨)
+      if (tx.account_id && planByAccountIdForRep[tx.account_id]) {
+        const matchedPlan = planByAccountIdForRep[tx.account_id];
+        if (matchedPlan.sales_rep) {
+          return { bucket: 'plan', rep: matchedPlan.sales_rep, label: matchedPlan.sales_rep, planMatch: true };
+        }
+      }
+      // fallback: customer_name 기반 매칭
       const acc = tx.account_id ? accounts.find(a => a.id === tx.account_id)
         : accounts.find(a => (a.company_name || '').toLowerCase().trim() === (tx.customer_name || '').toLowerCase().trim()) || null;
       return classifyForRepView({
