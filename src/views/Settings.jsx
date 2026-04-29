@@ -79,6 +79,208 @@ function fmtKRW(n) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   v3.10 — Account 합병 도구 (중복 account 통합)
+   ══════════════════════════════════════════════════════════════════ */
+function AccountMergeTool({ accounts, orders, sales, businessPlans, mergeAccounts }) {
+  const [searchQ, setSearchQ] = useState('');
+  const [primaryId, setPrimaryId] = useState('');
+  const [secondaryId, setSecondaryId] = useState('');
+  const [merging, setMerging] = useState(false);
+
+  // account 통계 계산 (정렬용)
+  const accountsWithStats = useMemo(() => {
+    return accounts.map(a => {
+      const orderCount = orders.filter(o => o.account_id === a.id).length;
+      const orderTotal = orders.filter(o => o.account_id === a.id).reduce((s, o) => s + (o.order_amount || 0), 0);
+      const saleCount = sales.filter(s => s.account_id === a.id).length;
+      const saleTotal = sales.filter(s => s.account_id === a.id).reduce((s, s2) => s + (s2.sale_amount || 0), 0);
+      const planCount = businessPlans.filter(p => p.account_id === a.id).length;
+      return { ...a, orderCount, orderTotal, saleCount, saleTotal, planCount };
+    });
+  }, [accounts, orders, sales, businessPlans]);
+
+  // 검색 필터
+  const filteredAccounts = useMemo(() => {
+    if (!searchQ.trim()) return [];
+    const q = searchQ.toLowerCase().trim();
+    return accountsWithStats
+      .filter(a => (a.company_name || '').toLowerCase().includes(q))
+      .sort((a, b) => (b.orderTotal + b.saleTotal) - (a.orderTotal + a.saleTotal));
+  }, [accountsWithStats, searchQ]);
+
+  const primary = accountsWithStats.find(a => a.id === primaryId);
+  const secondary = accountsWithStats.find(a => a.id === secondaryId);
+
+  const swap = () => {
+    setPrimaryId(secondaryId);
+    setSecondaryId(primaryId);
+  };
+
+  const handleMerge = async () => {
+    if (!primary || !secondary) return;
+    if (primary.id === secondary.id) {
+      alert('서로 다른 account를 선택해주세요.');
+      return;
+    }
+    const confirmMsg = `정말 합병하시겠습니까?\n\n` +
+      `▸ 유지: "${primary.company_name}" (${primary.orderCount + primary.saleCount}건 + 새로 ${secondary.orderCount + secondary.saleCount}건 추가)\n` +
+      `▸ 삭제: "${secondary.company_name}" (모든 데이터 → 유지 account로 이전)\n\n` +
+      `※ 이 작업은 되돌릴 수 없습니다 (수동 재import는 가능)`;
+    if (!confirm(confirmMsg)) return;
+
+    setMerging(true);
+    try {
+      const result = await mergeAccounts(primary.id, secondary.id);
+      if (result.success) {
+        // 폼 리셋
+        setSearchQ('');
+        setPrimaryId('');
+        setSecondaryId('');
+      }
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #16a34a' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>🔗 Account 합병 도구</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+          [중복 account 통합 — 수주/매출/활동/계약/사업계획 데이터 모두 이전]
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
+        같은 회사가 여러 account로 분리되어 있을 때 통합합니다.
+        예: "AMBIDERM" + "AMBIDERM Guatemala" → "AMBIDERM" 하나로.
+        <strong style={{ color: 'var(--accent)' }}> 합병 후에도 회사명은 고객 카드에서 자유롭게 변경 가능</strong>합니다.
+      </p>
+
+      {/* 검색 */}
+      <div style={{ marginBottom: 10 }}>
+        <input
+          type="text"
+          value={searchQ}
+          onChange={e => setSearchQ(e.target.value)}
+          placeholder="회사명 검색 (예: ambiderm, fannin, palupa, tecnologia)"
+          style={{ width: '100%', padding: '6px 10px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 4 }}
+        />
+      </div>
+
+      {/* 검색 결과 */}
+      {searchQ.trim() && filteredAccounts.length > 0 && (
+        <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 4, maxHeight: 280, overflow: 'auto' }}>
+          <table className="data-table" style={{ fontSize: 11, width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ position: 'sticky', top: 0, background: 'var(--bg2)' }}>유지 (Primary)</th>
+                <th style={{ position: 'sticky', top: 0, background: 'var(--bg2)' }}>삭제 (Secondary)</th>
+                <th style={{ position: 'sticky', top: 0, background: 'var(--bg2)' }}>회사명</th>
+                <th style={{ position: 'sticky', top: 0, background: 'var(--bg2)', textAlign: 'right' }}>수주</th>
+                <th style={{ position: 'sticky', top: 0, background: 'var(--bg2)', textAlign: 'right' }}>매출</th>
+                <th style={{ position: 'sticky', top: 0, background: 'var(--bg2)', textAlign: 'right' }}>사업계획</th>
+                <th style={{ position: 'sticky', top: 0, background: 'var(--bg2)' }}>지역/담당</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAccounts.slice(0, 30).map(a => (
+                <tr key={a.id} style={{ background: a.id === primaryId ? 'rgba(22,163,74,0.1)' : a.id === secondaryId ? 'rgba(220,38,38,0.05)' : undefined }}>
+                  <td style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name="primary"
+                      checked={primaryId === a.id}
+                      onChange={() => { setPrimaryId(a.id); if (secondaryId === a.id) setSecondaryId(''); }}
+                    />
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name="secondary"
+                      checked={secondaryId === a.id}
+                      onChange={() => { setSecondaryId(a.id); if (primaryId === a.id) setPrimaryId(''); }}
+                    />
+                  </td>
+                  <td style={{ fontWeight: 600 }}>
+                    {a.company_name}
+                    {a.planCount > 0 && <span style={{ marginLeft: 4, fontSize: 9, padding: '1px 4px', background: 'var(--accent)', color: '#fff', borderRadius: 3 }}>📋 사업계획</span>}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>{a.orderCount > 0 ? `${a.orderCount}건 / ${fmtKRW(a.orderTotal)}` : '-'}</td>
+                  <td style={{ textAlign: 'right' }}>{a.saleCount > 0 ? `${a.saleCount}건 / ${fmtKRW(a.saleTotal)}` : '-'}</td>
+                  <td style={{ textAlign: 'right' }}>{a.planCount > 0 ? `${a.planCount}개` : '-'}</td>
+                  <td style={{ fontSize: 10, color: 'var(--text2)' }}>
+                    {(a.region || '-')} / {(a.sales_rep || '-')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 합병 미리보기 */}
+      {primary && secondary && (
+        <div style={{ padding: 12, background: 'rgba(22,163,74,0.06)', borderRadius: 6, marginBottom: 12, border: '1px solid var(--green, #16a34a)' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 8 }}>📋 합병 미리보기</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ padding: 10, background: 'rgba(22,163,74,0.1)', borderRadius: 4 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 4 }}>✓ 유지 (Primary)</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{primary.company_name}</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                수주 {primary.orderCount}건, 매출 {primary.saleCount}건
+              </div>
+            </div>
+            <div>
+              <button
+                onClick={swap}
+                style={{ fontSize: 16, padding: '4px 8px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
+                title="Primary ↔ Secondary 교체"
+              >⇅</button>
+            </div>
+            <div style={{ padding: 10, background: 'rgba(220,38,38,0.06)', borderRadius: 4 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--red)', marginBottom: 4 }}>✗ 삭제 (Secondary)</div>
+              <div style={{ fontSize: 13, fontWeight: 700, textDecoration: 'line-through' }}>{secondary.company_name}</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                수주 {secondary.orderCount}건, 매출 {secondary.saleCount}건 → 이전됨
+              </div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>
+            <strong>이전될 데이터:</strong>
+            <span style={{ marginLeft: 6 }}>
+              수주 {secondary.orderCount}건 ({fmtKRW(secondary.orderTotal)}) ·
+              매출 {secondary.saleCount}건 ({fmtKRW(secondary.saleTotal)}) ·
+              사업계획 {secondary.planCount}개
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-primary"
+              onClick={handleMerge}
+              disabled={merging}
+              style={{ background: 'var(--green, #16a34a)' }}
+            >
+              {merging ? '합병 중...' : `🔗 합병 실행 — "${secondary.company_name}" → "${primary.company_name}"`}
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={() => { setPrimaryId(''); setSecondaryId(''); }}
+            >취소</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8 }}>
+        💡 사용법: 회사명 검색 → 결과 표에서 "유지(Primary)" 라디오 + "삭제(Secondary)" 라디오 선택 → 미리보기 확인 → 합병 실행.
+        Secondary의 모든 수주/매출/활동/계약/FCST/사업계획 데이터가 Primary로 이전된 후 Secondary는 삭제됩니다.
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
    v3.7 — 사업계획 ↔ 영업현황 정합성 진단
    "수주 104% vs Gap -9.1억" 모순의 정확한 분해 분석
    ══════════════════════════════════════════════════════════════════ */
@@ -176,12 +378,30 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
         if (acc) matchedAccIds.add(acc.id);
       });
       let bucketActual = 0;
+      // v3.7.2: 버킷 actual 분해 (사업계획 외 거래처 actual 추적)
+      const bucketActualByAccount = {};
       ytdOrders.forEach(o => {
         if (!o.account_id || !matchedAccIds.has(o.account_id)) {
           bucketActual += (o.order_amount || 0);
+          const aid = o.account_id || `__noid__${(o.customer_name || '').toLowerCase().trim()}`;
+          if (!bucketActualByAccount[aid]) {
+            const acc = o.account_id ? accounts.find(a => a.id === o.account_id) : null;
+            bucketActualByAccount[aid] = {
+              account_id: o.account_id || null,
+              customer_name: acc?.company_name || o.customer_name || '?',
+              sales_rep: acc?.sales_rep || o.sales_rep || '',
+              region: acc?.region || o.region || '',
+              total: 0,
+              order_count: 0,
+            };
+          }
+          bucketActualByAccount[aid].total += (o.order_amount || 0);
+          bucketActualByAccount[aid].order_count++;
         }
       });
       const bucketGap = bucketTarget - bucketActual;
+      // 버킷 actual 분해 리스트 (금액 큰 순)
+      const bucketActualList = Object.values(bucketActualByAccount).sort((a, b) => b.total - a.total);
 
       // ── 4. 미달/초과 분류 (GAP 분석 표시 기준 vs 전체) ──
       const shortFallList = regularPlans
@@ -215,6 +435,7 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
         bucketTarget,
         bucketActual,
         bucketGap,
+        bucketActualList,
         planBucketCount: planBuckets.length,
         planMatchedCount: planMatched.length,
         planUnmatchedCount: planUnmatched.length,
@@ -350,6 +571,62 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                 ※ 일반 plan = 개별 고객 plan, 버킷 = "해외기타" 등 그룹 plan
               </div>
             </div>
+
+            {/* v3.7.2: 버킷 actual 7.9억의 정체 분해 (어떤 거래처가 가져왔는지) */}
+            {analysis.bucketActualList && analysis.bucketActualList.length > 0 && (
+              <details open style={{ marginBottom: 12, padding: 10, background: 'rgba(217,119,6,0.04)', borderRadius: 6, border: '1px solid #d97706' }}>
+                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#b45309' }}>
+                  🔬 버킷 actual {fmt(analysis.bucketActual)}의 정체 — {analysis.bucketActualList.length}개 거래처 분해
+                </summary>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text2)', marginBottom: 6 }}>
+                  사업계획에 매칭되지 않은 모든 영업현황 수주의 거래처별 분포. 월간 리포트 ■2-3의 신규/기타와 다른 이유를 여기서 확인 가능.
+                </div>
+                <div className="table-wrap" style={{ maxHeight: 400 }}>
+                  <table className="data-table" style={{ fontSize: 11 }}>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>거래처명</th>
+                        <th>담당자 (sales_rep)</th>
+                        <th>지역</th>
+                        <th style={{ textAlign: 'right' }}>YTD 수주</th>
+                        <th style={{ textAlign: 'right' }}>건수</th>
+                        <th>account_id 상태</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.bucketActualList.slice(0, 50).map((b, i) => (
+                        <tr key={i}>
+                          <td>{i + 1}</td>
+                          <td style={{ fontWeight: 600 }}>{b.customer_name}</td>
+                          <td>{b.sales_rep || <span style={{ color: 'var(--red)' }}>미배정</span>}</td>
+                          <td>{b.region || '-'}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(b.total)}</td>
+                          <td style={{ textAlign: 'right' }}>{b.order_count}</td>
+                          <td style={{ fontSize: 10 }}>
+                            {b.account_id
+                              ? <span style={{ color: 'var(--green, #16a34a)' }}>✓ {b.account_id.slice(0, 12)}...</span>
+                              : <span style={{ color: 'var(--red)' }}>✗ NULL (계정 미생성)</span>}
+                          </td>
+                        </tr>
+                      ))}
+                      {analysis.bucketActualList.length > 50 && (
+                        <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)' }}>외 {analysis.bucketActualList.length - 50}건</td></tr>
+                      )}
+                      <tr style={{ background: 'rgba(217,119,6,0.08)', fontWeight: 700 }}>
+                        <td colSpan={4}>합계 (Top 50)</td>
+                        <td style={{ textAlign: 'right' }}>{fmt(analysis.bucketActualList.slice(0, 50).reduce((s, b) => s + b.total, 0))}</td>
+                        <td style={{ textAlign: 'right' }}>{analysis.bucketActualList.slice(0, 50).reduce((s, b) => s + b.order_count, 0)}</td>
+                        <td>(전체 합계 {fmt(analysis.bucketActual)})</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                  💡 이 거래처들의 sales_rep이 사업계획 담당자와 일치하면, 월간 리포트 ■2-3에서는 해당 담당자 행에 포함되어 신규/기타 버킷에는 안 나타남.
+                </div>
+              </details>
+            )}
 
             {/* GAP 분석 임계값 분류 */}
             <div style={{ padding: 12, background: 'rgba(220,38,38,0.04)', borderRadius: 6, marginBottom: 12 }}>
@@ -919,7 +1196,7 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans, applyFuzzy
 }
 
 export default function Settings() {
-  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches } = useAccount();
+  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches, mergeAccounts } = useAccount();
 
   /* ══════════════════════════════════════
      팀 멤버 관리
@@ -2776,6 +3053,15 @@ export default function Settings() {
           </div>
         )}
       </div>
+
+      {/* ── v3.10: Account 합병 도구 (중복 account 통합) ── */}
+      <AccountMergeTool
+        accounts={accounts}
+        orders={orders}
+        sales={sales}
+        businessPlans={businessPlans}
+        mergeAccounts={mergeAccounts}
+      />
 
       {/* ── v3.7: 사업계획 ↔ 영업현황 정합성 진단 ── */}
       <ReconciliationDiagnostic

@@ -167,6 +167,102 @@ export default function AccountProvider({ children }) {
     showToast('삭제 완료', 'success');
   }, [activityLogs]);
 
+  /* ── v3.10: Account 합병 — 중복 account 통합 ──
+     secondary의 모든 관련 데이터(orders/sales/logs/contracts/forecasts/plans)의
+     account_id를 primary로 변경 후 secondary 삭제.
+     primary account는 그대로 유지 (이름 변경은 별도 saveAccount로 가능). */
+  const mergeAccounts = useCallback(async (primaryId, secondaryId) => {
+    if (!primaryId || !secondaryId || primaryId === secondaryId) {
+      showToast('합병 대상 잘못 선택', 'error');
+      return { success: false };
+    }
+    try {
+      let stats = { orders: 0, sales: 0, logs: 0, contracts: 0, forecasts: 0, plans: 0 };
+
+      // 1. orders 이전
+      const ordersToUpdate = orders.filter(o => o.account_id === secondaryId);
+      stats.orders = ordersToUpdate.length;
+      for (const o of ordersToUpdate) {
+        const updated = { ...o, account_id: primaryId };
+        setOrders(prev => prev.map(x => x.id === o.id ? updated : x));
+        if (FIREBASE_ENABLED) {
+          try { await fbSaveOrder(updated); } catch (e) { console.error('order 이전 실패:', e); }
+        }
+      }
+
+      // 2. sales 이전
+      const salesToUpdate = sales.filter(s => s.account_id === secondaryId);
+      stats.sales = salesToUpdate.length;
+      for (const s of salesToUpdate) {
+        const updated = { ...s, account_id: primaryId };
+        setSales(prev => prev.map(x => x.id === s.id ? updated : x));
+        if (FIREBASE_ENABLED) {
+          try { await fbSaveSale(updated); } catch (e) { console.error('sale 이전 실패:', e); }
+        }
+      }
+
+      // 3. activity_logs 이전
+      const logsToUpdate = activityLogs.filter(l => l.account_id === secondaryId);
+      stats.logs = logsToUpdate.length;
+      for (const l of logsToUpdate) {
+        const updated = { ...l, account_id: primaryId };
+        setActivityLogs(prev => prev.map(x => x.id === l.id ? updated : x));
+        if (FIREBASE_ENABLED) {
+          try { await saveActivityLog(updated); } catch (e) { console.error('log 이전 실패:', e); }
+        }
+      }
+
+      // 4. contracts 이전
+      const contractsToUpdate = contracts.filter(c => c.account_id === secondaryId);
+      stats.contracts = contractsToUpdate.length;
+      for (const c of contractsToUpdate) {
+        const updated = { ...c, account_id: primaryId };
+        setContracts(prev => prev.map(x => x.id === c.id ? updated : x));
+        if (FIREBASE_ENABLED) {
+          try { await fbSaveContract(updated); } catch (e) { console.error('contract 이전 실패:', e); }
+        }
+      }
+
+      // 5. forecasts 이전
+      const forecastsToUpdate = forecasts.filter(f => f.account_id === secondaryId);
+      stats.forecasts = forecastsToUpdate.length;
+      for (const f of forecastsToUpdate) {
+        const updated = { ...f, account_id: primaryId };
+        setForecasts(prev => prev.map(x => x.id === f.id ? updated : x));
+        if (FIREBASE_ENABLED) {
+          try { await fbSaveForecast(updated); } catch (e) { console.error('forecast 이전 실패:', e); }
+        }
+      }
+
+      // 6. business_plans 이전 (account_id 참조하는 plan들)
+      const plansToUpdate = businessPlans.filter(p => p.account_id === secondaryId);
+      stats.plans = plansToUpdate.length;
+      if (plansToUpdate.length > 0) {
+        const updated = plansToUpdate.map(p => ({ ...p, account_id: primaryId, updated_at: new Date().toISOString().slice(0, 10) }));
+        setBusinessPlans(prev => prev.map(p => {
+          const u = updated.find(x => x.id === p.id);
+          return u || p;
+        }));
+        if (FIREBASE_ENABLED) {
+          try { await batchSaveBusinessPlans(updated); } catch (e) { console.error('plan 이전 실패:', e); }
+        }
+      }
+
+      // 7. secondary account 삭제
+      setAccounts(prev => prev.filter(a => a.id !== secondaryId));
+      if (FIREBASE_ENABLED) {
+        try { await deleteAccountFromFirestore(secondaryId); } catch (e) { console.error('account 삭제 실패:', e); }
+      }
+
+      showToast(`합병 완료: 수주 ${stats.orders}건 / 매출 ${stats.sales}건 / 활동 ${stats.logs}건 / 계약 ${stats.contracts}건 / FCST ${stats.forecasts}건 / 사업계획 ${stats.plans}건 이전`, 'success');
+      return { success: true, stats };
+    } catch (e) {
+      console.error('Account 합병 실패:', e);
+      showToast('합병 실패: ' + e.message, 'error');
+      return { success: false, error: e.message };
+    }
+  }, [orders, sales, activityLogs, contracts, forecasts, businessPlans]);
+
   const saveLog = useCallback(async (log) => {
     setActivityLogs(prev => {
       const idx = prev.findIndex(l => l.id === log.id);
@@ -767,7 +863,7 @@ export default function AccountProvider({ children }) {
     currentTab, setCurrentTab,
     editingAccount, setEditingAccount,
     sidebarOpen, setSidebarOpen,
-    saveAccount, removeAccount,
+    saveAccount, removeAccount, mergeAccounts,
     saveLog, removeLog, getLogsForAccount,
     saveOrder, removeOrder, importOrders, getOrdersForAccount,
     saveSaleItem, removeSale, importSales, getSalesForAccount,
