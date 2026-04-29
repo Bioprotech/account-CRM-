@@ -3,6 +3,7 @@ import { useAccount } from '../context/AccountContext';
 import { genId, today } from '../lib/utils';
 import { saveSnapshot, listSnapshots, deleteSnapshot as removeSnapshot } from '../lib/snapshots';
 import { savePriorYearCustomers, loadPriorYearCustomers } from '../lib/customerClassification';
+import { combinedSimilarity, normalizeCompanyName, confidenceLabel } from '../lib/fuzzyMatch';
 
 // v3.4: 엑셀 날짜 시리얼/문자열 → YYYY-MM-DD 변환 (강화)
 // 이전 버전은 문자열 그대로 반환 → "4/23/2026" 등 비표준이 주간 범위 비교에서 실패
@@ -75,6 +76,308 @@ function fmtKRW(n) {
   if (abs >= 100000000) return sign + (abs / 100000000).toFixed(1) + '억';
   if (abs >= 10000) return sign + Math.round(abs / 10000).toLocaleString() + '만';
   return n.toLocaleString();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v3.6 — 고객명 퍼지 매칭 분석기 (Dry-run)
+   사업계획의 customer_name 과 영업현황으로 자동 생성된 account 간 매칭
+   ══════════════════════════════════════════════════════════════════ */
+function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans }) {
+  const [analysis, setAnalysis] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [threshold, setThreshold] = useState(0.7);
+
+  const runAnalysis = async () => {
+    setAnalyzing(true);
+    setAnalysis(null);
+
+    // 비동기 (UI 응답성)
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    try {
+      // 1. 사업계획의 고객명 추출 (customer 타입만)
+      const planCustomers = businessPlans
+        .filter(p => (p.type === 'customer' || !p.type) && p.customer_name)
+        .map(p => ({
+          plan_id: p.id,
+          name: p.customer_name.trim(),
+          account_id: p.account_id || null,
+          annual_target: p.annual_target || 0,
+          sales_rep: p.sales_rep || '',
+          biz_type: p.biz_type || '',
+        }));
+
+      // 사업계획 고객명 unique
+      const planNameMap = {};
+      planCustomers.forEach(p => {
+        const key = p.name.toLowerCase().trim();
+        if (!planNameMap[key]) {
+          planNameMap[key] = { name: p.name, plans: [], total_target: 0, account_id: p.account_id };
+        }
+        planNameMap[key].plans.push(p);
+        planNameMap[key].total_target += p.annual_target;
+        if (p.account_id) planNameMap[key].account_id = p.account_id;
+      });
+      const planList = Object.values(planNameMap);
+
+      // 사업계획에 이미 정확히 매칭된 account ID set
+      const planAccountIds = new Set(planList.filter(p => p.account_id).map(p => p.account_id));
+      // 사업계획 고객명을 소문자 정규화한 set (정확 매칭 확인용)
+      const planNameLowerSet = new Set(planList.map(p => p.name.toLowerCase().trim()));
+
+      // 2. accounts 중 사업계획에 없는 것들 (= 영업현황으로만 자동 생성된 가능성 높음)
+      // 매출/수주 매칭 대상이 되는 account만 (활동이 있는)
+      const ordersByAccount = {};
+      const salesByAccount = {};
+      orders.forEach(o => {
+        if (!o.account_id) return;
+        ordersByAccount[o.account_id] = (ordersByAccount[o.account_id] || 0) + (o.order_amount || 0);
+      });
+      sales.forEach(s => {
+        if (!s.account_id) return;
+        salesByAccount[s.account_id] = (salesByAccount[s.account_id] || 0) + (s.sale_amount || 0);
+      });
+
+      const unmatchedAccounts = accounts
+        .filter(a => {
+          if (!a.company_name) return false;
+          // 이미 사업계획에 직접 매칭된 account는 제외
+          if (planAccountIds.has(a.id)) return false;
+          // 사업계획 고객명과 정확히 일치하는 account도 제외 (이미 매칭 작동 중)
+          if (planNameLowerSet.has(a.company_name.toLowerCase().trim())) return false;
+          // 영업현황 활동이 있는 account만 (매출/수주 데이터)
+          const hasActivity = ordersByAccount[a.id] > 0 || salesByAccount[a.id] > 0;
+          return hasActivity;
+        })
+        .map(a => ({
+          account_id: a.id,
+          name: a.company_name,
+          order_total: ordersByAccount[a.id] || 0,
+          sales_total: salesByAccount[a.id] || 0,
+        }))
+        .sort((x, y) => (y.order_total + y.sales_total) - (x.order_total + x.sales_total));
+
+      // 3. 각 미매칭 account에 대해 사업계획 후보 매칭
+      const matches = []; // { account, candidate, score }
+      const noMatches = []; // 매칭 실패
+      unmatchedAccounts.forEach(acc => {
+        let best = { candidate: null, score: 0 };
+        planList.forEach(p => {
+          const score = combinedSimilarity(acc.name, p.name);
+          if (score > best.score) {
+            best = { candidate: p, score };
+          }
+        });
+        if (best.score >= threshold) {
+          matches.push({ account: acc, candidate: best.candidate, score: best.score });
+        } else {
+          noMatches.push({ account: acc, bestScore: best.score, bestCandidate: best.candidate });
+        }
+      });
+
+      // 4. 통계 변화 미리보기
+      // 현재: account별 수주/매출 합계 → 사업계획 매칭 여부 따라 분류
+      // 적용 시: 매칭된 account는 사업계획 고객으로 분류
+      const currentMatched = accounts.filter(a => planAccountIds.has(a.id) || planNameLowerSet.has((a.company_name || '').toLowerCase().trim())).length;
+      const currentUnmatched = unmatchedAccounts.length;
+      const willMatch = matches.length;
+      const stillUnmatched = currentUnmatched - willMatch;
+
+      // 매칭 시 사업계획 고객의 실적 보강 효과
+      let plannedActualGain = 0;
+      let plannedActualSalesGain = 0;
+      matches.forEach(m => {
+        plannedActualGain += m.account.order_total;
+        plannedActualSalesGain += m.account.sales_total;
+      });
+
+      setAnalysis({
+        planTotalCustomers: planList.length,
+        planUnmatched: planList.filter(p => !p.account_id).length,
+        unmatchedAccounts,
+        matches: matches.sort((a, b) => b.score - a.score),
+        noMatches: noMatches.sort((a, b) => (b.account.order_total + b.account.sales_total) - (a.account.order_total + a.account.sales_total)),
+        before: {
+          matchedCount: currentMatched,
+          unmatchedCount: currentUnmatched,
+        },
+        after: {
+          matchedCount: currentMatched + willMatch,
+          unmatchedCount: stillUnmatched,
+        },
+        plannedActualGain,
+        plannedActualSalesGain,
+        threshold,
+      });
+    } catch (err) {
+      console.error('퍼지 매칭 분석 실패:', err);
+      alert('분석 중 오류 발생: ' + err.message);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #7c3aed' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>🔍 고객명 퍼지 매칭 분석</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+          [사업계획 ↔ 영업현황 고객명 통합 점검 — Dry-run, 적용 X]
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
+        사업계획에 등록된 고객명과 영업현황(수주/매출)에서 자동 생성된 고객 account를
+        <strong> 정규화·편집거리·토큰 기반 퍼지 매칭</strong>으로 비교합니다.<br />
+        예: "Fannin Healthcare" ↔ "Fannin Healthcare Inc." 같은 차이를 자동 감지.
+        <span style={{ color: 'var(--accent)', fontWeight: 600 }}> 분석만 진행, 데이터는 변경 안 됨.</span>
+      </p>
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 12 }}>
+          신뢰도 임계값:&nbsp;
+          <select value={threshold} onChange={e => setThreshold(Number(e.target.value))} style={{ padding: '3px 6px', fontSize: 12 }}>
+            <option value={0.85}>85% (엄격)</option>
+            <option value={0.75}>75% (높음)</option>
+            <option value={0.7}>70% (보통, 권장)</option>
+            <option value={0.6}>60% (관대)</option>
+            <option value={0.5}>50% (매우 관대)</option>
+          </select>
+        </label>
+        <button
+          className="btn btn-primary"
+          onClick={runAnalysis}
+          disabled={analyzing || !accounts.length || !businessPlans.length}
+        >
+          {analyzing ? '분석 중...' : '🔍 매칭 분석 시작'}
+        </button>
+      </div>
+
+      {analysis && (
+        <div>
+          {/* 요약 박스 */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 12 }}>
+            <div className="kpi" style={{ padding: 10 }}>
+              <div className="kpi-label">사업계획 고객</div>
+              <div className="kpi-value" style={{ fontSize: 18 }}>{analysis.planTotalCustomers}사</div>
+            </div>
+            <div className="kpi" style={{ padding: 10 }}>
+              <div className="kpi-label">현재 미매칭 Account</div>
+              <div className="kpi-value" style={{ fontSize: 18, color: 'var(--red)' }}>{analysis.before.unmatchedCount}사</div>
+            </div>
+            <div className="kpi green" style={{ padding: 10 }}>
+              <div className="kpi-label">매칭 후보 발견</div>
+              <div className="kpi-value" style={{ fontSize: 18, color: 'var(--green, #16a34a)' }}>+{analysis.matches.length}사</div>
+            </div>
+            <div className="kpi" style={{ padding: 10 }}>
+              <div className="kpi-label">여전히 매칭 실패</div>
+              <div className="kpi-value" style={{ fontSize: 18 }}>{analysis.noMatches.length}사</div>
+            </div>
+          </div>
+
+          {/* 통계 변화 */}
+          {(analysis.plannedActualGain > 0 || analysis.plannedActualSalesGain > 0) && (
+            <div style={{ padding: 10, background: 'rgba(46,125,50,0.06)', borderRadius: 6, marginBottom: 12, fontSize: 12, borderLeft: '3px solid var(--green, #16a34a)' }}>
+              <div style={{ fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 4 }}>📈 매칭 적용 시 사업계획 고객 실적 보강 효과</div>
+              <div>수주: <strong>+{fmtKRW(analysis.plannedActualGain)}</strong> ({analysis.matches.length}사 통합)</div>
+              <div>매출: <strong>+{fmtKRW(analysis.plannedActualSalesGain)}</strong></div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                ※ 현재는 미매칭 account로 분류되어 "신규/기타" 버킷에 잡혀있는 실적이, 매칭 적용 시 해당 사업계획 고객 실적으로 이동
+              </div>
+            </div>
+          )}
+
+          {/* 매칭 후보 리스트 */}
+          {analysis.matches.length > 0 && (
+            <details open style={{ marginBottom: 12 }}>
+              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: '6px 0' }}>
+                ✅ 매칭 후보 {analysis.matches.length}건 (신뢰도 {Math.round(threshold * 100)}% 이상)
+              </summary>
+              <div className="table-wrap" style={{ maxHeight: 400, marginTop: 6 }}>
+                <table className="data-table" style={{ fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th>영업현황 Account 명</th>
+                      <th>→</th>
+                      <th>사업계획 고객명</th>
+                      <th style={{ textAlign: 'right' }}>신뢰도</th>
+                      <th style={{ textAlign: 'right' }}>수주</th>
+                      <th style={{ textAlign: 'right' }}>매출</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.matches.map((m, i) => {
+                      const conf = confidenceLabel(m.score);
+                      return (
+                        <tr key={i}>
+                          <td style={{ fontWeight: 600 }}>{m.account.name}</td>
+                          <td style={{ textAlign: 'center', color: 'var(--text3)' }}>→</td>
+                          <td style={{ color: 'var(--accent)' }}>{m.candidate.name}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <span style={{ padding: '1px 6px', borderRadius: 3, background: conf.color + '22', color: conf.color, fontWeight: 700 }}>
+                              {Math.round(m.score * 100)}% ({conf.label})
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>{m.account.order_total > 0 ? fmtKRW(m.account.order_total) : '-'}</td>
+                          <td style={{ textAlign: 'right' }}>{m.account.sales_total > 0 ? fmtKRW(m.account.sales_total) : '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+
+          {/* 매칭 실패 리스트 */}
+          {analysis.noMatches.length > 0 && (
+            <details style={{ marginBottom: 12 }}>
+              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: '6px 0' }}>
+                ❓ 매칭 실패 {analysis.noMatches.length}건 (사업계획에 비슷한 고객 없음)
+              </summary>
+              <div className="table-wrap" style={{ maxHeight: 300, marginTop: 6 }}>
+                <table className="data-table" style={{ fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th>영업현황 Account 명</th>
+                      <th>최근접 후보</th>
+                      <th style={{ textAlign: 'right' }}>점수</th>
+                      <th style={{ textAlign: 'right' }}>수주</th>
+                      <th style={{ textAlign: 'right' }}>매출</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.noMatches.slice(0, 50).map((m, i) => (
+                      <tr key={i}>
+                        <td style={{ fontWeight: 600 }}>{m.account.name}</td>
+                        <td style={{ color: 'var(--text3)' }}>{m.bestCandidate?.name || '-'}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{Math.round(m.bestScore * 100)}%</td>
+                        <td style={{ textAlign: 'right' }}>{m.account.order_total > 0 ? fmtKRW(m.account.order_total) : '-'}</td>
+                        <td style={{ textAlign: 'right' }}>{m.account.sales_total > 0 ? fmtKRW(m.account.sales_total) : '-'}</td>
+                      </tr>
+                    ))}
+                    {analysis.noMatches.length > 50 && (
+                      <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text3)' }}>외 {analysis.noMatches.length - 50}건</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+
+          <div style={{ fontSize: 11, color: 'var(--text3)', padding: '8px 10px', background: 'var(--bg2)', borderRadius: 4, marginTop: 8 }}>
+            💡 분석 결과만 표시되었습니다. 실제 매칭 적용 (account 통합 / account_id 재연결)은 별도 작업으로,
+            결과 검증 후 진행 가능합니다.
+          </div>
+        </div>
+      )}
+
+      {!analysis && !analyzing && (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+          [분석 시작] 버튼을 클릭하면 사업계획과 영업현황 고객명을 자동 비교합니다. 데이터는 변경되지 않습니다.
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Settings() {
@@ -436,6 +739,36 @@ export default function Settings() {
 
   const handleImport = async () => {
     if (!preview || !parsedDataRef.current) return;
+
+    // ═══════════════════════════════════════════════════════════
+    // v3.5.2 진단 모드: importYears 상태를 사용자에게 명시 + 강제 확인
+    // ═══════════════════════════════════════════════════════════
+    const selectedYearsArr = importYears ? [...importYears].sort().reverse() : [];
+    const isYearsSet = importYears instanceof Set;
+
+    console.log('━━━━━━━━━ 🎯 Import 시작 진단 ━━━━━━━━━');
+    console.log('importYears 타입:', isYearsSet ? 'Set ✓' : `❌ ${typeof importYears}`);
+    console.log('importYears 크기:', importYears?.size);
+    console.log('선택된 연도:', selectedYearsArr);
+    console.log('importYear (legacy):', importYear);
+    console.log('Excel oDataRows:', parsedDataRef.current.oDataRows?.length || 0, '건');
+    console.log('Excel sDataRows:', parsedDataRef.current.sDataRows?.length || 0, '건');
+
+    if (selectedYearsArr.length === 0) {
+      alert('⚠ 연도를 1개 이상 선택해주세요.');
+      return;
+    }
+
+    // 강제 확인 — 사용자가 정확히 인지하고 진행하도록
+    const confirmMsg = `📋 Import 시작 확인\n\n` +
+      `▸ 선택한 연도: ${selectedYearsArr.join(', ')}\n` +
+      `▸ 이 연도의 데이터만 저장됩니다 (다른 연도는 제외)\n\n` +
+      `계속 진행하시겠습니까?`;
+    if (!confirm(confirmMsg)) {
+      console.log('사용자가 Import 취소');
+      return;
+    }
+
     setImporting(true);
 
     try {
@@ -457,6 +790,8 @@ export default function Settings() {
       const oValidRows = [];
       const unmatchedCustomerInfo = {};
       let oFiltered = 0;
+      let oYearFiltered = 0;
+      const oYearStats = {};
 
       oDataRows.forEach(row => {
         const status = String(row[oColIdx.status] || '').trim();
@@ -467,10 +802,18 @@ export default function Settings() {
         const dateVal = row[oColIdx.orderDate];
         if (!dateVal) return;
         const orderDate = excelDateToStr(dateVal);
-        // v3.4.1: 다중 연도 필터 (importYears Set 우선, 비어있으면 importYear 단일 필터 fallback)
         const yearPart = orderDate.slice(0, 4);
-        if (importYears && importYears.size > 0 && !importYears.has(yearPart)) return;
-        if ((!importYears || importYears.size === 0) && importYear && !orderDate.startsWith(importYear)) return;
+        oYearStats[yearPart] = (oYearStats[yearPart] || 0) + 1;
+        // v3.5.2: 명시적 필터 (디버깅 카운트 추가)
+        if (importYears instanceof Set && importYears.size > 0) {
+          if (!importYears.has(yearPart)) {
+            oYearFiltered++;
+            return;
+          }
+        } else if (importYear && !orderDate.startsWith(importYear)) {
+          oYearFiltered++;
+          return;
+        }
 
         const customer = String(row[oColIdx.customer] || '').trim();
         if (!customer) return;
@@ -496,19 +839,37 @@ export default function Settings() {
         }
       });
 
+      console.log('📊 수주 필터 결과:', {
+        총: oDataRows.length,
+        제외_상태: oFiltered,
+        제외_연도: oYearFiltered,
+        통과: oValidRows.length,
+        연도분포: oYearStats,
+      });
+
       // ── S 시트 (매출) 1차 패스: B/L Date 있고 매출금액 > 0 인 행만 확정 매출로 처리 ──
       const sValidRows = [];
       let sFiltered = 0;
+      let sYearFiltered = 0;
+      const sYearStats = {};
       const hasSheetS = sDataRows && sColIdx && sColIdx.orderDate >= 0 && sColIdx.customer >= 0;
       if (hasSheetS) {
         sDataRows.forEach(row => {
           const dateVal = row[sColIdx.orderDate];
           if (!dateVal) { sFiltered++; return; } // B/L Date 없으면 매출 미확정 → 제외
           const saleDate = excelDateToStr(dateVal);
-          // v3.4.1: 다중 연도 필터
           const yearPart = saleDate.slice(0, 4);
-          if (importYears && importYears.size > 0 && !importYears.has(yearPart)) return;
-          if ((!importYears || importYears.size === 0) && importYear && !saleDate.startsWith(importYear)) return;
+          sYearStats[yearPart] = (sYearStats[yearPart] || 0) + 1;
+          // v3.5.2: 명시적 필터 (디버깅 카운트)
+          if (importYears instanceof Set && importYears.size > 0) {
+            if (!importYears.has(yearPart)) {
+              sYearFiltered++;
+              return;
+            }
+          } else if (importYear && !saleDate.startsWith(importYear)) {
+            sYearFiltered++;
+            return;
+          }
 
           const customer = String(row[sColIdx.customer] || '').trim();
           if (!customer) return;
@@ -535,6 +896,15 @@ export default function Settings() {
           }
         });
       }
+
+      console.log('📊 매출 필터 결과:', {
+        총: sDataRows.length,
+        제외_BL_또는_금액0: sFiltered,
+        제외_연도: sYearFiltered,
+        통과: sValidRows.length,
+        연도분포: sYearStats,
+      });
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
       // 미매칭 고객 자동 계정 생성
       const newAccounts = [];
@@ -1602,6 +1972,93 @@ export default function Settings() {
           </div>
         )}
 
+        {/* v3.5.2: 진단 도구 — 정확한 데이터 분포 확인 */}
+        {(orders.length > 0 || sales.length > 0) && (() => {
+          // Source별 분포
+          const orderBySource = {};
+          orders.forEach(o => {
+            const src = o.source || '(없음)';
+            orderBySource[src] = (orderBySource[src] || 0) + 1;
+          });
+          const salesBySource = {};
+          sales.forEach(s => {
+            const src = s.source || '(없음)';
+            salesBySource[src] = (salesBySource[src] || 0) + 1;
+          });
+          // 연도별 분포 (excel_import_영업현황 source만)
+          const orderByYear = {};
+          orders.filter(o => o.source === 'excel_import_영업현황').forEach(o => {
+            const y = (o.order_date || '').slice(0, 4) || '(연도없음)';
+            orderByYear[y] = (orderByYear[y] || 0) + 1;
+          });
+          const salesByYear = {};
+          sales.filter(s => s.source === 'excel_import_영업현황_S').forEach(s => {
+            const y = (s.sale_date || '').slice(0, 4) || '(연도없음)';
+            salesByYear[y] = (salesByYear[y] || 0) + 1;
+          });
+
+          return (
+            <details style={{ marginBottom: 12, padding: 10, background: 'var(--bg2)', borderRadius: 6, border: '1px solid var(--border)' }}>
+              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>
+                🔍 데이터 진단 (Source별 / 연도별 정확한 건수)
+              </summary>
+              <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 11 }}>
+                {/* 수주 */}
+                <div>
+                  <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>📦 수주 (Total: {orders.length.toLocaleString()}건)</div>
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>Source별</div>
+                    {Object.entries(orderBySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
+                      <div key={src} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 4px', background: 'var(--bg)', marginBottom: 1, borderRadius: 2 }}>
+                        <span style={{ color: 'var(--text2)' }}>{src}</span>
+                        <strong>{n.toLocaleString()}건</strong>
+                      </div>
+                    ))}
+                  </div>
+                  {Object.keys(orderByYear).length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>영업현황 — 연도별</div>
+                      {Object.entries(orderByYear).sort((a, b) => b[0].localeCompare(a[0])).map(([y, n]) => (
+                        <div key={y} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 4px', background: 'var(--bg)', marginBottom: 1, borderRadius: 2 }}>
+                          <span>{y}년</span>
+                          <strong>{n.toLocaleString()}건</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {/* 매출 */}
+                <div>
+                  <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>💰 매출 (Total: {sales.length.toLocaleString()}건)</div>
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>Source별</div>
+                    {Object.entries(salesBySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
+                      <div key={src} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 4px', background: 'var(--bg)', marginBottom: 1, borderRadius: 2 }}>
+                        <span style={{ color: 'var(--text2)' }}>{src}</span>
+                        <strong>{n.toLocaleString()}건</strong>
+                      </div>
+                    ))}
+                  </div>
+                  {Object.keys(salesByYear).length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>영업현황_S — 연도별</div>
+                      {Object.entries(salesByYear).sort((a, b) => b[0].localeCompare(a[0])).map(([y, n]) => (
+                        <div key={y} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 4px', background: 'var(--bg)', marginBottom: 1, borderRadius: 2 }}>
+                          <span>{y}년</span>
+                          <strong>{n.toLocaleString()}건</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text3)' }}>
+                ※ 이 표는 React state(Firestore 실시간 구독) 기반. 비정상 source가 있거나 연도별 분포 이상하면 알려주세요.
+              </div>
+            </details>
+          );
+        })()}
+
         <div style={{ marginBottom: 12 }}>
           <input ref={fileRef} type="file" accept=".xlsx,.xlsm,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
           <button className="btn btn-primary" onClick={() => fileRef.current?.click()}>영업현황 엑셀 선택</button>
@@ -1781,6 +2238,14 @@ export default function Settings() {
           </div>
         )}
       </div>
+
+      {/* ── v3.6: 고객명 퍼지 매칭 분석 ── */}
+      <FuzzyMatchAnalyzer
+        accounts={accounts}
+        orders={orders}
+        sales={sales}
+        businessPlans={businessPlans}
+      />
 
       {/* ── 사업계획 Import ── */}
       <div className="card" style={{ marginBottom: 16 }}>
