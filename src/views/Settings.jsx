@@ -82,10 +82,13 @@ function fmtKRW(n) {
    v3.6 — 고객명 퍼지 매칭 분석기 (Dry-run)
    사업계획의 customer_name 과 영업현황으로 자동 생성된 account 간 매칭
    ══════════════════════════════════════════════════════════════════ */
-function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans }) {
+function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans, applyFuzzyMatches, showToast }) {
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [threshold, setThreshold] = useState(0.7);
+  // v3.6 Phase 2: 매칭 적용용 체크박스 state
+  const [selectedMatches, setSelectedMatches] = useState(new Set());
+  const [applying, setApplying] = useState(false);
 
   const runAnalysis = async () => {
     setAnalyzing(true);
@@ -191,11 +194,20 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans }) {
         plannedActualSalesGain += m.account.sales_total;
       });
 
+      const sortedMatches = matches.sort((a, b) => b.score - a.score);
+
+      // v3.6 Phase 2: 신뢰도 90% 이상 자동 체크 (안전한 default)
+      const autoSelected = new Set();
+      sortedMatches.forEach(m => {
+        if (m.score >= 0.9) autoSelected.add(m.account.account_id);
+      });
+      setSelectedMatches(autoSelected);
+
       setAnalysis({
         planTotalCustomers: planList.length,
         planUnmatched: planList.filter(p => !p.account_id).length,
         unmatchedAccounts,
-        matches: matches.sort((a, b) => b.score - a.score),
+        matches: sortedMatches,
         noMatches: noMatches.sort((a, b) => (b.account.order_total + b.account.sales_total) - (a.account.order_total + a.account.sales_total)),
         before: {
           matchedCount: currentMatched,
@@ -286,16 +298,41 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans }) {
             </div>
           )}
 
-          {/* 매칭 후보 리스트 */}
+          {/* 매칭 후보 리스트 + Phase 2: 체크박스 선택 + 적용 */}
           {analysis.matches.length > 0 && (
             <details open style={{ marginBottom: 12 }}>
               <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: '6px 0' }}>
                 ✅ 매칭 후보 {analysis.matches.length}건 (신뢰도 {Math.round(threshold * 100)}% 이상)
+                <span style={{ marginLeft: 8, color: 'var(--accent)', fontSize: 11 }}>
+                  · 선택 {selectedMatches.size}건
+                </span>
               </summary>
+              {/* 일괄 선택 버튼 */}
+              <div style={{ display: 'flex', gap: 6, marginTop: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => {
+                    const all = new Set(analysis.matches.map(m => m.account.account_id));
+                    setSelectedMatches(all);
+                  }}
+                  style={{ fontSize: 10, padding: '3px 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}
+                >전체 선택</button>
+                <button
+                  onClick={() => {
+                    const high = new Set(analysis.matches.filter(m => m.score >= 0.9).map(m => m.account.account_id));
+                    setSelectedMatches(high);
+                  }}
+                  style={{ fontSize: 10, padding: '3px 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}
+                >신뢰도 90%+ 만</button>
+                <button
+                  onClick={() => setSelectedMatches(new Set())}
+                  style={{ fontSize: 10, padding: '3px 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}
+                >전체 해제</button>
+              </div>
               <div className="table-wrap" style={{ maxHeight: 400, marginTop: 6 }}>
                 <table className="data-table" style={{ fontSize: 11 }}>
                   <thead>
                     <tr>
+                      <th style={{ width: 30 }}>적용</th>
                       <th>영업현황 Account 명</th>
                       <th>→</th>
                       <th>사업계획 고객명</th>
@@ -307,11 +344,28 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans }) {
                   <tbody>
                     {analysis.matches.map((m, i) => {
                       const conf = confidenceLabel(m.score);
+                      const isSelected = selectedMatches.has(m.account.account_id);
+                      const toggle = () => {
+                        setSelectedMatches(prev => {
+                          const next = new Set(prev);
+                          if (next.has(m.account.account_id)) next.delete(m.account.account_id);
+                          else next.add(m.account.account_id);
+                          return next;
+                        });
+                      };
                       return (
-                        <tr key={i}>
-                          <td style={{ fontWeight: 600 }}>{m.account.name}</td>
+                        <tr key={i} style={{ background: isSelected ? 'rgba(46,125,50,0.04)' : undefined }}>
+                          <td style={{ textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={toggle}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </td>
+                          <td style={{ fontWeight: 600, cursor: 'pointer' }} onClick={toggle}>{m.account.name}</td>
                           <td style={{ textAlign: 'center', color: 'var(--text3)' }}>→</td>
-                          <td style={{ color: 'var(--accent)' }}>{m.candidate.name}</td>
+                          <td style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={toggle}>{m.candidate.name}</td>
                           <td style={{ textAlign: 'right' }}>
                             <span style={{ padding: '1px 6px', borderRadius: 3, background: conf.color + '22', color: conf.color, fontWeight: 700 }}>
                               {Math.round(m.score * 100)}% ({conf.label})
@@ -325,6 +379,55 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans }) {
                   </tbody>
                 </table>
               </div>
+
+              {/* Phase 2: 매칭 적용 버튼 */}
+              {selectedMatches.size > 0 && (() => {
+                // 선택된 매칭의 합계 계산
+                const selected = analysis.matches.filter(m => selectedMatches.has(m.account.account_id));
+                const totalOrder = selected.reduce((s, m) => s + m.account.order_total, 0);
+                const totalSales = selected.reduce((s, m) => s + m.account.sales_total, 0);
+                return (
+                  <div style={{ marginTop: 12, padding: 10, background: 'rgba(46,125,50,0.06)', borderRadius: 6, border: '1px solid rgba(46,125,50,0.3)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 6 }}>
+                      💾 선택 항목 매칭 적용 준비
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>
+                      선택 <strong>{selectedMatches.size}건</strong> · 사업계획 고객 실적 보강:
+                      수주 <strong>{fmtKRW(totalOrder)}</strong> / 매출 <strong>{fmtKRW(totalSales)}</strong>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 10 }}>
+                      ※ 사업계획 plan들의 <code>account_id</code>가 영업현황 account ID로 연결됨.
+                      고객 이름은 변경 없음. Report 통계가 즉시 정확해집니다.
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      disabled={applying}
+                      onClick={async () => {
+                        if (!confirm(`선택한 ${selectedMatches.size}건의 매칭을 적용하시겠습니까?\n\n• 사업계획 plan에 영업현황 account_id 연결\n• 데이터 손실 없음 (account 통합 X, ID 연결만)`)) return;
+                        setApplying(true);
+                        try {
+                          const matchesToApply = selected.map(m => ({
+                            plan_customer_name: m.candidate.name,
+                            account_id: m.account.account_id,
+                          }));
+                          const updated = await applyFuzzyMatches(matchesToApply);
+                          if (updated > 0) {
+                            // 적용 후 자동 재분석으로 결과 업데이트
+                            setAnalysis(null);
+                            setSelectedMatches(new Set());
+                          }
+                        } catch (e) {
+                          showToast('매칭 적용 실패: ' + e.message, 'error');
+                        } finally {
+                          setApplying(false);
+                        }
+                      }}
+                    >
+                      {applying ? '적용 중...' : `💾 선택한 ${selectedMatches.size}건 매칭 적용`}
+                    </button>
+                  </div>
+                );
+              })()}
             </details>
           )}
 
@@ -381,7 +484,7 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans }) {
 }
 
 export default function Settings() {
-  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers } = useAccount();
+  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches } = useAccount();
 
   /* ══════════════════════════════════════
      팀 멤버 관리
@@ -2239,12 +2342,14 @@ export default function Settings() {
         )}
       </div>
 
-      {/* ── v3.6: 고객명 퍼지 매칭 분석 ── */}
+      {/* ── v3.6: 고객명 퍼지 매칭 분석 + Phase 2 적용 ── */}
       <FuzzyMatchAnalyzer
         accounts={accounts}
         orders={orders}
         sales={sales}
         businessPlans={businessPlans}
+        applyFuzzyMatches={applyFuzzyMatches}
+        showToast={showToast}
       />
 
       {/* ── 사업계획 Import ── */}

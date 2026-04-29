@@ -380,6 +380,45 @@ export default function AccountProvider({ children }) {
     showToast(`${plans.length}건 사업계획 import 완료 (유형: ${importedTypes.join(', ')})`, 'success');
   }, []);
 
+  /* ── v3.6 Phase 2: 퍼지 매칭 적용 ──
+     사업계획 plan들의 account_id를 영업현황 account_id로 연결.
+     이름은 변경 없음 (사업계획 customer_name 유지).
+     매칭 후 Report 통계가 자동으로 정확해짐. */
+  const applyFuzzyMatches = useCallback(async (matches) => {
+    // matches: [{ plan_customer_name: string, account_id: string }, ...]
+    const updates = [];
+    setBusinessPlans(prev => {
+      const updateMap = {};
+      matches.forEach(m => {
+        prev.filter(p =>
+          (p.type === 'customer' || !p.type) &&
+          (p.customer_name || '').trim().toLowerCase() === m.plan_customer_name.trim().toLowerCase()
+        ).forEach(p => {
+          if (p.account_id !== m.account_id) {
+            updateMap[p.id] = { ...p, account_id: m.account_id, updated_at: new Date().toISOString().slice(0, 10) };
+          }
+        });
+      });
+      const updateIds = new Set(Object.keys(updateMap));
+      const next = prev.map(p => updateIds.has(p.id) ? updateMap[p.id] : p);
+      // updates 배열 채우기 (Firestore 저장용)
+      Object.values(updateMap).forEach(u => updates.push(u));
+      return next;
+    });
+
+    if (FIREBASE_ENABLED && updates.length > 0) {
+      try {
+        await batchSaveBusinessPlans(updates);
+      } catch (e) {
+        console.error('퍼지 매칭 적용 실패:', e);
+        showToast('퍼지 매칭 적용 실패: ' + e.message, 'error');
+        return 0;
+      }
+    }
+    showToast(`퍼지 매칭 적용 완료: ${matches.length}개 고객, plan ${updates.length}건 업데이트`, 'success');
+    return updates.length;
+  }, []);
+
   const clearBusinessPlans = useCallback(async (year) => {
     const toRemove = businessPlans.filter(p => p.year === year);
     setBusinessPlans(prev => prev.filter(p => p.year !== year));
@@ -735,6 +774,7 @@ export default function AccountProvider({ children }) {
     saveContractItem, removeContract, getContractsForAccount,
     saveForecast, removeForecast, getForecastsForAccount,
     importBusinessPlans, clearBusinessPlans, getPlansForAccount,
+    applyFuzzyMatches,
     saveTeamTask, removeTeamTask,
     toast, showToast,
     fbStatus,
