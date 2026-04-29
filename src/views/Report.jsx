@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES, SALES_TEAMS, TASK_TYPES, TASK_STATUSES, TASK_PRIORITIES } from '../lib/constants';
 import { daysSince } from '../lib/utils';
@@ -403,6 +403,15 @@ function BreakdownTable({ title, rows, periodLabel = '금주', showYtd = false, 
 /* ── Monthly breakdown table with monthly target ── */
 function MonthlyBreakdownTable({ title, rows }) {
   if (!rows || rows.length === 0) return null;
+  // v3.8: 합계 행 (데이터 일관성 검증)
+  const totals = rows.reduce((acc, r) => ({
+    monthTarget: acc.monthTarget + (r.monthTarget || 0),
+    monthActual: acc.monthActual + (r.monthActual || 0),
+    ytdActual: acc.ytdActual + (r.ytdActual || 0),
+    annualTarget: acc.annualTarget + (r.annualTarget || 0),
+  }), { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 });
+  const totalMonthPct = pct(totals.monthActual, totals.monthTarget);
+  const totalAnnualPct = pct(totals.ytdActual, totals.annualTarget);
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{title}</div>
@@ -443,6 +452,24 @@ function MonthlyBreakdownTable({ title, rows }) {
                 </tr>
               );
             })}
+            {/* v3.8: 합계 행 */}
+            <tr style={{ background: 'var(--bg2)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
+              <td>📊 합계</td>
+              <td style={{ textAlign: 'right' }}>{fmtKRW(totals.monthTarget)}</td>
+              <td style={{ textAlign: 'right' }}>{fmtKRW(totals.monthActual)}</td>
+              <td style={{ textAlign: 'right' }}>
+                {totals.monthTarget > 0
+                  ? <span className={`score-badge ${pctColor(totalMonthPct)}`}>{totalMonthPct}%</span>
+                  : '-'}
+              </td>
+              <td style={{ textAlign: 'right' }}>{fmtKRW(totals.ytdActual)}</td>
+              <td style={{ textAlign: 'right' }}>{fmtKRW(totals.annualTarget)}</td>
+              <td style={{ textAlign: 'right' }}>
+                {totals.annualTarget > 0
+                  ? <span className={`score-badge ${pctColor(totalAnnualPct)}`}>{totalAnnualPct}%</span>
+                  : '-'}
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -4010,56 +4037,50 @@ export default function Report() {
 
           {/* [v3.1 제거] 섹션 2-2 팀별 월간 매출 — 매출은 1-2 월별 추이 + KPI 카드로 충분 */}
 
-          {/* ══ 섹션 2-3 — 담당자별 월간 수주 실적 (신 분류 체계) ══ */}
-          {monthlyReportData.repMonthRows.length > 0 && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>■ 2-3. 담당자별 월간 수주 실적</span>
-                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
-                  ({monthlyReportData.monthLabel}, 달성률 순, 단위: 백만원)
-                </span>
-              </div>
-              <div className="table-wrap">
-                <table className="data-table" style={{ fontSize: 12 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ minWidth: 110 }}>담당자 / 버킷</th>
-                      <th style={{ textAlign: 'right' }}>당월 목표</th>
-                      <th style={{ textAlign: 'right' }}>당월 실적</th>
-                      <th style={{ textAlign: 'right' }}>달성률</th>
-                      <th style={{ textAlign: 'right' }}>Gap</th>
-                      <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>YTD 실적</th>
-                      <th style={{ textAlign: 'right' }}>연간 목표</th>
-                      <th style={{ textAlign: 'right' }}>연간 달성률</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {monthlyReportData.repMonthRows.map((r, i) => {
-                      const gap = r.monthTarget - r.monthActual;
-                      const annualPct = r.annualTarget > 0 ? Math.round((r.ytdActual / r.annualTarget) * 100) : 0;
-                      const monthPct = r.monthTarget > 0 ? Math.round((r.monthActual / r.monthTarget) * 100) : 0;
-                      const hasDrill = r.isBucket && (
-                        (r.isNew ? monthlyReportData.newCustomerDetails[r.label] : monthlyReportData.etcCustomerDetails[r.label])?.length > 0
-                      );
-                      const isOpen = repDrillOpen[`m-${r.label}`];
-                      return (
-                        <>
-                          <tr key={r.label} style={{ background: r.isBucket ? 'var(--bg2)' : undefined }}>
-                            <td style={{ fontWeight: 600 }}>
-                              {hasDrill ? (
-                                <button onClick={() => toggleRepDrill(`m-${r.label}`)}
-                                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, color: r.isNew ? '#2563eb' : 'var(--accent)', padding: 0 }}>
-                                  {isOpen ? '▾' : '▸'} {r.label}
-                                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 4 }}>
-                                    ({(r.isNew ? monthlyReportData.newCustomerDetails[r.label] : monthlyReportData.etcCustomerDetails[r.label]).length}사)
-                                  </span>
-                                </button>
-                              ) : (
-                                <span style={{ color: r.isBucket ? (r.isNew ? '#2563eb' : 'var(--text2)') : undefined }}>
-                                  {r.label}
-                                </span>
-                              )}
-                            </td>
+          {/* ══ 섹션 2-3 — 담당자별 월간 수주 실적 (v3.8: 사업계획 매칭 담당자만, 버킷은 4-2로 이동) ══ */}
+          {monthlyReportData.repMonthRows.length > 0 && (() => {
+            // 사업계획 매칭 담당자만 (버킷 제외)
+            const planRepRows = monthlyReportData.repMonthRows.filter(r => !r.isBucket);
+            // 합계
+            const tot = planRepRows.reduce((acc, r) => ({
+              monthTarget: acc.monthTarget + (r.monthTarget || 0),
+              monthActual: acc.monthActual + (r.monthActual || 0),
+              ytdActual: acc.ytdActual + (r.ytdActual || 0),
+              annualTarget: acc.annualTarget + (r.annualTarget || 0),
+            }), { monthTarget: 0, monthActual: 0, ytdActual: 0, annualTarget: 0 });
+            const totGap = tot.monthTarget - tot.monthActual;
+            const totMonthPct = tot.monthTarget > 0 ? Math.round((tot.monthActual / tot.monthTarget) * 100) : 0;
+            const totAnnualPct = tot.annualTarget > 0 ? Math.round((tot.ytdActual / tot.annualTarget) * 100) : 0;
+            return (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>■ 2-3. 담당자별 월간 수주 실적</span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                    (사업계획 매칭 담당자만 · 단위: 백만원 · 버킷(국내/해외 기타·신규)은 ■4-2 고객별로 이동)
+                  </span>
+                </div>
+                <div className="table-wrap">
+                  <table className="data-table" style={{ fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ minWidth: 110 }}>담당자</th>
+                        <th style={{ textAlign: 'right' }}>당월 목표</th>
+                        <th style={{ textAlign: 'right' }}>당월 실적</th>
+                        <th style={{ textAlign: 'right' }}>달성률</th>
+                        <th style={{ textAlign: 'right' }}>Gap</th>
+                        <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>YTD 실적</th>
+                        <th style={{ textAlign: 'right' }}>연간 목표</th>
+                        <th style={{ textAlign: 'right' }}>연간 달성률</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {planRepRows.map((r) => {
+                        const gap = r.monthTarget - r.monthActual;
+                        const annualPct = r.annualTarget > 0 ? Math.round((r.ytdActual / r.annualTarget) * 100) : 0;
+                        const monthPct = r.monthTarget > 0 ? Math.round((r.monthActual / r.monthTarget) * 100) : 0;
+                        return (
+                          <tr key={r.label}>
+                            <td style={{ fontWeight: 600 }}>{r.label}</td>
                             <td style={{ textAlign: 'right' }}>{fmtM(r.monthTarget)}</td>
                             <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{fmtM(r.monthActual)}</td>
                             <td style={{ textAlign: 'right', ...achieveStyle(monthPct) }}>{r.monthTarget > 0 ? `${monthPct}%` : '-'}</td>
@@ -4070,38 +4091,30 @@ export default function Report() {
                             <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(r.annualTarget)}</td>
                             <td style={{ textAlign: 'right', ...achieveStyle(annualPct) }}>{r.annualTarget > 0 ? `${annualPct}%` : '-'}</td>
                           </tr>
-                          {isOpen && hasDrill && (
-                            <tr key={`${r.label}-drill`}>
-                              <td colSpan={8} style={{ padding: 8, background: r.isNew ? 'rgba(219,234,254,0.3)' : 'rgba(254,243,199,0.2)', borderTop: '1px dashed var(--border)' }}>
-                                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
-                                  {r.isNew ? '🆕 신규 고객 상세 (전년도 수주 無)' : '📋 기타 고객 상세 (사업계획 외)'}
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
-                                  {(r.isNew ? monthlyReportData.newCustomerDetails[r.label] : monthlyReportData.etcCustomerDetails[r.label]).map((c, j) => (
-                                    <div key={j} style={{ fontSize: 11, padding: '3px 6px', background: 'var(--bg)', borderRadius: 4 }}>
-                                      <a href="#" onClick={(e) => { e.preventDefault(); if (c.accountId) { const acc = accounts.find(a => a.id === c.accountId); if (acc) setEditingAccount(acc); } }}
-                                        style={{ color: c.accountId ? 'var(--accent)' : 'var(--text)', textDecoration: 'none', fontWeight: 600 }}>
-                                        {c.name}
-                                      </a>
-                                      <span style={{ float: 'right', fontWeight: 600 }}>{fmtM(c.amount)}</span>
-                                      <span style={{ fontSize: 9, color: 'var(--text3)', display: 'block' }}>{c.orderCount}건 (YTD)</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                        );
+                      })}
+                      {/* v3.8: 합계 행 */}
+                      <tr style={{ background: 'var(--bg2)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
+                        <td>📊 합계 (담당자별)</td>
+                        <td style={{ textAlign: 'right' }}>{fmtM(tot.monthTarget)}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(tot.monthActual)}</td>
+                        <td style={{ textAlign: 'right', ...achieveStyle(totMonthPct) }}>{tot.monthTarget > 0 ? `${totMonthPct}%` : '-'}</td>
+                        <td style={{ textAlign: 'right', color: totGap > 0 ? 'var(--red)' : totGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                          {totGap > 0 ? `-${fmtM(totGap)}` : totGap < 0 ? `+${fmtM(-totGap)}` : '0'}
+                        </td>
+                        <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>{fmtM(tot.ytdActual)}</td>
+                        <td style={{ textAlign: 'right' }}>{fmtM(tot.annualTarget)}</td>
+                        <td style={{ textAlign: 'right', ...achieveStyle(totAnnualPct) }}>{tot.annualTarget > 0 ? `${totAnnualPct}%` : '-'}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                  ※ 사업계획에 등록된 담당자(개별 고객) 실적만 표시 · 사업계획 외 고객(국내/해외 기타·신규)은 ■4-2 고객별 표 하단에서 확인
+                </div>
               </div>
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                ※ 사업계획상 담당자 + 팀원으로 구성 · 계획 외 고객은 국내/해외 기타(전년도 수주 有) 또는 신규(전년도 수주 無)로 자동 분류 · ▸ 클릭 시 상세 펼치기
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ══ Page 3 — Strategic Analysis ══ */}
           <ChapterHeader
@@ -4166,63 +4179,212 @@ export default function Report() {
 
           {/* [v3.1 제거] 섹션 4 Top 10 거래처 (전월비교) — 시즌성 고객은 의미 없음, GAP 심층분석으로 통합 */}
 
-          {/* ══ 섹션 4-2 — 고객별 당월 실적 (목표 설정된 모든 고객) ══ */}
-          {monthlyReportData.monthlyByCustomer.length > 0 && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>■ 4-2. 고객별 당월 수주 실적</span>
-                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
-                  ({monthlyReportData.monthLabel} 목표 설정 고객 {monthlyReportData.monthlyByCustomer.length}사, 달성률 높은 순)
-                </span>
-              </div>
-              <div className="table-wrap" style={{ maxHeight: 400 }}>
-                <table className="data-table" style={{ fontSize: 11 }}>
-                  <thead>
-                    <tr>
-                      <th>거래처명</th>
-                      <th>담당</th>
-                      <th style={{ textAlign: 'right' }}>당월 목표</th>
-                      <th style={{ textAlign: 'right' }}>당월 실적</th>
-                      <th style={{ textAlign: 'right' }}>달성률</th>
-                      <th style={{ textAlign: 'right' }}>Gap</th>
-                      <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>YTD 목표</th>
-                      <th style={{ textAlign: 'right' }}>YTD 실적</th>
-                      <th style={{ textAlign: 'right' }}>YTD 달성률</th>
-                      <th style={{ textAlign: 'right' }}>YTD Gap</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {monthlyReportData.monthlyByCustomer.map((p, i) => (
-                      <tr key={i} style={{ background: p.monthPct < 80 ? 'rgba(254, 226, 226, 0.3)' : undefined }}>
-                        <td style={{ fontWeight: 600 }}>
-                          {p.accountId ? (
-                            <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === p.accountId); if (acc) setEditingAccount(acc); }}
-                              style={{ color: 'var(--accent)', textDecoration: 'none' }}>{p.name}</a>
-                          ) : p.name}
+          {/* ══ v3.8: 섹션 4-2 — 고객별 당월 수주 실적 (사업계획 매칭 + 4개 버킷 + 합계) ══ */}
+          {(monthlyReportData.monthlyByCustomer.length > 0 || monthlyReportData.repMonthRows.some(r => r.isBucket)) && (() => {
+            const matchedRows = monthlyReportData.monthlyByCustomer || [];
+            const bucketRows = monthlyReportData.repMonthRows.filter(r => r.isBucket);
+            const matchedSum = matchedRows.reduce((acc, p) => ({
+              monthTarget: acc.monthTarget + (p.monthTarget || 0),
+              monthActual: acc.monthActual + (p.monthActual || 0),
+              ytdTarget: acc.ytdTarget + (p.ytdTarget || 0),
+              ytdActual: acc.ytdActual + (p.ytdActual || 0),
+            }), { monthTarget: 0, monthActual: 0, ytdTarget: 0, ytdActual: 0 });
+            const bucketSum = bucketRows.reduce((acc, r) => ({
+              monthTarget: acc.monthTarget + (r.monthTarget || 0),
+              monthActual: acc.monthActual + (r.monthActual || 0),
+              ytdTarget: acc.ytdTarget + (r.annualTarget || 0),
+              ytdActual: acc.ytdActual + (r.ytdActual || 0),
+            }), { monthTarget: 0, monthActual: 0, ytdTarget: 0, ytdActual: 0 });
+            const grandTotal = {
+              monthTarget: matchedSum.monthTarget + bucketSum.monthTarget,
+              monthActual: matchedSum.monthActual + bucketSum.monthActual,
+              ytdTarget: matchedSum.ytdTarget + bucketSum.ytdTarget,
+              ytdActual: matchedSum.ytdActual + bucketSum.ytdActual,
+            };
+            const totMonthPct = grandTotal.monthTarget > 0 ? Math.round((grandTotal.monthActual / grandTotal.monthTarget) * 100) : 0;
+            const totYtdPct = grandTotal.ytdTarget > 0 ? Math.round((grandTotal.ytdActual / grandTotal.ytdTarget) * 100) : 0;
+            const totMonthGap = grandTotal.monthTarget - grandTotal.monthActual;
+            const totYtdGap = grandTotal.ytdTarget - grandTotal.ytdActual;
+            return (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>■ 4-2. 고객별 당월 수주 실적</span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                    (사업계획 매칭 {matchedRows.length}사 + 사업계획 외 4개 카테고리 · 단위: 백만원)
+                  </span>
+                </div>
+                <div className="table-wrap" style={{ maxHeight: 600 }}>
+                  <table className="data-table" style={{ fontSize: 11 }}>
+                    <thead>
+                      <tr>
+                        <th>거래처명 / 카테고리</th>
+                        <th>담당</th>
+                        <th style={{ textAlign: 'right' }}>당월 목표</th>
+                        <th style={{ textAlign: 'right' }}>당월 실적</th>
+                        <th style={{ textAlign: 'right' }}>달성률</th>
+                        <th style={{ textAlign: 'right' }}>Gap</th>
+                        <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>YTD 목표</th>
+                        <th style={{ textAlign: 'right' }}>YTD 실적</th>
+                        <th style={{ textAlign: 'right' }}>YTD 달성률</th>
+                        <th style={{ textAlign: 'right' }}>YTD Gap</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* ── 그룹 1: 사업계획 매칭 고객 ── */}
+                      {matchedRows.length > 0 && (
+                        <tr style={{ background: 'rgba(46,125,50,0.06)', fontWeight: 700 }}>
+                          <td colSpan={10} style={{ fontSize: 11, color: 'var(--accent)' }}>
+                            📋 사업계획 매칭 고객 ({matchedRows.length}사)
+                          </td>
+                        </tr>
+                      )}
+                      {matchedRows.map((p, i) => (
+                        <tr key={`m-${i}`} style={{ background: p.monthPct < 80 ? 'rgba(254, 226, 226, 0.3)' : undefined }}>
+                          <td style={{ fontWeight: 600 }}>
+                            {p.accountId ? (
+                              <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === p.accountId); if (acc) setEditingAccount(acc); }}
+                                style={{ color: 'var(--accent)', textDecoration: 'none' }}>{p.name}</a>
+                            ) : p.name}
+                          </td>
+                          <td style={{ color: 'var(--text2)' }}>{p.rep}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtM(p.monthTarget)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: p.monthActual > 0 ? 'var(--accent)' : 'var(--red)' }}>{fmtM(p.monthActual)}</td>
+                          <td style={{ textAlign: 'right', ...achieveStyle(p.monthPct) }}>{p.monthPct}%</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: p.monthGap > 0 ? 'var(--red)' : p.monthGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                            {p.monthGap > 0 ? `-${fmtM(p.monthGap)}` : p.monthGap < 0 ? `+${fmtM(-p.monthGap)}` : '0'}
+                          </td>
+                          <td style={{ textAlign: 'right', color: 'var(--text3)', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>{fmtM(p.ytdTarget)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(p.ytdActual)}</td>
+                          <td style={{ textAlign: 'right', ...achieveStyle(p.ytdPct) }}>{p.ytdPct}%</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: p.ytdGap > 0 ? 'var(--red)' : p.ytdGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                            {p.ytdGap > 0 ? `-${fmtM(p.ytdGap)}` : p.ytdGap < 0 ? `+${fmtM(-p.ytdGap)}` : '0'}
+                          </td>
+                        </tr>
+                      ))}
+                      {matchedRows.length > 0 && (
+                        <tr style={{ background: 'rgba(46,125,50,0.04)', fontWeight: 600, fontSize: 11 }}>
+                          <td colSpan={2} style={{ paddingLeft: 16, color: 'var(--text2)' }}>↳ 소계 (사업계획 매칭)</td>
+                          <td style={{ textAlign: 'right' }}>{fmtM(matchedSum.monthTarget)}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(matchedSum.monthActual)}</td>
+                          <td style={{ textAlign: 'right' }}>{matchedSum.monthTarget > 0 ? `${Math.round((matchedSum.monthActual / matchedSum.monthTarget) * 100)}%` : '-'}</td>
+                          <td></td>
+                          <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12, color: 'var(--text3)' }}>{fmtM(matchedSum.ytdTarget)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtM(matchedSum.ytdActual)}</td>
+                          <td style={{ textAlign: 'right' }}>{matchedSum.ytdTarget > 0 ? `${Math.round((matchedSum.ytdActual / matchedSum.ytdTarget) * 100)}%` : '-'}</td>
+                          <td></td>
+                        </tr>
+                      )}
+                      {/* ── 그룹 2: 사업계획 외 4개 카테고리 ── */}
+                      {bucketRows.length > 0 && (
+                        <tr style={{ background: 'rgba(217,119,6,0.06)', fontWeight: 700 }}>
+                          <td colSpan={10} style={{ fontSize: 11, color: '#b45309' }}>
+                            🪣 사업계획 외 (4개 카테고리)
+                          </td>
+                        </tr>
+                      )}
+                      {bucketRows.map((r) => {
+                        const detailList = r.isNew ? monthlyReportData.newCustomerDetails[r.label] : monthlyReportData.etcCustomerDetails[r.label];
+                        const hasDrill = detailList?.length > 0;
+                        const isOpen = repDrillOpen[`m-${r.label}`];
+                        const monthGap = r.monthTarget - r.monthActual;
+                        const monthPct = r.monthTarget > 0 ? Math.round((r.monthActual / r.monthTarget) * 100) : 0;
+                        const ytdPct = r.annualTarget > 0 ? Math.round((r.ytdActual / r.annualTarget) * 100) : 0;
+                        const ytdGap = r.annualTarget - r.ytdActual;
+                        return (
+                          <Fragment key={r.label}>
+                            <tr style={{ background: 'rgba(254,243,199,0.15)' }}>
+                              <td style={{ fontWeight: 600 }}>
+                                {hasDrill ? (
+                                  <button onClick={() => toggleRepDrill(`m-${r.label}`)}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, color: r.isNew ? '#2563eb' : '#b45309', padding: 0, fontSize: 11 }}>
+                                    {isOpen ? '▾' : '▸'} 🪣 {r.label}
+                                    <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 4 }}>
+                                      ({detailList.length}사)
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <span style={{ color: r.isNew ? '#2563eb' : '#b45309' }}>🪣 {r.label}</span>
+                                )}
+                              </td>
+                              <td style={{ color: 'var(--text3)' }}>-</td>
+                              <td style={{ textAlign: 'right' }}>{r.monthTarget > 0 ? fmtM(r.monthTarget) : '-'}</td>
+                              <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{fmtM(r.monthActual)}</td>
+                              <td style={{ textAlign: 'right' }}>{r.monthTarget > 0 ? `${monthPct}%` : '-'}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text3)' }}>
+                                {r.monthTarget > 0 ? (monthGap > 0 ? `-${fmtM(monthGap)}` : `+${fmtM(-monthGap)}`) : '-'}
+                              </td>
+                              <td style={{ textAlign: 'right', color: 'var(--text3)', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>
+                                {r.annualTarget > 0 ? fmtM(r.annualTarget) : '-'}
+                              </td>
+                              <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(r.ytdActual)}</td>
+                              <td style={{ textAlign: 'right' }}>{r.annualTarget > 0 ? `${ytdPct}%` : '-'}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text3)' }}>
+                                {r.annualTarget > 0 ? (ytdGap > 0 ? `-${fmtM(ytdGap)}` : `+${fmtM(-ytdGap)}`) : '-'}
+                              </td>
+                            </tr>
+                            {isOpen && hasDrill && (
+                              <tr>
+                                <td colSpan={10} style={{ padding: 8, background: r.isNew ? 'rgba(219,234,254,0.3)' : 'rgba(254,243,199,0.2)', borderTop: '1px dashed var(--border)' }}>
+                                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
+                                    {r.isNew ? '🆕 신규 고객 상세 (전년도 수주 無)' : '📋 기타 고객 상세 (사업계획 외)'} — {detailList.length}사
+                                  </div>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
+                                    {detailList.map((c, j) => (
+                                      <div key={j} style={{ fontSize: 11, padding: '3px 6px', background: 'var(--bg)', borderRadius: 4 }}>
+                                        <a href="#" onClick={(e) => { e.preventDefault(); if (c.accountId) { const acc = accounts.find(a => a.id === c.accountId); if (acc) setEditingAccount(acc); } }}
+                                          style={{ color: c.accountId ? 'var(--accent)' : 'var(--text)', textDecoration: 'none', fontWeight: 600 }}>
+                                          {c.name}
+                                        </a>
+                                        <span style={{ float: 'right', fontWeight: 600 }}>{fmtM(c.amount)}</span>
+                                        <span style={{ fontSize: 9, color: 'var(--text3)', display: 'block' }}>{c.orderCount}건 (YTD)</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                      {bucketRows.length > 0 && (
+                        <tr style={{ background: 'rgba(217,119,6,0.04)', fontWeight: 600, fontSize: 11 }}>
+                          <td colSpan={2} style={{ paddingLeft: 16, color: 'var(--text2)' }}>↳ 소계 (사업계획 외)</td>
+                          <td style={{ textAlign: 'right' }}>{fmtM(bucketSum.monthTarget)}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(bucketSum.monthActual)}</td>
+                          <td></td>
+                          <td></td>
+                          <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12, color: 'var(--text3)' }}>{fmtM(bucketSum.ytdTarget)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtM(bucketSum.ytdActual)}</td>
+                          <td></td>
+                          <td></td>
+                        </tr>
+                      )}
+                      {/* v3.8: 전체 합계 행 */}
+                      <tr style={{ background: 'var(--bg2)', fontWeight: 700, borderTop: '2px solid var(--border)', fontSize: 12 }}>
+                        <td colSpan={2}>📊 전체 합계 (매칭 + 사업계획 외)</td>
+                        <td style={{ textAlign: 'right' }}>{fmtM(grandTotal.monthTarget)}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(grandTotal.monthActual)}</td>
+                        <td style={{ textAlign: 'right', ...achieveStyle(totMonthPct) }}>{grandTotal.monthTarget > 0 ? `${totMonthPct}%` : '-'}</td>
+                        <td style={{ textAlign: 'right', color: totMonthGap > 0 ? 'var(--red)' : totMonthGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                          {grandTotal.monthTarget > 0 ? (totMonthGap > 0 ? `-${fmtM(totMonthGap)}` : `+${fmtM(-totMonthGap)}`) : '-'}
                         </td>
-                        <td style={{ color: 'var(--text2)' }}>{p.rep}</td>
-                        <td style={{ textAlign: 'right' }}>{fmtM(p.monthTarget)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: p.monthActual > 0 ? 'var(--accent)' : 'var(--red)' }}>{fmtM(p.monthActual)}</td>
-                        <td style={{ textAlign: 'right', ...achieveStyle(p.monthPct) }}>{p.monthPct}%</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: p.monthGap > 0 ? 'var(--red)' : p.monthGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
-                          {p.monthGap > 0 ? `-${fmtM(p.monthGap)}` : p.monthGap < 0 ? `+${fmtM(-p.monthGap)}` : '0'}
-                        </td>
-                        <td style={{ textAlign: 'right', color: 'var(--text3)', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>{fmtM(p.ytdTarget)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(p.ytdActual)}</td>
-                        <td style={{ textAlign: 'right', ...achieveStyle(p.ytdPct) }}>{p.ytdPct}%</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: p.ytdGap > 0 ? 'var(--red)' : p.ytdGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
-                          {p.ytdGap > 0 ? `-${fmtM(p.ytdGap)}` : p.ytdGap < 0 ? `+${fmtM(-p.ytdGap)}` : '0'}
+                        <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>{fmtM(grandTotal.ytdTarget)}</td>
+                        <td style={{ textAlign: 'right' }}>{fmtM(grandTotal.ytdActual)}</td>
+                        <td style={{ textAlign: 'right', ...achieveStyle(totYtdPct) }}>{grandTotal.ytdTarget > 0 ? `${totYtdPct}%` : '-'}</td>
+                        <td style={{ textAlign: 'right', color: totYtdGap > 0 ? 'var(--red)' : totYtdGap < 0 ? 'var(--green, #16a34a)' : 'var(--text2)' }}>
+                          {grandTotal.ytdTarget > 0 ? (totYtdGap > 0 ? `-${fmtM(totYtdGap)}` : `+${fmtM(-totYtdGap)}`) : '-'}
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                  ※ 사업계획 매칭 고객은 plan target 대비 실적 표시 · 사업계획 외 4개 카테고리는 ▸ 클릭 시 개별 고객 펼침 ·
+                  YTD 합계는 다른 분류표(담당자별/품목별 등)와 일치해야 함
+                </div>
               </div>
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                ※ 목표가 설정된 모든 고객 표시 (실적 0 포함) · 달성률 높은 순 · 고객명 클릭 시 상세 카드 열림
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ══ 섹션 4-3 — 고객별 GAP 심층 분석 (미달 + 초과) ══ */}
           {(monthlyReportData.gapDeepAnalysis.shortfall.length > 0 || monthlyReportData.gapDeepAnalysis.surplus.length > 0) && (
