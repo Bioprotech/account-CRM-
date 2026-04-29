@@ -1909,21 +1909,39 @@ export default function Report() {
         };
       };
 
-      // 미달 (ytdPct < 90%), 상위 10사 (Gap 금액 큰 순)
-      const shortfall = candidates
+      // v3.7: 전체 미달/초과 합계 + 상위 N (상세) 분리
+      // 이전: Top10/Top5만 반환하여 합계가 misleading하게 사용됨
+      const allShortfallCandidates = candidates
         .filter(p => p.ytdPct < 90 && p.ytdGap > 0)
-        .sort((a, b) => b.ytdGap - a.ytdGap)
-        .slice(0, 10)
-        .map(buildContext);
-
-      // 초과 (ytdPct > 110%), 상위 5사 (Gap 음수 크기 순 = 초과 금액 큰 순)
-      const surplus = candidates
+        .sort((a, b) => b.ytdGap - a.ytdGap);
+      const allSurplusCandidates = candidates
         .filter(p => p.ytdPct > 110 && p.ytdGap < 0)
-        .sort((a, b) => a.ytdGap - b.ytdGap) // 더 초과한 것부터
-        .slice(0, 5)
-        .map(buildContext);
+        .sort((a, b) => a.ytdGap - b.ytdGap);
 
-      return { shortfall, surplus };
+      // 전체 합계 (요약 박스 / Executive Summary에서 사용)
+      const allShortfallSum = allShortfallCandidates.reduce((s, p) => s + (p.ytdGap || 0), 0);
+      const allSurplusSum = allShortfallCandidates.length > 0
+        ? allSurplusCandidates.reduce((s, p) => s + Math.abs(p.ytdGap || 0), 0)
+        : 0;
+
+      // 정상(90~110%) 카운트
+      const normalCount = candidates.filter(p => p.ytdTarget > 0 && p.ytdPct >= 90 && p.ytdPct <= 110).length;
+
+      // 상세 분석용: Top 10 미달 + Top 5 초과 (buildContext 적용 — 무거운 연산)
+      const shortfall = allShortfallCandidates.slice(0, 10).map(buildContext);
+      const surplus = allSurplusCandidates.slice(0, 5).map(buildContext);
+
+      return {
+        shortfall,            // Top 10 (상세 표시용)
+        surplus,              // Top 5 (상세 표시용)
+        allShortfall: allShortfallCandidates,  // 전체 미달 리스트 (raw)
+        allSurplus: allSurplusCandidates,      // 전체 초과 리스트 (raw)
+        allShortfallCount: allShortfallCandidates.length,
+        allSurplusCount: allSurplusCandidates.length,
+        allShortfallSum,      // 전체 미달 합계
+        allSurplusSum,        // 전체 초과 합계
+        normalCount,          // 정상(90~110%) 카운트
+      };
     })();
 
     // ── 섹션 E: 재구매/계약 만료 임박 ──
@@ -2070,17 +2088,29 @@ export default function Report() {
     })();
 
     // ══════════════════════════════════════════════════════
-    // Phase B v3.2 — GAP 심층분석 요약 (#7)
+    // v3.7: GAP 요약 — 전체 합계 기준으로 수정 (Top10/5는 상세 표시용)
+    // 이전 버그: Top10 + Top5 부분합을 "Net Gap"으로 misleading 표시
+    // 수정: 전체 미달/초과 합계 사용 + Top N은 별도 표시
     // ══════════════════════════════════════════════════════
     const gapSummary = (() => {
-      const short = gapDeepAnalysis.shortfall;
-      const surplus = gapDeepAnalysis.surplus;
-      const totalShortGap = short.reduce((s, c) => s + (c.ytdGap || 0), 0);
-      const totalSurplusGap = surplus.reduce((s, c) => s + (Math.abs(c.ytdGap) || 0), 0);
-      // 원인 빈도 집계 (미달 고객)
+      const allShort = gapDeepAnalysis.allShortfall || [];
+      const allSurplus = gapDeepAnalysis.allSurplus || [];
+
+      // 전체 합계 (사실)
+      const totalShortGap = gapDeepAnalysis.allShortfallSum || 0;
+      const totalSurplusGap = gapDeepAnalysis.allSurplusSum || 0;
+      const netGap = totalShortGap - totalSurplusGap;
+
+      // 표시용 Top N (상세 분석)
+      const topShortGap = (gapDeepAnalysis.shortfall || []).reduce((s, c) => s + (c.ytdGap || 0), 0);
+      const topSurplusGap = (gapDeepAnalysis.surplus || []).reduce((s, c) => s + (Math.abs(c.ytdGap) || 0), 0);
+
+      // 원인 빈도 집계 (전체 미달 고객 기준)
       const causeFreq = {};
-      short.forEach(c => {
-        (c.gap?.causes || []).forEach(k => {
+      allShort.forEach(c => {
+        const acc = accounts.find(a => a.id === c.accountId);
+        const gap = acc?.gap_analysis || {};
+        (gap.causes || []).forEach(k => {
           causeFreq[k] = (causeFreq[k] || 0) + 1;
         });
       });
@@ -2091,16 +2121,26 @@ export default function Report() {
           const meta = GAP_CAUSES.find(g => g.key === k);
           return { key: k, count: n, label: meta?.label || k, icon: meta?.icon || '' };
         });
-      // FCST catch-up 금액
-      const catchUpTotal = short.reduce((s, c) => s + (c.fcstFutureTotal || 0), 0);
+
+      // FCST catch-up 금액 (Top 10 미달만 — buildContext 적용된 것)
+      const catchUpTotal = (gapDeepAnalysis.shortfall || []).reduce((s, c) => s + (c.fcstFutureTotal || 0), 0);
+
       return {
-        shortCount: short.length,
-        surplusCount: surplus.length,
+        // 전체 (요약 표시용)
+        shortCount: allShort.length,
+        surplusCount: allSurplus.length,
         totalShortGap,
         totalSurplusGap,
+        netGap,
+        normalCount: gapDeepAnalysis.normalCount || 0,
+        // Top N (상세 표시용)
+        topShortCount: (gapDeepAnalysis.shortfall || []).length,
+        topSurplusCount: (gapDeepAnalysis.surplus || []).length,
+        topShortGap,
+        topSurplusGap,
+        // 부가
         topCauses,
         catchUpTotal,
-        netGap: totalShortGap - totalSurplusGap,
       };
     })();
 
@@ -2166,17 +2206,36 @@ export default function Report() {
         lines.push(`전년 동월대비 수주 ${orderYoy !== null ? (orderYoy >= 0 ? '+' : '') + orderYoy + '%' : '-'} · 매출 ${salesYoy !== null ? (salesYoy >= 0 ? '+' : '') + salesYoy + '%' : '-'}`);
       }
 
-      // Line 3: 주요 리스크
-      const riskParts = [];
-      if (gapSummary.shortCount > 0) {
-        riskParts.push(`미달 ${gapSummary.shortCount}사(Gap ${fmtKRW(gapSummary.totalShortGap)})`);
+      // Line 3: 미달/초과 분포 (v3.7: 전체 기준 + Net Gap = 실제 합계 기준)
+      // 합계 차이 (사업계획 target vs 영업현황 actual)
+      const ytdNetDiff = kpi.order.ytdActual - kpi.order.ytdTarget;
+      const distParts = [];
+      if (gapSummary.shortCount > 0 || gapSummary.surplusCount > 0) {
+        distParts.push(`미달 ${gapSummary.shortCount}사(-${fmtKRW(gapSummary.totalShortGap)})`);
+        distParts.push(`초과 ${gapSummary.surplusCount}사(+${fmtKRW(gapSummary.totalSurplusGap)})`);
+        distParts.push(`정상 ${gapSummary.normalCount}사`);
+        distParts.push(`전체 합계 ${ytdNetDiff >= 0 ? '+' : '-'}${fmtKRW(Math.abs(ytdNetDiff))}`);
       }
+      if (distParts.length > 0) {
+        lines.push(`고객별 분포: ${distParts.join(' · ')}`);
+      }
+
+      // Line 4: 주요 리스크
+      const riskParts = [];
       if (contractExpiringSoon.length > 0) {
         riskParts.push(`계약만료 D-60 ${contractExpiringSoon.length}건`);
       }
       const overdueCnt = (activityLogs || []).filter(l => l.status !== 'Closed' && daysSince(l.date) > 14).length;
       if (overdueCnt > 0) {
         riskParts.push(`14일+ 미해결 ${overdueCnt}건`);
+      }
+      if (gapSummary.shortCount > 0 && gapSummary.totalShortGap > 100000000) {
+        // 미달 1억 이상이면 리스크에도 표시
+        const top1 = (gapSummary.allShort && gapSummary.allShort[0]) || (gapDeepAnalysis.shortfall && gapDeepAnalysis.shortfall[0]);
+        const topName = top1?.name || '';
+        if (topName) {
+          riskParts.push(`최대 미달 ${topName}(-${fmtKRW(top1.ytdGap)})`);
+        }
       }
       if (riskParts.length > 0) {
         lines.push(`주요 리스크: ${riskParts.join(' · ')}`);
@@ -4175,46 +4234,69 @@ export default function Report() {
                 </span>
               </div>
 
-              {/* Phase B #7: GAP 요약 박스 */}
+              {/* v3.7 GAP 요약 박스 — 전체 vs Top 명확히 구분 + 합계 일치 */}
               {(() => {
                 const g = monthlyReportData.gapSummary;
+                const k = monthlyReportData.kpi;
+                const ytdNet = k.order.ytdActual - k.order.ytdTarget; // 실제 합계 차이 (사실)
                 return (
                   <div style={{ marginBottom: 16, padding: 12, background: 'linear-gradient(135deg, rgba(220,38,38,0.04), rgba(22,163,74,0.04))', borderRadius: 8, border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 8 }}>📊 GAP 요약 — 한눈에 보기</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-                      {/* 미달 요약 */}
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 8 }}>📊 GAP 요약 — 전체 기준 (사업계획 매칭 고객)</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                      {/* 미달 전체 */}
                       <div style={{ padding: 10, background: 'rgba(254,226,226,0.3)', borderRadius: 6, borderLeft: '3px solid var(--red)' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--red)', marginBottom: 2 }}>🔴 미달</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--red)', marginBottom: 2 }}>🔴 미달 (전체)</div>
                         <div style={{ fontSize: 18, fontWeight: 700 }}>{g.shortCount}사</div>
-                        <div style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>총 Gap {fmtKRW(g.totalShortGap)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>−{fmtKRW(g.totalShortGap)}</div>
+                        <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 2 }}>※ 아래 상세 Top {g.topShortCount}만 표시</div>
                       </div>
-                      {/* 초과 요약 */}
+                      {/* 초과 전체 */}
                       <div style={{ padding: 10, background: 'rgba(220,252,231,0.3)', borderRadius: 6, borderLeft: '3px solid var(--green, #16a34a)' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 2 }}>🟢 초과</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 2 }}>🟢 초과 (전체)</div>
                         <div style={{ fontSize: 18, fontWeight: 700 }}>{g.surplusCount}사</div>
-                        <div style={{ fontSize: 11, color: 'var(--green, #16a34a)', fontWeight: 600 }}>총 초과 {fmtKRW(g.totalSurplusGap)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--green, #16a34a)', fontWeight: 600 }}>+{fmtKRW(g.totalSurplusGap)}</div>
+                        <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 2 }}>※ 아래 상세 Top {g.topSurplusCount}만 표시</div>
                       </div>
-                      {/* 순 Gap */}
-                      <div style={{ padding: 10, background: 'var(--bg)', borderRadius: 6, borderLeft: `3px solid ${g.netGap > 0 ? 'var(--red)' : 'var(--green, #16a34a)'}` }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 2 }}>📐 순 Gap</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: g.netGap > 0 ? 'var(--red)' : 'var(--green, #16a34a)' }}>
-                          {g.netGap > 0 ? '-' : '+'}{fmtKRW(Math.abs(g.netGap))}
+                      {/* 정상 */}
+                      <div style={{ padding: 10, background: 'var(--bg)', borderRadius: 6, borderLeft: '3px solid var(--text3)' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 2 }}>⚪ 정상 (90~110%)</div>
+                        <div style={{ fontSize: 18, fontWeight: 700 }}>{g.normalCount}사</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>차이 무시 가능</div>
+                      </div>
+                      {/* 진짜 합계 차이 (사업계획 vs 영업현황) */}
+                      <div style={{ padding: 10, background: ytdNet >= 0 ? 'rgba(22,163,74,0.06)' : 'rgba(220,38,38,0.06)', borderRadius: 6, borderLeft: `3px solid ${ytdNet >= 0 ? 'var(--green, #16a34a)' : 'var(--red)'}`, gridColumn: 'span 1' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 2 }}>🎯 YTD 합계 차이</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: ytdNet >= 0 ? 'var(--green, #16a34a)' : 'var(--red)' }}>
+                          {ytdNet >= 0 ? '+' : '-'}{fmtKRW(Math.abs(ytdNet))}
                         </div>
-                        <div style={{ fontSize: 10, color: 'var(--text3)' }}>미달 − 초과</div>
+                        <div style={{ fontSize: 9, color: 'var(--text3)' }}>{k.order.ytdPct}% (실적 {fmtKRW(k.order.ytdActual)} / 목표 {fmtKRW(k.order.ytdTarget)})</div>
                       </div>
-                      {/* FCST Catch-up */}
+                    </div>
+                    {/* 사업계획 외 신규/기타 효과 (사용자 요청 — 합계가 모순처럼 보이는 이유) */}
+                    {Math.abs((g.totalShortGap - g.totalSurplusGap) - (-ytdNet)) > 100000000 && (
+                      <div style={{ marginTop: 10, padding: '8px 10px', background: 'rgba(217,119,6,0.06)', borderRadius: 6, borderLeft: '3px solid #d97706' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#b45309', marginBottom: 4 }}>⚠ 사업계획 매칭 고객 net Gap vs 합계 차이 — 차이의 원인</div>
+                        <div style={{ fontSize: 11, color: 'var(--text2)' }}>
+                          매칭 고객 Net: <strong>{(g.totalShortGap - g.totalSurplusGap) >= 0 ? '-' : '+'}{fmtKRW(Math.abs(g.totalShortGap - g.totalSurplusGap))}</strong> · 합계 YTD 차이: <strong>{ytdNet >= 0 ? '+' : '-'}{fmtKRW(Math.abs(ytdNet))}</strong>
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                          → 차액 <strong>{fmtKRW(Math.abs(ytdNet - (-(g.totalShortGap - g.totalSurplusGap))))}</strong>은 사업계획 외 (신규/기타) 수주 또는 버킷 plan 차이에서 발생.
+                          정확한 분해는 ⚙ 설정 → 🔬 정합성 진단 참고.
+                        </div>
+                      </div>
+                    )}
+                    {/* FCST Catch-up & 원인 */}
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                       {g.catchUpTotal > 0 && (
-                        <div style={{ padding: 10, background: 'rgba(37,99,235,0.06)', borderRadius: 6, borderLeft: '3px solid #2563eb' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: '#2563eb', marginBottom: 2 }}>📈 FCST 잠재</div>
-                          <div style={{ fontSize: 16, fontWeight: 700, color: '#2563eb' }}>{fmtKRW(g.catchUpTotal)}</div>
-                          <div style={{ fontSize: 10, color: 'var(--text3)' }}>향후 회복 예상</div>
+                        <div style={{ padding: '6px 12px', background: 'rgba(37,99,235,0.08)', borderRadius: 6, borderLeft: '3px solid #2563eb', fontSize: 11 }}>
+                          📈 FCST 잠재 회복 <strong>{fmtKRW(g.catchUpTotal)}</strong> (Top {g.topShortCount} 미달 기준)
                         </div>
                       )}
                     </div>
                     {/* 주요 원인 TOP3 */}
                     {g.topCauses.length > 0 && (
                       <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--bg)', borderRadius: 6 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>🔍 주요 원인 TOP {g.topCauses.length}</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>🔍 미달 주요 원인 TOP {g.topCauses.length}</div>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           {g.topCauses.map((c, i) => (
                             <span key={c.key} style={{ fontSize: 11, padding: '3px 10px', background: 'rgba(220,38,38,0.08)', color: 'var(--red)', borderRadius: 12, fontWeight: 600 }}>
@@ -4228,11 +4310,14 @@ export default function Report() {
                 );
               })()}
 
-              {/* 🔴 미달 고객 */}
+              {/* 🔴 미달 고객 — v3.7: Top N 명시 */}
               {monthlyReportData.gapDeepAnalysis.shortfall.length > 0 && (
                 <div style={{ marginBottom: 16 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid rgba(220,38,38,.3)' }}>
-                    🔴 미달 고객 (YTD 달성률 90% 미만, Gap 금액 순)
+                    🔴 미달 고객 — 상세 분석 Top {monthlyReportData.gapDeepAnalysis.shortfall.length}
+                    <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text2)', marginLeft: 8 }}>
+                      (전체 미달 {monthlyReportData.gapSummary.shortCount}사 · −{fmtKRW(monthlyReportData.gapSummary.totalShortGap)} 중 상위 Gap 순)
+                    </span>
                   </div>
                   <div style={{ display: 'grid', gap: 10 }}>
                     {monthlyReportData.gapDeepAnalysis.shortfall.map((c, i) => (
@@ -4335,11 +4420,14 @@ export default function Report() {
                 </div>
               )}
 
-              {/* 🟢 초과 고객 */}
+              {/* 🟢 초과 고객 — v3.7: Top N 명시 */}
               {monthlyReportData.gapDeepAnalysis.surplus.length > 0 && (
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid rgba(22,163,74,.3)' }}>
-                    🟢 초과 달성 고객 (YTD 달성률 110% 초과, 초과 금액 순)
+                    🟢 초과 달성 고객 — 상세 분석 Top {monthlyReportData.gapDeepAnalysis.surplus.length}
+                    <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text2)', marginLeft: 8 }}>
+                      (전체 초과 {monthlyReportData.gapSummary.surplusCount}사 · +{fmtKRW(monthlyReportData.gapSummary.totalSurplusGap)} 중 상위 초과 순)
+                    </span>
                   </div>
                   <div style={{ display: 'grid', gap: 10 }}>
                     {monthlyReportData.gapDeepAnalysis.surplus.map((c, i) => (
