@@ -1497,9 +1497,14 @@ export default function Settings() {
         }
       }
 
-      // 고객 매칭 (O+S 모두 대상)
+      // 고객 매칭 (O+S 모두 대상) — v3.11: aliases도 매칭에 포함
       const accountMap = {};
-      accounts.forEach(a => { if (a.company_name) accountMap[a.company_name.toLowerCase().trim()] = true; });
+      accounts.forEach(a => {
+        if (a.company_name) accountMap[a.company_name.toLowerCase().trim()] = true;
+        (a.aliases || []).forEach(alias => {
+          if (alias) accountMap[String(alias).toLowerCase().trim()] = true;
+        });
+      });
       const customerSet = new Set([
         ...oDataRows.map(r => String(r[oColIdx.customer] || '').trim()),
         ...sDataRows.map(r => String(r[sColIdx?.customer] || '').trim()),
@@ -1594,9 +1599,14 @@ export default function Settings() {
         savePriorYearCustomers(priorYearNames);
       }
 
-      // 기존 계정 매핑
+      // 기존 계정 매핑 — v3.11: aliases도 매칭 (합병 후 재import 안전)
       const accountMap = {};
-      accounts.forEach(a => { if (a.company_name) accountMap[a.company_name.toLowerCase().trim()] = a.id; });
+      accounts.forEach(a => {
+        if (a.company_name) accountMap[a.company_name.toLowerCase().trim()] = a.id;
+        (a.aliases || []).forEach(alias => {
+          if (alias) accountMap[String(alias).toLowerCase().trim()] = a.id;
+        });
+      });
 
       const excludeStatuses = ['수주취소'];
       const excludeTypes = ['무상샘플', '수리출고'];

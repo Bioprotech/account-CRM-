@@ -45,6 +45,62 @@ export default function BasicInfo({ draft, update }) {
         </div>
       </div>
 
+      {/* v3.11: 별칭(Alias) — 영업현황에 다른 이름으로 표기될 때 자동 매칭 */}
+      <div className="form-row full">
+        <div className="form-group">
+          <label>
+            🔗 별칭 / 다른 표기명 (Alias)
+            <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+              영업현황 import 시 이 이름들도 같은 고객으로 인식됨
+            </span>
+          </label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 6, border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg)', minHeight: 36 }}>
+            {(draft.aliases || []).map((alias, i) => (
+              <span key={i} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '3px 8px', background: 'rgba(46,125,50,0.08)',
+                color: 'var(--accent)', borderRadius: 4, fontSize: 11, fontWeight: 600,
+              }}>
+                {alias}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = [...(draft.aliases || [])];
+                    next.splice(i, 1);
+                    update({ aliases: next });
+                  }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: 12, padding: 0 }}
+                  title="삭제"
+                >×</button>
+              </span>
+            ))}
+            <input
+              type="text"
+              placeholder="+ 별칭 추가 후 Enter (예: AMBIDERM Guatemala)"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const v = e.target.value.trim();
+                  if (!v) return;
+                  const current = draft.aliases || [];
+                  if (current.some(a => a.toLowerCase().trim() === v.toLowerCase().trim())) {
+                    e.target.value = '';
+                    return;
+                  }
+                  if (v.toLowerCase().trim() === (draft.company_name || '').toLowerCase().trim()) {
+                    alert('회사명과 동일한 별칭은 추가할 수 없습니다.');
+                    return;
+                  }
+                  update({ aliases: [...current, v] });
+                  e.target.value = '';
+                }
+              }}
+              style={{ flex: 1, minWidth: 200, border: 'none', outline: 'none', background: 'transparent', fontSize: 11, padding: '3px 6px' }}
+            />
+          </div>
+        </div>
+      </div>
+
       <div className="form-row">
         <div className="form-group">
           <label>지역</label>

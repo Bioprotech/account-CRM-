@@ -168,16 +168,17 @@ export default function AccountProvider({ children }) {
   }, [activityLogs]);
 
   /* ── v3.10: Account 합병 — 중복 account 통합 ──
+     v3.11: alias 자동 추가 — 재import 시 영구 보호
      secondary의 모든 관련 데이터(orders/sales/logs/contracts/forecasts/plans)의
      account_id를 primary로 변경 후 secondary 삭제.
-     primary account는 그대로 유지 (이름 변경은 별도 saveAccount로 가능). */
+     secondary의 company_name + 기존 aliases는 primary의 aliases에 자동 합쳐짐. */
   const mergeAccounts = useCallback(async (primaryId, secondaryId) => {
     if (!primaryId || !secondaryId || primaryId === secondaryId) {
       showToast('합병 대상 잘못 선택', 'error');
       return { success: false };
     }
     try {
-      let stats = { orders: 0, sales: 0, logs: 0, contracts: 0, forecasts: 0, plans: 0 };
+      let stats = { orders: 0, sales: 0, logs: 0, contracts: 0, forecasts: 0, plans: 0, aliases: 0 };
 
       // 1. orders 이전
       const ordersToUpdate = orders.filter(o => o.account_id === secondaryId);
@@ -248,20 +249,42 @@ export default function AccountProvider({ children }) {
         }
       }
 
-      // 7. secondary account 삭제
+      // 7. v3.11: secondary의 회사명 + aliases를 primary의 aliases로 흡수
+      // → 재import 시에도 영구 보호 (영업현황 엑셀에 secondary 이름이 와도 primary로 매칭)
+      const primary = accounts.find(a => a.id === primaryId);
+      const secondary = accounts.find(a => a.id === secondaryId);
+      if (primary && secondary) {
+        const newAliasSet = new Set([
+          ...(primary.aliases || []).map(s => String(s).trim()),
+          String(secondary.company_name || '').trim(),
+          ...(secondary.aliases || []).map(s => String(s).trim()),
+        ]);
+        // primary 자기 이름은 alias에서 제외
+        newAliasSet.delete(String(primary.company_name || '').trim());
+        newAliasSet.delete('');
+        const newAliases = [...newAliasSet];
+        stats.aliases = newAliases.length - (primary.aliases || []).length;
+        const updatedPrimary = { ...primary, aliases: newAliases, updated_at: new Date().toISOString().slice(0, 10) };
+        setAccounts(prev => prev.map(a => a.id === primaryId ? updatedPrimary : a));
+        if (FIREBASE_ENABLED) {
+          try { await saveAccountToFirestore(updatedPrimary); } catch (e) { console.error('primary alias 저장 실패:', e); }
+        }
+      }
+
+      // 8. secondary account 삭제
       setAccounts(prev => prev.filter(a => a.id !== secondaryId));
       if (FIREBASE_ENABLED) {
         try { await deleteAccountFromFirestore(secondaryId); } catch (e) { console.error('account 삭제 실패:', e); }
       }
 
-      showToast(`합병 완료: 수주 ${stats.orders}건 / 매출 ${stats.sales}건 / 활동 ${stats.logs}건 / 계약 ${stats.contracts}건 / FCST ${stats.forecasts}건 / 사업계획 ${stats.plans}건 이전`, 'success');
+      showToast(`합병 완료: 수주 ${stats.orders}건 / 매출 ${stats.sales}건 / 활동 ${stats.logs}건 / 계약 ${stats.contracts}건 / FCST ${stats.forecasts}건 / 사업계획 ${stats.plans}건 이전 + alias 추가 (재import 안전)`, 'success');
       return { success: true, stats };
     } catch (e) {
       console.error('Account 합병 실패:', e);
       showToast('합병 실패: ' + e.message, 'error');
       return { success: false, error: e.message };
     }
-  }, [orders, sales, activityLogs, contracts, forecasts, businessPlans]);
+  }, [orders, sales, activityLogs, contracts, forecasts, businessPlans, accounts]);
 
   const saveLog = useCallback(async (log) => {
     setActivityLogs(prev => {
