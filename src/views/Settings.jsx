@@ -79,6 +79,441 @@ function fmtKRW(n) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   v3.7 — 사업계획 ↔ 영업현황 정합성 진단
+   "수주 104% vs Gap -9.1억" 모순의 정확한 분해 분석
+   ══════════════════════════════════════════════════════════════════ */
+function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
+  const [analysis, setAnalysis] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [quarterEnd, setQuarterEnd] = useState(3); // 기본: 1Q (1~3월)
+
+  const run = async () => {
+    setAnalyzing(true);
+    setAnalysis(null);
+    await new Promise(r => setTimeout(r, 30));
+
+    try {
+      const yearStr = String(year);
+      const months = []; for (let m = 1; m <= quarterEnd; m++) months.push(String(m).padStart(2, '0'));
+      const monthSet = new Set(months);
+
+      // ── 1. 사업계획 customer plans (YTD target 합계) ──
+      const customerPlans = businessPlans.filter(p => (p.type === 'customer' || !p.type) && p.year === Number(yearStr));
+      const planByName = {}; // customer_name 기준 그룹
+      customerPlans.forEach(p => {
+        const name = (p.customer_name || '').trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        if (!planByName[key]) {
+          planByName[key] = {
+            name,
+            account_id: p.account_id || null,
+            ytd_target: 0,
+            plans_count: 0,
+            is_bucket: ['해외기타', '국내기타', '국내신규', '직판영업', '해외신규'].includes(name),
+          };
+        }
+        planByName[key].plans_count++;
+        if (p.account_id) planByName[key].account_id = p.account_id;
+        // YTD target 합계 (1~quarterEnd월)
+        months.forEach(mKey => {
+          planByName[key].ytd_target += (p.targets?.[mKey] || 0);
+        });
+      });
+
+      const planList = Object.values(planByName);
+      const planTotalTarget = planList.reduce((s, p) => s + p.ytd_target, 0);
+      const planMatched = planList.filter(p => p.account_id);     // account_id 연결된 plan
+      const planUnmatched = planList.filter(p => !p.account_id && !p.is_bucket); // 미매칭 일반 고객
+      const planBuckets = planList.filter(p => p.is_bucket);      // 신규/기타 버킷 plan
+
+      // ── 2. 영업현황 actual (YTD orders) ──
+      const ytdOrders = orders.filter(o => {
+        const d = o.order_date || '';
+        if (!d.startsWith(yearStr + '-')) return false;
+        const m = d.slice(5, 7);
+        return monthSet.has(m);
+      });
+      const ytdOrderTotal = ytdOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
+
+      // 영업현황 actual을 account별로 분류
+      const ytdActualByAccount = {};
+      ytdOrders.forEach(o => {
+        const aid = o.account_id || `_unmatched_${(o.customer_name || '').toLowerCase().trim()}`;
+        ytdActualByAccount[aid] = (ytdActualByAccount[aid] || 0) + (o.order_amount || 0);
+      });
+
+      // ── 3. 사업계획 plan별 actual 매칭 ──
+      let matchedActual = 0; // 사업계획 매칭된 plan들의 actual 합계
+      const planWithActual = planList.map(p => {
+        let actual = 0;
+        if (p.account_id) {
+          // account_id 직접 매칭
+          actual = ytdActualByAccount[p.account_id] || 0;
+        } else if (!p.is_bucket) {
+          // 이름 기반 매칭 (account 찾고 그 account의 actual)
+          const acc = accounts.find(a => (a.company_name || '').toLowerCase().trim() === p.name.toLowerCase().trim());
+          if (acc) actual = ytdActualByAccount[acc.id] || 0;
+        }
+        // 버킷 plan은 따로 처리
+        return { ...p, actual, gap: p.ytd_target - actual, gapPct: p.ytd_target > 0 ? Math.round((actual / p.ytd_target) * 100) : 0 };
+      });
+
+      // 일반 사업계획 고객 (버킷 제외) 합계
+      const regularPlans = planWithActual.filter(p => !p.is_bucket);
+      const regularPlanActual = regularPlans.reduce((s, p) => s + p.actual, 0);
+      const regularPlanTarget = regularPlans.reduce((s, p) => s + p.ytd_target, 0);
+      const regularPlanGap = regularPlanTarget - regularPlanActual;
+
+      // 버킷 plan 합계
+      const bucketTarget = planBuckets.reduce((s, p) => s + p.ytd_target, 0);
+      // 버킷 actual = 사업계획 매칭된 account 외의 actual
+      const matchedAccIds = new Set(regularPlans.filter(p => p.account_id).map(p => p.account_id));
+      // 이름 기반 매칭된 account도 추가
+      regularPlans.filter(p => !p.account_id).forEach(p => {
+        const acc = accounts.find(a => (a.company_name || '').toLowerCase().trim() === p.name.toLowerCase().trim());
+        if (acc) matchedAccIds.add(acc.id);
+      });
+      let bucketActual = 0;
+      ytdOrders.forEach(o => {
+        if (!o.account_id || !matchedAccIds.has(o.account_id)) {
+          bucketActual += (o.order_amount || 0);
+        }
+      });
+      const bucketGap = bucketTarget - bucketActual;
+
+      // ── 4. 미달/초과 분류 (GAP 분석 표시 기준 vs 전체) ──
+      const shortFallList = regularPlans
+        .filter(p => p.ytd_target > 0 && p.gapPct < 90 && p.gap > 0)
+        .sort((a, b) => b.gap - a.gap);
+      const surplusList = regularPlans
+        .filter(p => p.ytd_target > 0 && p.gapPct > 110 && p.gap < 0)
+        .sort((a, b) => a.gap - b.gap);
+      const normalList = regularPlans
+        .filter(p => p.ytd_target > 0 && p.gapPct >= 90 && p.gapPct <= 110);
+      // 미달이지만 < 1억 (작은 미달)
+      const tinyShort = regularPlans
+        .filter(p => p.ytd_target > 0 && p.gapPct < 90 && p.gap > 0 && p.gap < 100000000);
+
+      const top10ShortGap = shortFallList.slice(0, 10).reduce((s, p) => s + p.gap, 0);
+      const top5SurplusGap = surplusList.slice(0, 5).reduce((s, p) => s + (-p.gap), 0);
+      const top10_5_NetGap = top10ShortGap - top5SurplusGap;
+
+      const allShortGap = shortFallList.reduce((s, p) => s + p.gap, 0);
+      const allSurplusGap = surplusList.reduce((s, p) => s + (-p.gap), 0);
+
+      setAnalysis({
+        year: yearStr,
+        quarterEnd,
+        // 사업계획 측면
+        planList: planWithActual,
+        planTotalTarget,
+        regularPlanTarget,
+        regularPlanActual,
+        regularPlanGap,
+        bucketTarget,
+        bucketActual,
+        bucketGap,
+        planBucketCount: planBuckets.length,
+        planMatchedCount: planMatched.length,
+        planUnmatchedCount: planUnmatched.length,
+        // 영업현황 측면
+        ytdOrderTotal,
+        // 분류
+        shortFallList,
+        surplusList,
+        normalList,
+        tinyShort,
+        top10ShortGap,
+        top5SurplusGap,
+        top10_5_NetGap,
+        allShortGap,
+        allSurplusGap,
+      });
+    } catch (err) {
+      console.error(err);
+      alert('분석 중 오류: ' + err.message);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #dc2626' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>🔬 사업계획 ↔ 영업현황 정합성 진단</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[수주 통계 모순 분해 분석]</span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
+        "수주 YTD <strong>104% 달성</strong> vs Gap <strong>-9.1억</strong>" 같은 표면적 모순의 정확한 분해를 보여줍니다.
+        사업계획 target / actual 매칭 / 신규-기타 버킷의 실제 분포 확인.
+      </p>
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 12 }}>
+          연도:&nbsp;
+          <select value={year} onChange={e => setYear(e.target.value)} style={{ padding: '3px 6px', fontSize: 12 }}>
+            {[2026, 2025, 2024].map(y => <option key={y} value={y}>{y}년</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 12 }}>
+          기간:&nbsp;
+          <select value={quarterEnd} onChange={e => setQuarterEnd(Number(e.target.value))} style={{ padding: '3px 6px', fontSize: 12 }}>
+            <option value={3}>1분기 (1~3월)</option>
+            <option value={4}>~ 4월</option>
+            <option value={6}>2분기 누계 (1~6월)</option>
+            <option value={9}>3분기 누계 (1~9월)</option>
+            <option value={12}>연간 (1~12월)</option>
+          </select>
+        </label>
+        <button className="btn btn-primary" onClick={run} disabled={analyzing}>
+          {analyzing ? '분석 중...' : '🔬 정합성 진단 시작'}
+        </button>
+      </div>
+
+      {analysis && (() => {
+        const fmt = fmtKRW;
+        const overallPct = analysis.planTotalTarget > 0 ? Math.round((analysis.ytdOrderTotal / analysis.planTotalTarget) * 100) : 0;
+        return (
+          <div>
+            {/* 핵심 KPI */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginBottom: 12 }}>
+              <div className="kpi" style={{ padding: 10 }}>
+                <div className="kpi-label">사업계획 YTD 총 목표</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{fmt(analysis.planTotalTarget)}</div>
+              </div>
+              <div className="kpi accent" style={{ padding: 10 }}>
+                <div className="kpi-label">영업현황 YTD 총 실적</div>
+                <div className="kpi-value" style={{ fontSize: 18 }}>{fmt(analysis.ytdOrderTotal)}</div>
+              </div>
+              <div className={`kpi ${overallPct >= 100 ? 'green' : overallPct >= 80 ? '' : 'red'}`} style={{ padding: 10 }}>
+                <div className="kpi-label">총 달성률</div>
+                <div className="kpi-value" style={{ fontSize: 22 }}>{overallPct}%</div>
+              </div>
+              <div className="kpi" style={{ padding: 10 }}>
+                <div className="kpi-label">총 차액</div>
+                <div className="kpi-value" style={{ fontSize: 18, color: analysis.ytdOrderTotal >= analysis.planTotalTarget ? 'var(--green, #16a34a)' : 'var(--red)' }}>
+                  {analysis.ytdOrderTotal >= analysis.planTotalTarget ? '+' : ''}{fmt(analysis.ytdOrderTotal - analysis.planTotalTarget)}
+                </div>
+              </div>
+            </div>
+
+            {/* 분해 표 */}
+            <div style={{ padding: 12, background: 'var(--bg2)', borderRadius: 6, marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>📐 사업계획 Target 분해 ({analysis.year}년 {analysis.quarterEnd === 3 ? '1Q' : `~${analysis.quarterEnd}월`} YTD)</div>
+              <table className="data-table" style={{ fontSize: 11, width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>구분</th>
+                    <th style={{ textAlign: 'right' }}>Target</th>
+                    <th style={{ textAlign: 'right' }}>Actual</th>
+                    <th style={{ textAlign: 'right' }}>Gap</th>
+                    <th style={{ textAlign: 'right' }}>달성률</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>📋 일반 사업계획 고객 ({analysis.planList.filter(p => !p.is_bucket).length}사)</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(analysis.regularPlanTarget)}</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(analysis.regularPlanActual)}</td>
+                    <td style={{ textAlign: 'right', color: analysis.regularPlanGap > 0 ? 'var(--red)' : 'var(--green, #16a34a)' }}>
+                      {analysis.regularPlanGap > 0 ? '-' : '+'}{fmt(Math.abs(analysis.regularPlanGap))}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {analysis.regularPlanTarget > 0 ? Math.round((analysis.regularPlanActual / analysis.regularPlanTarget) * 100) : 0}%
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>🪣 버킷 plan ({analysis.planBucketCount}건: 해외기타/국내신규/국내기타/직판영업)</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(analysis.bucketTarget)}</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(analysis.bucketActual)}</td>
+                    <td style={{ textAlign: 'right', color: analysis.bucketGap > 0 ? 'var(--red)' : 'var(--green, #16a34a)' }}>
+                      {analysis.bucketGap > 0 ? '-' : '+'}{fmt(Math.abs(analysis.bucketGap))}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {analysis.bucketTarget > 0 ? Math.round((analysis.bucketActual / analysis.bucketTarget) * 100) : 0}%
+                    </td>
+                  </tr>
+                  <tr style={{ background: 'rgba(46,125,50,0.08)', fontWeight: 700 }}>
+                    <td>합계</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(analysis.planTotalTarget)}</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(analysis.ytdOrderTotal)}</td>
+                    <td style={{ textAlign: 'right', color: (analysis.ytdOrderTotal - analysis.planTotalTarget) >= 0 ? 'var(--green, #16a34a)' : 'var(--red)' }}>
+                      {(analysis.ytdOrderTotal - analysis.planTotalTarget) >= 0 ? '+' : ''}{fmt(analysis.ytdOrderTotal - analysis.planTotalTarget)}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>{overallPct}%</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                ※ 일반 plan = 개별 고객 plan, 버킷 = "해외기타" 등 그룹 plan
+              </div>
+            </div>
+
+            {/* GAP 분석 임계값 분류 */}
+            <div style={{ padding: 12, background: 'rgba(220,38,38,0.04)', borderRadius: 6, marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>⚠ GAP 분석 임계값 분류 (일반 사업계획 고객 {analysis.planList.filter(p => !p.is_bucket && p.ytd_target > 0).length}사)</div>
+              <table className="data-table" style={{ fontSize: 11, width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>분류</th>
+                    <th style={{ textAlign: 'right' }}>고객수</th>
+                    <th style={{ textAlign: 'right' }}>Gap 합계</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ background: 'rgba(220,38,38,0.04)' }}>
+                    <td>🔴 미달 전체 (달성률 &lt; 90%)</td>
+                    <td style={{ textAlign: 'right' }}>{analysis.shortFallList.length}사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--red)', fontWeight: 700 }}>-{fmt(analysis.allShortGap)}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ paddingLeft: 20, color: 'var(--text2)' }}>↳ 표시 상위 10사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{Math.min(10, analysis.shortFallList.length)}사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text2)' }}>-{fmt(analysis.top10ShortGap)}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ paddingLeft: 20, color: 'var(--text3)' }}>↳ 11위 이하 (리포트에 미표시)</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{Math.max(0, analysis.shortFallList.length - 10)}사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>-{fmt(Math.max(0, analysis.allShortGap - analysis.top10ShortGap))}</td>
+                  </tr>
+                  <tr style={{ background: 'rgba(22,163,74,0.04)' }}>
+                    <td>🟢 초과 전체 (달성률 &gt; 110%)</td>
+                    <td style={{ textAlign: 'right' }}>{analysis.surplusList.length}사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--green, #16a34a)', fontWeight: 700 }}>+{fmt(analysis.allSurplusGap)}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ paddingLeft: 20, color: 'var(--text2)' }}>↳ 표시 상위 5사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{Math.min(5, analysis.surplusList.length)}사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text2)' }}>+{fmt(analysis.top5SurplusGap)}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ paddingLeft: 20, color: 'var(--text3)' }}>↳ 6위 이하 (리포트에 미표시)</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{Math.max(0, analysis.surplusList.length - 5)}사</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>+{fmt(Math.max(0, analysis.allSurplusGap - analysis.top5SurplusGap))}</td>
+                  </tr>
+                  <tr>
+                    <td>⚪ 정상 (90~110%)</td>
+                    <td style={{ textAlign: 'right' }}>{analysis.normalList.length}사</td>
+                    <td style={{ textAlign: 'right' }}>-</td>
+                  </tr>
+                  <tr style={{ background: 'rgba(46,125,50,0.04)', fontWeight: 700 }}>
+                    <td>📊 미달 전체 - 초과 전체 = 일반 고객 net Gap</td>
+                    <td></td>
+                    <td style={{ textAlign: 'right', color: (analysis.allShortGap - analysis.allSurplusGap) > 0 ? 'var(--red)' : 'var(--green, #16a34a)' }}>
+                      {(analysis.allShortGap - analysis.allSurplusGap) > 0 ? '-' : '+'}{fmt(Math.abs(analysis.allShortGap - analysis.allSurplusGap))}
+                    </td>
+                  </tr>
+                  <tr style={{ background: 'rgba(220,38,38,0.06)', fontWeight: 700 }}>
+                    <td>📊 (리포트 표시) Top10 미달 - Top5 초과 = -9.1억과 비교</td>
+                    <td></td>
+                    <td style={{ textAlign: 'right', color: analysis.top10_5_NetGap > 0 ? 'var(--red)' : 'var(--green, #16a34a)' }}>
+                      {analysis.top10_5_NetGap > 0 ? '-' : '+'}{fmt(Math.abs(analysis.top10_5_NetGap))}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* 결론 */}
+            <div style={{ padding: 12, background: '#fef3c7', borderRadius: 6, marginBottom: 12, border: '1px solid #d97706' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: '#b45309' }}>💡 모순 분해 결론</div>
+              <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                <div>• <strong>전체 합계 관점</strong>: 영업현황 {fmt(analysis.ytdOrderTotal)} / 사업계획 목표 {fmt(analysis.planTotalTarget)} = <strong>{overallPct}%</strong></div>
+                <div>• <strong>일반 사업계획 고객만</strong> ({analysis.planList.filter(p => !p.is_bucket).length}사): {fmt(analysis.regularPlanActual)} / {fmt(analysis.regularPlanTarget)} (Gap {analysis.regularPlanGap > 0 ? '-' : '+'}{fmt(Math.abs(analysis.regularPlanGap))})</div>
+                <div>• <strong>버킷(신규/기타)</strong>: {fmt(analysis.bucketActual)} / {fmt(analysis.bucketTarget)} (Gap {analysis.bucketGap > 0 ? '-' : '+'}{fmt(Math.abs(analysis.bucketGap))})</div>
+                <div>• <strong>리포트 GAP -9.1억</strong>은 <u>미달 Top10 + 초과 Top5만의 합산</u>일 뿐, 일반 고객 전체 net gap은 <strong>{(analysis.allShortGap - analysis.allSurplusGap) > 0 ? '-' : '+'}{fmt(Math.abs(analysis.allShortGap - analysis.allSurplusGap))}</strong></div>
+              </div>
+            </div>
+
+            {/* 미달 전체 리스트 */}
+            {analysis.shortFallList.length > 0 && (
+              <details style={{ marginBottom: 8 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: '6px 0' }}>
+                  🔴 미달 전체 {analysis.shortFallList.length}사 (Gap 큰 순) — 클릭 펼치기
+                </summary>
+                <div className="table-wrap" style={{ maxHeight: 400, marginTop: 6 }}>
+                  <table className="data-table" style={{ fontSize: 11 }}>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>고객명</th>
+                        <th style={{ textAlign: 'right' }}>YTD Target</th>
+                        <th style={{ textAlign: 'right' }}>YTD Actual</th>
+                        <th style={{ textAlign: 'right' }}>Gap</th>
+                        <th style={{ textAlign: 'right' }}>달성률</th>
+                        <th>account_id</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.shortFallList.map((p, i) => (
+                        <tr key={i} style={{ background: i < 10 ? 'rgba(220,38,38,0.04)' : undefined }}>
+                          <td>{i + 1}</td>
+                          <td style={{ fontWeight: 600 }}>{p.name}</td>
+                          <td style={{ textAlign: 'right' }}>{fmt(p.ytd_target)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmt(p.actual)}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--red)' }}>-{fmt(p.gap)}</td>
+                          <td style={{ textAlign: 'right' }}>{p.gapPct}%</td>
+                          <td style={{ fontSize: 9, color: p.account_id ? 'var(--green, #16a34a)' : 'var(--red)' }}>
+                            {p.account_id ? '✓ 매칭' : '✗ 미연결'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {/* 초과 전체 리스트 */}
+            {analysis.surplusList.length > 0 && (
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: '6px 0' }}>
+                  🟢 초과 전체 {analysis.surplusList.length}사 (초과 큰 순)
+                </summary>
+                <div className="table-wrap" style={{ maxHeight: 300, marginTop: 6 }}>
+                  <table className="data-table" style={{ fontSize: 11 }}>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>고객명</th>
+                        <th style={{ textAlign: 'right' }}>YTD Target</th>
+                        <th style={{ textAlign: 'right' }}>YTD Actual</th>
+                        <th style={{ textAlign: 'right' }}>초과액</th>
+                        <th style={{ textAlign: 'right' }}>달성률</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.surplusList.map((p, i) => (
+                        <tr key={i} style={{ background: i < 5 ? 'rgba(22,163,74,0.04)' : undefined }}>
+                          <td>{i + 1}</td>
+                          <td style={{ fontWeight: 600 }}>{p.name}</td>
+                          <td style={{ textAlign: 'right' }}>{fmt(p.ytd_target)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmt(p.actual)}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--green, #16a34a)' }}>+{fmt(-p.gap)}</td>
+                          <td style={{ textAlign: 'right' }}>{p.gapPct}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+          </div>
+        );
+      })()}
+
+      {!analysis && !analyzing && (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+          [분석 시작] 버튼을 클릭하면 사업계획 target과 영업현황 actual의 정확한 분해 결과가 표시됩니다. 데이터 변경 없음.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
    v3.6 — 고객명 퍼지 매칭 분석기 (Dry-run)
    사업계획의 customer_name 과 영업현황으로 자동 생성된 account 간 매칭
    ══════════════════════════════════════════════════════════════════ */
@@ -2341,6 +2776,14 @@ export default function Settings() {
           </div>
         )}
       </div>
+
+      {/* ── v3.7: 사업계획 ↔ 영업현황 정합성 진단 ── */}
+      <ReconciliationDiagnostic
+        accounts={accounts}
+        orders={orders}
+        sales={sales}
+        businessPlans={businessPlans}
+      />
 
       {/* ── v3.6: 고객명 퍼지 매칭 분석 + Phase 2 적용 ── */}
       <FuzzyMatchAnalyzer
