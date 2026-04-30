@@ -2,8 +2,9 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { genId, today } from '../lib/utils';
 import { saveSnapshot, listSnapshots, deleteSnapshot as removeSnapshot } from '../lib/snapshots';
-import { savePriorYearCustomers, loadPriorYearCustomers } from '../lib/customerClassification';
+import { savePriorYearCustomers, loadPriorYearCustomers, suggestCustomerCategory } from '../lib/customerClassification';
 import { combinedSimilarity, normalizeCompanyName, confidenceLabel } from '../lib/fuzzyMatch';
+import { CUSTOMER_CATEGORIES } from '../lib/constants';
 
 // v3.4: 엑셀 날짜 시리얼/문자열 → YYYY-MM-DD 변환 (강화)
 // 이전 버전은 문자열 그대로 반환 → "4/23/2026" 등 비표준이 주간 범위 비교에서 실패
@@ -76,6 +77,237 @@ function fmtKRW(n) {
   if (abs >= 100000000) return sign + (abs / 100000000).toFixed(1) + '억';
   if (abs >= 10000) return sign + Math.round(abs / 10000).toLocaleString() + '만';
   return n.toLocaleString();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v3.12 — 고객 분류 일괄 적용 도구
+   account에 customer_category 명시 필드를 일괄 자동 추천 적용
+   ══════════════════════════════════════════════════════════════════ */
+function BulkClassificationTool({ accounts, businessPlans, appSettings, saveAccount, showToast }) {
+  const [analysis, setAnalysis] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [overwriteExisting, setOverwriteExisting] = useState(false);
+
+  const priorSet = useMemo(() => {
+    if (appSettings?.priorYearCustomers && Array.isArray(appSettings.priorYearCustomers)) {
+      return new Set(appSettings.priorYearCustomers);
+    }
+    return loadPriorYearCustomers();
+  }, [appSettings]);
+
+  const customerPlansFiltered = useMemo(
+    () => (businessPlans || []).filter(p => p.type === 'customer' || !p.type),
+    [businessPlans]
+  );
+
+  const runAnalysis = async () => {
+    setRunning(true);
+    setAnalysis(null);
+    await new Promise(r => setTimeout(r, 30));
+    try {
+      // 모든 account에 대해 자동 추천 계산
+      const proposals = accounts.map(a => {
+        const suggested = suggestCustomerCategory({
+          account: a,
+          customerPlans: customerPlansFiltered,
+          priorSet,
+        });
+        const current = a.customer_category || 'unclassified';
+        const willChange = current !== suggested && (overwriteExisting || current === 'unclassified');
+        return { account: a, current, suggested, willChange };
+      });
+
+      // 카테고리별 카운트
+      const beforeCount = {};
+      const afterCount = {};
+      CUSTOMER_CATEGORIES.forEach(c => {
+        beforeCount[c.key] = 0;
+        afterCount[c.key] = 0;
+      });
+      proposals.forEach(p => {
+        beforeCount[p.current] = (beforeCount[p.current] || 0) + 1;
+        const finalKey = p.willChange ? p.suggested : p.current;
+        afterCount[finalKey] = (afterCount[finalKey] || 0) + 1;
+      });
+
+      const willChangeCount = proposals.filter(p => p.willChange).length;
+      const unclassifiedNow = proposals.filter(p => p.current === 'unclassified').length;
+      const sampleChanges = proposals.filter(p => p.willChange).slice(0, 30);
+
+      setAnalysis({ proposals, beforeCount, afterCount, willChangeCount, unclassifiedNow, sampleChanges });
+    } catch (e) {
+      console.error(e);
+      alert('분석 실패: ' + e.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const applyAll = async () => {
+    if (!analysis) return;
+    const targets = analysis.proposals.filter(p => p.willChange);
+    if (targets.length === 0) {
+      showToast('변경할 항목이 없습니다', 'info');
+      return;
+    }
+    if (!confirm(`${targets.length}개 account의 분류를 자동 추천 값으로 변경하시겠습니까?\n\n${overwriteExisting ? '⚠ 기존 분류도 덮어씌움' : '미분류만 새로 적용'}`)) return;
+
+    setApplying(true);
+    try {
+      let success = 0;
+      for (const t of targets) {
+        const updated = { ...t.account, customer_category: t.suggested };
+        try {
+          await saveAccount(updated);
+          success++;
+        } catch (e) {
+          console.error('account 저장 실패:', t.account.company_name, e);
+        }
+      }
+      showToast(`${success}/${targets.length}개 account 분류 적용 완료`, 'success');
+      setAnalysis(null);
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #2563eb' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>🏷️ 고객 분류 일괄 적용 도구</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+          [account.customer_category 자동 추천 일괄 저장 — 통계 안정화]
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
+        모든 account에 명시적 분류(<strong>해외고객/국내고객/해외기타/국내기타/해외신규/국내신규</strong>)를 일괄 적용합니다.
+        <strong style={{ color: 'var(--accent)' }}> 한 번 저장된 분류는 매번 계산되지 않으므로 통계가 안정적</strong>입니다.
+        분류 후 isDomestic 같은 함수가 변해도 통계 영향 없음.
+      </p>
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={overwriteExisting}
+            onChange={e => setOverwriteExisting(e.target.checked)}
+          />
+          기존 분류도 덮어씌움 (추천 권장: 체크 해제 — 미분류만 적용)
+        </label>
+        <button className="btn btn-primary" onClick={runAnalysis} disabled={running}>
+          {running ? '분석 중...' : '🔬 자동 추천 분석'}
+        </button>
+      </div>
+
+      {analysis && (
+        <div>
+          {/* 요약 KPI */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 12 }}>
+            <div className="kpi" style={{ padding: 10 }}>
+              <div className="kpi-label">전체 account</div>
+              <div className="kpi-value" style={{ fontSize: 18 }}>{accounts.length}사</div>
+            </div>
+            <div className="kpi" style={{ padding: 10, background: 'rgba(220,38,38,0.06)' }}>
+              <div className="kpi-label">현재 미분류</div>
+              <div className="kpi-value" style={{ fontSize: 18, color: 'var(--red)' }}>{analysis.unclassifiedNow}사</div>
+            </div>
+            <div className="kpi green" style={{ padding: 10 }}>
+              <div className="kpi-label">변경 예정</div>
+              <div className="kpi-value" style={{ fontSize: 18, color: 'var(--green, #16a34a)' }}>{analysis.willChangeCount}사</div>
+            </div>
+          </div>
+
+          {/* Before / After 분포 */}
+          <div style={{ marginBottom: 12, padding: 10, background: 'var(--bg2)', borderRadius: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>📊 분류 분포 변화 (Before → After)</div>
+            <table className="data-table" style={{ fontSize: 11, width: '100%' }}>
+              <thead>
+                <tr>
+                  <th>카테고리</th>
+                  <th style={{ textAlign: 'right' }}>현재</th>
+                  <th style={{ textAlign: 'right' }}>적용 후</th>
+                  <th style={{ textAlign: 'right' }}>변화</th>
+                </tr>
+              </thead>
+              <tbody>
+                {CUSTOMER_CATEGORIES.map(c => {
+                  const diff = (analysis.afterCount[c.key] || 0) - (analysis.beforeCount[c.key] || 0);
+                  return (
+                    <tr key={c.key}>
+                      <td>{c.icon} {c.label}</td>
+                      <td style={{ textAlign: 'right' }}>{analysis.beforeCount[c.key] || 0}사</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{analysis.afterCount[c.key] || 0}사</td>
+                      <td style={{ textAlign: 'right', color: diff > 0 ? 'var(--green, #16a34a)' : diff < 0 ? 'var(--red)' : 'var(--text3)' }}>
+                        {diff > 0 ? '+' : ''}{diff}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 샘플 변경 */}
+          {analysis.sampleChanges.length > 0 && (
+            <details style={{ marginBottom: 12 }}>
+              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                변경 대상 미리보기 ({analysis.willChangeCount}사 중 상위 30사)
+              </summary>
+              <div className="table-wrap" style={{ maxHeight: 300, marginTop: 6 }}>
+                <table className="data-table" style={{ fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th>회사명</th>
+                      <th>현재 분류</th>
+                      <th>→</th>
+                      <th>추천 분류</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.sampleChanges.map((p, i) => {
+                      const cur = CUSTOMER_CATEGORIES.find(c => c.key === p.current) || CUSTOMER_CATEGORIES[CUSTOMER_CATEGORIES.length - 1];
+                      const sug = CUSTOMER_CATEGORIES.find(c => c.key === p.suggested) || CUSTOMER_CATEGORIES[CUSTOMER_CATEGORIES.length - 1];
+                      return (
+                        <tr key={i}>
+                          <td style={{ fontWeight: 600 }}>{p.account.company_name}</td>
+                          <td style={{ color: 'var(--text3)' }}>{cur.icon} {cur.label}</td>
+                          <td style={{ textAlign: 'center', color: 'var(--text3)' }}>→</td>
+                          <td style={{ color: 'var(--accent)', fontWeight: 600 }}>{sug.icon} {sug.label}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+
+          {/* 적용 버튼 */}
+          {analysis.willChangeCount > 0 && (
+            <div style={{ padding: 10, background: 'rgba(46,125,50,0.06)', borderRadius: 6, marginTop: 8 }}>
+              <button
+                className="btn btn-primary"
+                onClick={applyAll}
+                disabled={applying}
+                style={{ background: 'var(--accent)', color: '#fff' }}
+              >
+                {applying ? '적용 중...' : `💾 ${analysis.willChangeCount}개 account 분류 일괄 적용`}
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text2)', marginLeft: 10 }}>
+                ※ 적용 후에도 개별 고객 카드에서 자유롭게 변경 가능합니다
+              </span>
+            </div>
+          )}
+          {analysis.willChangeCount === 0 && (
+            <div style={{ padding: 10, background: 'rgba(22,163,74,0.06)', borderRadius: 6, fontSize: 12, color: 'var(--green, #16a34a)', fontWeight: 600 }}>
+              ✅ 모든 account가 이미 적절히 분류되어 있습니다
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1196,7 +1428,7 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans, applyFuzzy
 }
 
 export default function Settings() {
-  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches, mergeAccounts } = useAccount();
+  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches, mergeAccounts, appSettings } = useAccount();
 
   /* ══════════════════════════════════════
      팀 멤버 관리
@@ -3063,6 +3295,15 @@ export default function Settings() {
           </div>
         )}
       </div>
+
+      {/* ── v3.12: 고객 분류 일괄 적용 도구 ── */}
+      <BulkClassificationTool
+        accounts={accounts}
+        businessPlans={businessPlans}
+        appSettings={appSettings}
+        saveAccount={saveAccount}
+        showToast={showToast}
+      />
 
       {/* ── v3.10: Account 합병 도구 (중복 account 통합) ── */}
       <AccountMergeTool

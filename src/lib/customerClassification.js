@@ -290,32 +290,52 @@ export function classifyCustomers({ accounts, customerPlans, yearOrders, priorYe
    ══════════════════════════════════════════════════════ */
 
 /**
- * v3.9: classifyForRepView 강화
+ * v3.12: classifyForRepView — customer_category 우선 사용
  *
- * 매칭 순서 (중요):
- *   1. account_id 매칭 (퍼지매칭 결과 활용 — Settings에서 적용된 매칭)
- *   2. customer_name 정확 매칭
- *   3. 미매칭 → 4개 버킷 (국내/해외 × 기타/신규)
+ * 매칭 우선순위:
+ *   ① account.customer_category 명시 분류 (저장된 값) — 가장 강력
+ *   ② account_id 매칭 (퍼지매칭 결과)
+ *   ③ customer_name 정확 매칭
+ *   ④ isDomestic + 전년 수주 자동 분류 → 4개 버킷
  *
- * 분류 정의 (사용자 명시):
- *   - 해외기타: 사업계획 외 + 해외 + 전년도(2025) 수주 有
- *   - 국내기타: 사업계획 외 + 국내(병원 포함) + 전년도 수주 有
- *   - 해외신규: 사업계획 외 + 해외 + 전년도 수주 無
- *   - 국내신규: 사업계획 외 + 국내(병원 포함) + 전년도 수주 無
+ * customer_category가 'unclassified'이거나 없으면 자동 계산 fallback.
  *
  * @param {object} params
- * @param {object} params.account - 고객 객체
+ * @param {object} params.account - 고객 객체 (customer_category 필드 포함)
  * @param {string} params.customerName - 주문/매출의 customer_name
  * @param {Map|object} params.planByName - { name(lowercase trimmed) → plan }
- * @param {Map|object} [params.planByAccountId] - { account_id → plan } (옵셔널, 퍼지매칭 결과)
+ * @param {Map|object} [params.planByAccountId] - { account_id → plan }
  * @param {Set<string>} params.priorSet - 전년도 수주 고객명 Set
  */
 export function classifyForRepView({ account, customerName, planByName, planByAccountId, priorSet }) {
-  // 1. account_id 매칭 (가장 강력, 퍼지매칭 결과 활용)
+  // ── ① v3.12: account.customer_category 명시 분류 우선 ──
+  const cat = account?.customer_category;
+  if (cat && cat !== 'unclassified') {
+    if (cat === 'overseas_main' || cat === 'domestic_main') {
+      // 사업계획 매칭 → sales_rep 찾기
+      if (account.id && planByAccountId) {
+        const planById = planByAccountId instanceof Map ? planByAccountId.get(account.id) : planByAccountId[account.id];
+        if (planById && planById.sales_rep) {
+          return { bucket: 'plan', rep: planById.sales_rep, label: planById.sales_rep, planMatch: true, matchedBy: 'category+account_id' };
+        }
+      }
+      const nameKey = (customerName || account.company_name || '').toLowerCase().trim();
+      const plan = planByName instanceof Map ? planByName.get(nameKey) : planByName[nameKey];
+      if (plan && plan.sales_rep) {
+        return { bucket: 'plan', rep: plan.sales_rep, label: plan.sales_rep, planMatch: true, matchedBy: 'category+name' };
+      }
+      // category는 main이지만 plan을 못 찾으면 → 미배정으로 표시
+      return { bucket: 'plan', rep: '미배정', label: '미배정', planMatch: false, matchedBy: 'category_main_no_plan' };
+    }
+    if (cat === 'overseas_other') return { bucket: 'etc', rep: '해외기타', label: '해외기타', domestic: false, isEtc: true, matchedBy: 'category' };
+    if (cat === 'domestic_other') return { bucket: 'etc', rep: '국내기타', label: '국내기타', domestic: true, isEtc: true, matchedBy: 'category' };
+    if (cat === 'overseas_new')   return { bucket: 'new', rep: '해외신규', label: '해외신규', domestic: false, isNew: true, matchedBy: 'category' };
+    if (cat === 'domestic_new')   return { bucket: 'new', rep: '국내신규', label: '국내신규', domestic: true, isNew: true, matchedBy: 'category' };
+  }
+
+  // ── ② account_id 매칭 (자동) ──
   if (account?.id && planByAccountId) {
-    const planById = planByAccountId instanceof Map
-      ? planByAccountId.get(account.id)
-      : planByAccountId[account.id];
+    const planById = planByAccountId instanceof Map ? planByAccountId.get(account.id) : planByAccountId[account.id];
     if (planById && planById.sales_rep) {
       return { bucket: 'plan', rep: planById.sales_rep, label: planById.sales_rep, planMatch: true, matchedBy: 'account_id' };
     }
@@ -324,42 +344,61 @@ export function classifyForRepView({ account, customerName, planByName, planByAc
   const nameKey = (customerName || account?.company_name || '').toLowerCase().trim();
   if (!nameKey) return { bucket: 'unknown', label: '기타', rep: null };
 
-  // 2. customer_name 정확 매칭
+  // ── ③ customer_name 정확 매칭 ──
   const plan = planByName instanceof Map ? planByName.get(nameKey) : planByName[nameKey];
   if (plan && plan.sales_rep) {
     return { bucket: 'plan', rep: plan.sales_rep, label: plan.sales_rep, planMatch: true, matchedBy: 'name' };
   }
 
-  // 3. 국내/해외 판별 (강화된 isDomestic — 병원/한글명 우선)
+  // ── ④ 자동 분류 (fallback) ──
   let domestic;
   if (account) {
     domestic = isDomestic(account);
   } else {
-    // account 없을 때: 한글명 또는 병원/의료원 키워드 → 국내
     const nameStr = customerName || '';
     domestic = /[가-힣]/.test(nameStr) || HOSPITAL_KEYWORDS.some(kw => nameStr.includes(kw));
   }
-
-  // 4. 전년도 수주 여부
   const hasPrior = priorSet && priorSet.has(nameKey);
-
   if (!hasPrior) {
-    return {
-      bucket: 'new',
-      rep: domestic ? '국내신규' : '해외신규',
-      label: domestic ? '국내신규' : '해외신규',
-      domestic,
-      isNew: true,
-    };
+    return { bucket: 'new', rep: domestic ? '국내신규' : '해외신규', label: domestic ? '국내신규' : '해외신규', domestic, isNew: true, matchedBy: 'auto' };
+  }
+  return { bucket: 'etc', rep: domestic ? '국내기타' : '해외기타', label: domestic ? '국내기타' : '해외기타', domestic, isEtc: true, matchedBy: 'auto' };
+}
+
+/**
+ * v3.12: 자동 분류 추천
+ * — 시스템이 isDomestic + plan 매칭 + 전년 수주를 종합해 카테고리 키 반환
+ *
+ * @returns {string} CUSTOMER_CATEGORIES key 중 하나
+ */
+export function suggestCustomerCategory({ account, customerPlans, priorSet }) {
+  if (!account) return 'unclassified';
+  const nameKey = (account.company_name || '').toLowerCase().trim();
+  if (!nameKey) return 'unclassified';
+
+  // 사업계획 매칭 여부 확인
+  const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
+  const planMatched = (customerPlans || []).some(p => {
+    if (!p.customer_name) return false;
+    if (bucketNames.includes(p.customer_name.trim())) return false;
+    // account_id 매칭
+    if (p.account_id === account.id) return true;
+    // 이름 매칭
+    if (p.customer_name.toLowerCase().trim() === nameKey) return true;
+    return false;
+  });
+
+  const domestic = isDomestic(account);
+
+  if (planMatched) {
+    return domestic ? 'domestic_main' : 'overseas_main';
   }
 
-  return {
-    bucket: 'etc',
-    rep: domestic ? '국내기타' : '해외기타',
-    label: domestic ? '국내기타' : '해외기타',
-    domestic,
-    isEtc: true,
-  };
+  const hasPrior = priorSet && priorSet.has(nameKey);
+  if (!hasPrior) {
+    return domestic ? 'domestic_new' : 'overseas_new';
+  }
+  return domestic ? 'domestic_other' : 'overseas_other';
 }
 
 /* ══════════════════════════════════════════════════════

@@ -232,6 +232,30 @@ export const GAP_CAUSES = [
   { key: 'internal', label: '내부 이슈', icon: '🏭', desc: '납기 지연, 품질 문제, 생산 차질' },
 ];
 
+/* ══════════════════════════════════════════════════════════════════
+   v3.12 — 명시적 고객 분류 체계 (customer_category 필드용)
+
+   목적: 분류를 매번 계산하지 않고 account에 저장하여 통계 안정화.
+   계산 함수(isDomestic 등) 변경 시에도 영향 없음.
+   ══════════════════════════════════════════════════════════════════ */
+export const CUSTOMER_CATEGORIES = [
+  { key: 'overseas_main',  label: '해외고객',   icon: '🌏', color: '#2563eb', desc: '사업계획 매칭 + 해외' },
+  { key: 'domestic_main',  label: '국내고객',   icon: '🇰🇷', color: '#16a34a', desc: '사업계획 매칭 + 국내(병원 포함)' },
+  { key: 'overseas_other', label: '해외기타',   icon: '🌍', color: '#d97706', desc: '사업계획 외 + 해외 (전년 수주 有)' },
+  { key: 'domestic_other', label: '국내기타',   icon: '🏠', color: '#d97706', desc: '사업계획 외 + 국내(병원 포함, 전년 수주 有)' },
+  { key: 'overseas_new',   label: '해외신규',   icon: '🆕', color: '#7c3aed', desc: '전년 수주 無 + 해외' },
+  { key: 'domestic_new',   label: '국내신규',   icon: '🆕', color: '#7c3aed', desc: '전년 수주 無 + 국내' },
+  { key: 'unclassified',   label: '미분류',     icon: '❓', color: '#6b7280', desc: '기본값 — 자동 추천 또는 수동 분류 필요' },
+];
+
+// 분류 카테고리 → rep 버킷 매핑 (분류 시 사용)
+export const CATEGORY_TO_BUCKET = {
+  'overseas_other': '해외기타',
+  'domestic_other': '국내기타',
+  'overseas_new':   '해외신규',
+  'domestic_new':   '국내신규',
+};
+
 /* ── Activity Log 이슈 종결 — 해결 방법 (Phase C v3.5) ── */
 export const RESOLUTION_METHODS = [
   { key: 'agreement',   label: '합의',     icon: '🤝', desc: '양사 협의로 종결' },

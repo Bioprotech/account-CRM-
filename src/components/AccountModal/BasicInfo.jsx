@@ -1,5 +1,7 @@
-import { REGIONS, PRODUCTS, BUSINESS_TYPES, CONTRACT_STATUSES, STRATEGIC_TIERS } from '../../lib/constants';
+import { REGIONS, PRODUCTS, BUSINESS_TYPES, CONTRACT_STATUSES, STRATEGIC_TIERS, CUSTOMER_CATEGORIES } from '../../lib/constants';
 import { useAccount } from '../../context/AccountContext';
+import { suggestCustomerCategory, loadPriorYearCustomers } from '../../lib/customerClassification';
+import { useMemo } from 'react';
 
 const TYPE_TRANSITIONS = {
   'Single → Multiple': '재구매 전환 성공',
@@ -9,7 +11,25 @@ const TYPE_TRANSITIONS = {
 };
 
 export default function BasicInfo({ draft, update }) {
-  const { teamMembers } = useAccount();
+  const { teamMembers, businessPlans, appSettings } = useAccount();
+
+  // v3.12: 자동 분류 추천 계산
+  const priorSet = useMemo(() => {
+    if (appSettings?.priorYearCustomers && Array.isArray(appSettings.priorYearCustomers)) {
+      return new Set(appSettings.priorYearCustomers);
+    }
+    return loadPriorYearCustomers();
+  }, [appSettings]);
+  const suggestedCategory = useMemo(() => {
+    if (!draft.id) return 'unclassified';
+    return suggestCustomerCategory({
+      account: draft,
+      customerPlans: (businessPlans || []).filter(p => p.type === 'customer' || !p.type),
+      priorSet,
+    });
+  }, [draft, businessPlans, priorSet]);
+  const currentCategory = draft.customer_category || 'unclassified';
+  const categoryMatchesSuggestion = currentCategory === suggestedCategory;
   const updateContact = (idx, field, value) => {
     const next = [...draft.key_contacts];
     next[idx] = { ...next[idx], [field]: value };
@@ -42,6 +62,56 @@ export default function BasicInfo({ draft, update }) {
         <div className="form-group">
           <label>국가</label>
           <input type="text" value={draft.country || ''} onChange={e => update({ country: e.target.value })} placeholder="국가명" />
+        </div>
+      </div>
+
+      {/* v3.12: 고객 분류 — 통계 안정화 (저장된 값으로 분류, 매번 계산 X) */}
+      <div className="form-row full">
+        <div className="form-group">
+          <label>
+            🏷️ 고객 분류
+            <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+              CRM 통계 기준 — 저장된 값 사용 (매번 계산 X)
+            </span>
+          </label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select
+              value={currentCategory}
+              onChange={e => update({ customer_category: e.target.value })}
+              style={{ padding: '5px 10px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, minWidth: 200 }}
+            >
+              {CUSTOMER_CATEGORIES.map(c => (
+                <option key={c.key} value={c.key}>{c.icon} {c.label}{c.key === 'unclassified' ? ' (미설정)' : ''}</option>
+              ))}
+            </select>
+            {!categoryMatchesSuggestion && (
+              <button
+                type="button"
+                onClick={() => update({ customer_category: suggestedCategory })}
+                style={{
+                  fontSize: 10, padding: '4px 10px',
+                  background: 'rgba(46,125,50,0.08)', border: '1px solid var(--accent)',
+                  color: 'var(--accent)', borderRadius: 4, cursor: 'pointer', fontWeight: 600,
+                }}
+                title={`자동 추천: ${CUSTOMER_CATEGORIES.find(c => c.key === suggestedCategory)?.label}`}
+              >
+                🔄 자동 추천 적용 ({CUSTOMER_CATEGORIES.find(c => c.key === suggestedCategory)?.icon} {CUSTOMER_CATEGORIES.find(c => c.key === suggestedCategory)?.label})
+              </button>
+            )}
+            {categoryMatchesSuggestion && currentCategory !== 'unclassified' && (
+              <span style={{ fontSize: 10, color: 'var(--green, #16a34a)', fontWeight: 600 }}>
+                ✓ 자동 추천과 일치
+              </span>
+            )}
+          </div>
+          {currentCategory !== 'unclassified' && (() => {
+            const meta = CUSTOMER_CATEGORIES.find(c => c.key === currentCategory);
+            return meta ? (
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                ※ {meta.desc}
+              </div>
+            ) : null;
+          })()}
         </div>
       </div>
 
