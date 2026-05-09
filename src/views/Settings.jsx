@@ -894,6 +894,76 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   v3.13.1 — 기존 영업현황 Import 데이터 정리 도구 (One-time cleanup)
+   ──────────────────────────────────────────────────────────────────
+   ProMES Import으로 전환 후 영업현황_2026.xlsm 형식 데이터는 더 이상
+   필요 없음. ProMES와 이중 집계 방지를 위해 일괄 삭제.
+
+   삭제 대상:
+     - source = 'excel_import_영업현황' (수주)
+     - source = 'excel_import_영업현황_S' (매출)
+
+   ProMES source (excel_import_promes_O / _S) 데이터는 영향 없음.
+   삭제할 데이터가 없으면 카드 자동으로 숨김.
+   ══════════════════════════════════════════════════════════════════ */
+function LegacyDataCleanupTool({ orders, sales, importOrders, importSales, showToast }) {
+  const [cleaning, setCleaning] = useState(false);
+
+  const legacyOrders = orders.filter(o => o.source === 'excel_import_영업현황').length;
+  const legacySales = sales.filter(s => s.source === 'excel_import_영업현황_S').length;
+
+  if (legacyOrders === 0 && legacySales === 0) return null;
+
+  const handleCleanup = async () => {
+    if (!confirm(
+      `기존 영업현황 import 데이터를 모두 삭제합니다.\n\n` +
+      `▸ 수주: ${legacyOrders.toLocaleString()}건 (source=excel_import_영업현황)\n` +
+      `▸ 매출: ${legacySales.toLocaleString()}건 (source=excel_import_영업현황_S)\n\n` +
+      `※ ProMES import 데이터는 영향 없음\n` +
+      `※ 이 작업은 되돌릴 수 없습니다\n\n` +
+      `계속할까요?`
+    )) return;
+    setCleaning(true);
+    try {
+      if (legacyOrders > 0) await importOrders([], 'excel_import_영업현황');
+      if (legacySales > 0) await importSales([], 'excel_import_영업현황_S');
+      showToast(`정리 완료: 수주 ${legacyOrders.toLocaleString()}건 + 매출 ${legacySales.toLocaleString()}건 삭제`, 'success');
+    } catch (e) {
+      console.error('Legacy cleanup 실패:', e);
+      showToast('정리 실패: ' + e.message, 'error');
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--red)' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>🗑 기존 영업현황 Import 데이터 정리</span>
+        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)', padding: '2px 8px', background: 'var(--bg2)', borderRadius: 12 }}>
+          One-time cleanup (v3.13.1)
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.5 }}>
+        ProMES Import으로 전환했으므로 <strong>이전 영업현황_2026.xlsm 형식 데이터는 더 이상 필요 없습니다</strong>.<br />
+        ProMES와 이중 집계되지 않도록 일괄 정리하세요. 삭제 후 이 카드는 자동으로 사라집니다.
+      </p>
+      <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(220,38,38,0.06)', borderColor: 'rgba(220,38,38,0.3)' }}>
+        <span>⚠</span> 영업현황 수주 <strong>{legacyOrders.toLocaleString()}건</strong> / 매출 <strong>{legacySales.toLocaleString()}건</strong> 삭제 예정
+      </div>
+      <button
+        className="btn btn-primary"
+        onClick={handleCleanup}
+        disabled={cleaning}
+        style={{ background: 'var(--red)', color: '#fff' }}
+      >
+        {cleaning ? '삭제 중...' : `🗑 영업현황 데이터 일괄 삭제 (${(legacyOrders + legacySales).toLocaleString()}건)`}
+      </button>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
    v3.10 — Account 합병 도구 (중복 account 통합)
    ══════════════════════════════════════════════════════════════════ */
 function AccountMergeTool({ accounts, orders, sales, businessPlans, mergeAccounts }) {
@@ -3606,7 +3676,20 @@ export default function Settings() {
         showToast={showToast}
       />
 
-      {/* ── 영업현황 Import (Legacy — 영업현황_2026.xlsm 호환용) ── */}
+      {/* ── v3.13.1: 기존 영업현황 Import 데이터 정리 (One-time, 데이터 있을 때만 표시) ── */}
+      <LegacyDataCleanupTool
+        orders={orders}
+        sales={sales}
+        importOrders={importOrders}
+        importSales={importSales}
+        showToast={showToast}
+      />
+
+      {/* ── DEPRECATED: 영업현황 Import 카드 (v3.13.1에서 UI 제거)
+         이 블록은 빌드에 포함되지 않도록 false 조건으로 감쌌고,
+         dead code (handleFileSelect 등)는 아직 남아있지만 호출 경로 없음.
+         완전 제거는 다음 cleanup 작업에서 진행. ── */}
+      {false && (
       <div className="card" style={{ marginBottom: 16, opacity: 0.85 }}>
         <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>📥 영업현황 Import (수주 + 매출)</span>
@@ -3894,6 +3977,7 @@ export default function Settings() {
           </div>
         )}
       </div>
+      )}
 
       {/* ── v3.12: 고객 분류 일괄 적용 도구 ── */}
       <BulkClassificationTool
