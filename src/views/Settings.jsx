@@ -58,8 +58,8 @@ const REGION_EN_TO_KR = {
   'N.America': '북미', 'North America': '북미', 'NA': '북미',
   'Europe': '유럽', 'EU': '유럽',
   'Asia': '아시아',
-  'Latin America': '중남미', 'S.America': '중남미', 'LATAM': '중남미',
-  'M.E.': '중동', 'Middle East': '중동',
+  'Latin America': '중남미', 'L.America': '중남미', 'S.America': '중남미', 'LATAM': '중남미',
+  'M.E.': '중동', 'M.E': '중동', 'Middle East': '중동',
   'Africa': '아프리카',
   'CIS': 'CIS',
   'Korea': '한국', 'Domestic': '한국',
@@ -304,6 +304,589 @@ function BulkClassificationTool({ accounts, businessPlans, appSettings, saveAcco
               ✅ 모든 account가 이미 적절히 분류되어 있습니다
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v3.13 — ProMES 영업통계 Import (수주 + 매출)
+   ──────────────────────────────────────────────────────────────────
+   ProMES 영업통계 리포트의 "원본 Excel" 다운로드를 import.
+   기존 영업현황_2026.xlsm (O/S 시트)를 대체.
+
+   파일 구조 (수주.xlsx / 매출.xlsx 동일):
+     - 시트명: "원본 데이터" (1개)
+     - 헤더: 연도, 분기, 월, 지역코드, 지역명, 거래처코드, 거래처명,
+             제품군코드, 제품군명, 건수, 수량, 금액(KRW)
+     - 각 행 = 월 × 거래처 × 제품군 집계 (월 단위 정밀도)
+
+   주요 설계:
+     - Account 매칭: external_code(거래처코드) 우선 → company_name → alias
+     - 미매칭 고객: 자동 신규 생성 + external_code 저장
+     - dedupe 키: year-month-account_id-product_code
+     - 금액 0원 행 자동 제외 (사용자 확인: 정상수주/매출 인식)
+     - 영업담당 필드 부재: classifyForRepView가 plan/account 기반이라 무영향
+
+   영향:
+     - ✅ 월간/연간 리포트: 기존과 동일
+     - ✅ 담당자별 집계: plan 매칭 + 4 버킷으로 정상 작동
+     - ⚠ 주간 리포트 일자 정밀도: 월 첫째 날(YYYY-MM-01)로 정규화
+       → "월목표 대비 누적실적" 표시는 정상
+   ══════════════════════════════════════════════════════════════════ */
+function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, importSales, showToast }) {
+  const orderFileRef = useRef();
+  const salesFileRef = useRef();
+  const [orderPreview, setOrderPreview] = useState(null);
+  const [salesPreview, setSalesPreview] = useState(null);
+  const orderParsedRef = useRef(null);
+  const salesParsedRef = useRef(null);
+  const [importing, setImporting] = useState(false);
+
+  // 기본 연도: 당해 + 전년
+  const [importYears, setImportYears] = useState(() => {
+    const y = new Date().getFullYear();
+    return new Set([String(y), String(y - 1)]);
+  });
+
+  // ProMES "원본 데이터" 시트 헤더 매퍼
+  const mapPromesHeaders = (headers) => ({
+    year: headers.indexOf('연도'),
+    quarter: headers.indexOf('분기'),
+    month: headers.indexOf('월'),
+    regionCode: headers.indexOf('지역코드'),
+    regionName: headers.indexOf('지역명'),
+    accountCode: headers.indexOf('거래처코드'),
+    customerName: headers.indexOf('거래처명'),
+    productCode: headers.indexOf('제품군코드'),
+    productName: headers.indexOf('제품군명'),
+    count: headers.indexOf('건수'),
+    quantity: headers.indexOf('수량'),
+    amount: headers.indexOf('금액(KRW)') >= 0 ? headers.indexOf('금액(KRW)') : headers.indexOf('금액'),
+  });
+
+  // 월 컬럼 정규화: "2026-01" 또는 숫자/문자열 → { yyyy, mm }
+  const normalizeMonth = (yearStr, monthVal) => {
+    const s = String(monthVal || '').trim();
+    const m = s.match(/^(\d{4})-(\d{1,2})$/);
+    if (m) return { yyyy: m[1], mm: m[2].padStart(2, '0') };
+    const n = parseInt(s, 10);
+    if (!isNaN(n) && n >= 1 && n <= 12) return { yyyy: yearStr, mm: String(n).padStart(2, '0') };
+    return { yyyy: yearStr, mm: '' };
+  };
+
+  const parseFile = async (file, kind) => {
+    showToast(`${file.name} 읽는 중...`, 'info');
+    try {
+      const XLSX = await import('xlsx');
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data);
+      const sheetName = wb.SheetNames.find(s => s === '원본 데이터') || wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (rows.length < 2) { showToast('데이터가 없습니다', 'error'); return; }
+
+      const headers = rows[0].map(c => String(c || '').trim());
+      const colIdx = mapPromesHeaders(headers);
+
+      // 필수 컬럼 검증
+      if (colIdx.year < 0 || colIdx.month < 0 || colIdx.customerName < 0 || colIdx.amount < 0) {
+        showToast('필수 컬럼(연도/월/거래처명/금액(KRW)) 부재 — ProMES 원본 형식 확인 필요', 'error');
+        return;
+      }
+
+      // 금액 0원 자동 제외 + 거래처명 빈 행 제외
+      const dataRows = rows.slice(1).filter(r => {
+        const customer = String(r[colIdx.customerName] || '').trim();
+        const amount = parseFloat(r[colIdx.amount]) || 0;
+        return customer && amount > 0;
+      });
+
+      // 연도별 분포
+      const yearCounts = {};
+      dataRows.forEach(r => {
+        const y = String(r[colIdx.year] || '').slice(0, 4);
+        if (y && y.startsWith('20')) yearCounts[y] = (yearCounts[y] || 0) + 1;
+      });
+
+      // Account 매칭 인덱스 (코드 우선)
+      const accountByCode = {};
+      const accountByName = {};
+      accounts.forEach(a => {
+        if (a.external_code) accountByCode[String(a.external_code).trim()] = a;
+        if (a.company_name) accountByName[a.company_name.toLowerCase().trim()] = a;
+        (a.aliases || []).forEach(alias => {
+          if (alias) accountByName[String(alias).toLowerCase().trim()] = a;
+        });
+      });
+
+      // 거래처 단위 매칭 분석 (preview용)
+      const customerMap = new Map();
+      dataRows.forEach(r => {
+        const code = String(r[colIdx.accountCode] || '').trim();
+        const name = String(r[colIdx.customerName] || '').trim();
+        const regionName = String(r[colIdx.regionName] || '').trim();
+        const key = code || name.toLowerCase();
+        if (customerMap.has(key)) return;
+        const matched = (code && accountByCode[code]) || accountByName[name.toLowerCase().trim()];
+        customerMap.set(key, { code, name, regionName, matched: !!matched });
+      });
+
+      const matchedCount = [...customerMap.values()].filter(c => c.matched).length;
+      const unmatchedCount = customerMap.size - matchedCount;
+      const unmatchedNames = [...customerMap.values()].filter(c => !c.matched).map(c => c.name);
+
+      const parsedRef = kind === 'order' ? orderParsedRef : salesParsedRef;
+      const setPreview = kind === 'order' ? setOrderPreview : setSalesPreview;
+
+      parsedRef.current = { dataRows, colIdx };
+      setPreview({
+        fileName: file.name,
+        sheetName,
+        totalRows: dataRows.length,
+        yearCounts,
+        matchedCount,
+        unmatchedCount,
+        unmatchedNames: unmatchedNames.slice(0, 30),
+        unmatchedTotal: unmatchedNames.length,
+      });
+
+      showToast(`${kind === 'order' ? '수주' : '매출'} 로드 완료: ${dataRows.length.toLocaleString()}건 (금액 0원 행 제외)`, 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('파일 읽기 실패: ' + err.message, 'error');
+    }
+  };
+
+  const handleOrderFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) await parseFile(file, 'order');
+  };
+  const handleSalesFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) await parseFile(file, 'sales');
+  };
+
+  const handleImport = async () => {
+    if (!orderParsedRef.current && !salesParsedRef.current) {
+      showToast('수주 또는 매출 파일을 먼저 선택하세요', 'error');
+      return;
+    }
+    const selectedYears = [...importYears].sort().reverse();
+    if (selectedYears.length === 0) {
+      alert('연도를 1개 이상 선택하세요');
+      return;
+    }
+
+    const oCount = orderParsedRef.current?.dataRows?.length || 0;
+    const sCount = salesParsedRef.current?.dataRows?.length || 0;
+
+    if (!confirm(
+      `📋 ProMES Import 확인\n\n` +
+      `▸ 연도: ${selectedYears.join(', ')}\n` +
+      `▸ 수주 raw rows: ${oCount.toLocaleString()}건\n` +
+      `▸ 매출 raw rows: ${sCount.toLocaleString()}건\n\n` +
+      `기존 ProMES import 데이터(source=excel_import_promes_*)는 교체됩니다.\n` +
+      `기존 영업현황 import (excel_import_영업현황) 데이터는 영향 없음.\n\n` +
+      `계속할까요?`
+    )) return;
+
+    setImporting(true);
+    try {
+      // ── Account 매칭 인덱스 (모든 import 공유) ──
+      const accountByCode = {};
+      const accountByName = {};
+      const accountById = {};
+      accounts.forEach(a => {
+        if (a.external_code) accountByCode[String(a.external_code).trim()] = a;
+        if (a.company_name) accountByName[a.company_name.toLowerCase().trim()] = a;
+        (a.aliases || []).forEach(alias => {
+          if (alias) accountByName[String(alias).toLowerCase().trim()] = a;
+        });
+        accountById[a.id] = a;
+      });
+
+      // ── 미매칭 고객 자동 생성 (양 파일 union, 선택 연도만) ──
+      const newAccountInfo = {};
+      const collectMissing = (parsed) => {
+        if (!parsed) return;
+        const { dataRows, colIdx } = parsed;
+        dataRows.forEach(r => {
+          const yearStr = String(r[colIdx.year] || '').slice(0, 4);
+          if (!importYears.has(yearStr)) return;
+          const code = String(r[colIdx.accountCode] || '').trim();
+          const name = String(r[colIdx.customerName] || '').trim();
+          const regionName = String(r[colIdx.regionName] || '').trim();
+          if (!name) return;
+          const matched = (code && accountByCode[code]) || accountByName[name.toLowerCase().trim()];
+          if (matched) return;
+          const key = code || name.toLowerCase().trim();
+          if (!newAccountInfo[key]) newAccountInfo[key] = { code, name, regionName };
+        });
+      };
+      collectMissing(orderParsedRef.current);
+      collectMissing(salesParsedRef.current);
+
+      const newAccounts = [];
+      for (const info of Object.values(newAccountInfo)) {
+        const newId = 'acc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        const acc = {
+          id: newId,
+          company_name: info.name,
+          external_code: info.code || '',
+          country: '',
+          region: mapRegion(info.regionName),
+          sales_rep: '',
+          products: [],
+          business_type: '',
+          key_contacts: [],
+          contract_status: '없음',
+          intelligence: { total_score: 0, categories: {}, last_updated: '' },
+          last_contact_date: '',
+          aliases: [],
+          customer_category: 'unclassified',
+          created_at: today(),
+          updated_at: today(),
+        };
+        newAccounts.push(acc);
+        if (info.code) accountByCode[info.code] = acc;
+        accountByName[info.name.toLowerCase().trim()] = acc;
+        accountById[newId] = acc;
+      }
+      for (const acc of newAccounts) await saveAccount(acc);
+
+      // ── external_code 보강 (기존 account에 코드 없으면 채워 넣기) ──
+      const codeUpdatesMap = new Map();
+      const collectCodeUpdates = (parsed) => {
+        if (!parsed) return;
+        const { dataRows, colIdx } = parsed;
+        dataRows.forEach(r => {
+          const code = String(r[colIdx.accountCode] || '').trim();
+          const name = String(r[colIdx.customerName] || '').trim();
+          if (!code || !name) return;
+          const acc = accountByCode[code] || accountByName[name.toLowerCase().trim()];
+          if (!acc) return;
+          if ((acc.external_code || '').trim() !== code) {
+            codeUpdatesMap.set(acc.id, { ...acc, external_code: code, updated_at: today() });
+          }
+        });
+      };
+      collectCodeUpdates(orderParsedRef.current);
+      collectCodeUpdates(salesParsedRef.current);
+      for (const acc of codeUpdatesMap.values()) await saveAccount(acc);
+
+      // ── 수주 build ──
+      const newOrders = [];
+      if (orderParsedRef.current) {
+        const { dataRows, colIdx } = orderParsedRef.current;
+        const dedupe = new Map();
+        dataRows.forEach(r => {
+          const yearStr = String(r[colIdx.year] || '').slice(0, 4);
+          if (!importYears.has(yearStr)) return;
+          const code = String(r[colIdx.accountCode] || '').trim();
+          const name = String(r[colIdx.customerName] || '').trim();
+          if (!name) return;
+          const acc = (code && accountByCode[code]) || accountByName[name.toLowerCase().trim()];
+          if (!acc) return;
+
+          const { yyyy, mm } = normalizeMonth(yearStr, r[colIdx.month]);
+          if (!mm) return;
+
+          const productCode = String(r[colIdx.productCode] || '').trim();
+          const productName = String(r[colIdx.productName] || '').trim();
+          const regionName = String(r[colIdx.regionName] || '').trim();
+          const regionCode = String(r[colIdx.regionCode] || '').trim();
+          const amount = parseFloat(r[colIdx.amount]) || 0;
+          const quantity = parseInt(r[colIdx.quantity]) || 0;
+          const count = parseInt(r[colIdx.count]) || 1;
+          const quarter = parseInt(r[colIdx.quarter]) || Math.ceil(parseInt(mm, 10) / 3);
+          if (amount <= 0) return;
+
+          const dedupeKey = `${yyyy}-${mm}-${acc.id}-${productCode || productName}`;
+          const existing = dedupe.get(dedupeKey);
+          if (existing) {
+            existing.order_amount += amount;
+            existing.quantity += quantity;
+            existing.count += count;
+            return;
+          }
+          dedupe.set(dedupeKey, {
+            id: `ord_promes_${yyyy}${mm}_${acc.id}_${productCode || 'X'}`,
+            account_id: acc.id,
+            customer_name: acc.company_name || name,
+            external_code: code || acc.external_code || '',
+            order_number: '',
+            order_date: `${yyyy}-${mm}-01`,
+            order_month: `${yyyy}-${mm}`,
+            year: parseInt(yyyy, 10),
+            quarter,
+            product_category: productName,
+            product_code: productCode,
+            order_amount: amount,
+            currency: 'KRW',
+            quantity,
+            count,
+            sales_rep: '',
+            region: mapRegion(regionName),
+            region_code: regionCode,
+            country: '',
+            status: '',
+            source: 'excel_import_promes_O',
+            import_date: today(),
+          });
+        });
+        newOrders.push(...dedupe.values());
+      }
+
+      // ── 매출 build ──
+      const newSales = [];
+      if (salesParsedRef.current) {
+        const { dataRows, colIdx } = salesParsedRef.current;
+        const dedupe = new Map();
+        dataRows.forEach(r => {
+          const yearStr = String(r[colIdx.year] || '').slice(0, 4);
+          if (!importYears.has(yearStr)) return;
+          const code = String(r[colIdx.accountCode] || '').trim();
+          const name = String(r[colIdx.customerName] || '').trim();
+          if (!name) return;
+          const acc = (code && accountByCode[code]) || accountByName[name.toLowerCase().trim()];
+          if (!acc) return;
+
+          const { yyyy, mm } = normalizeMonth(yearStr, r[colIdx.month]);
+          if (!mm) return;
+
+          const productCode = String(r[colIdx.productCode] || '').trim();
+          const productName = String(r[colIdx.productName] || '').trim();
+          const regionName = String(r[colIdx.regionName] || '').trim();
+          const regionCode = String(r[colIdx.regionCode] || '').trim();
+          const amount = parseFloat(r[colIdx.amount]) || 0;
+          const quantity = parseInt(r[colIdx.quantity]) || 0;
+          const count = parseInt(r[colIdx.count]) || 1;
+          const quarter = parseInt(r[colIdx.quarter]) || Math.ceil(parseInt(mm, 10) / 3);
+          if (amount <= 0) return;
+
+          const dedupeKey = `${yyyy}-${mm}-${acc.id}-${productCode || productName}`;
+          const existing = dedupe.get(dedupeKey);
+          if (existing) {
+            existing.sale_amount += amount;
+            existing.quantity += quantity;
+            existing.count += count;
+            return;
+          }
+          dedupe.set(dedupeKey, {
+            id: `sal_promes_${yyyy}${mm}_${acc.id}_${productCode || 'X'}`,
+            account_id: acc.id,
+            customer_name: acc.company_name || name,
+            external_code: code || acc.external_code || '',
+            order_number: '',
+            sale_date: `${yyyy}-${mm}-01`,
+            sale_month: `${yyyy}-${mm}`,
+            delivery_date: '',
+            year: parseInt(yyyy, 10),
+            quarter,
+            product_category: productName,
+            product_code: productCode,
+            sale_amount: amount,
+            pending_amount: 0,
+            currency: 'KRW',
+            quantity,
+            count,
+            sales_rep: '',
+            region: mapRegion(regionName),
+            region_code: regionCode,
+            country: '',
+            source: 'excel_import_promes_S',
+            import_date: today(),
+          });
+        });
+        newSales.push(...dedupe.values());
+      }
+
+      if (newOrders.length > 0) {
+        await importOrders(newOrders, 'excel_import_promes_O');
+      }
+      if (newSales.length > 0) {
+        await importSales(newSales, 'excel_import_promes_S');
+      }
+
+      // ── 전년도 고객 목록 갱신 (수주 데이터로 — 분류 자동 추천에 사용) ──
+      if (newOrders.length > 0) {
+        const priorYear = String(new Date().getFullYear() - 1);
+        const priorYearNames = newOrders
+          .filter(o => String(o.year) === priorYear)
+          .map(o => o.customer_name);
+        if (priorYearNames.length > 0) {
+          await savePriorYearCustomers(priorYearNames);
+        }
+      }
+
+      const parts = [];
+      if (newOrders.length > 0) parts.push(`수주 ${newOrders.length.toLocaleString()}건`);
+      if (newSales.length > 0) parts.push(`매출 ${newSales.length.toLocaleString()}건`);
+      if (newAccounts.length > 0) parts.push(`신규 ${newAccounts.length}사`);
+      if (codeUpdatesMap.size > 0) parts.push(`코드 갱신 ${codeUpdatesMap.size}사`);
+      showToast(`ProMES Import 완료: ${parts.join(' / ')}`, 'success');
+
+      setOrderPreview(null); orderParsedRef.current = null;
+      setSalesPreview(null); salesParsedRef.current = null;
+    } catch (err) {
+      console.error('ProMES Import 실패:', err);
+      showToast('Import 실패: ' + err.message, 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // 연도 후보 (양 파일 union)
+  const yearCandidates = useMemo(() => {
+    const yearSet = new Set();
+    if (orderPreview) Object.keys(orderPreview.yearCounts || {}).forEach(y => yearSet.add(y));
+    if (salesPreview) Object.keys(salesPreview.yearCounts || {}).forEach(y => yearSet.add(y));
+    return [...yearSet].filter(y => y && y.startsWith('20')).sort().reverse();
+  }, [orderPreview, salesPreview]);
+
+  const promesOrdersCount = orders.filter(o => o.source === 'excel_import_promes_O').length;
+  const promesSalesCount = sales.filter(s => s.source === 'excel_import_promes_S').length;
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--accent)' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>🆕 ProMES 영업통계 Import (수주 + 매출)</span>
+        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--green, #16a34a)', padding: '2px 8px', background: 'rgba(22,163,74,0.1)', borderRadius: 12 }}>
+          권장 (2026-05~)
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.5 }}>
+        ProMES 영업통계 리포트의 <strong>"원본 Excel"</strong> 다운로드를 import합니다.
+        수주.xlsx와 매출.xlsx를 별도로 선택하세요. 한쪽만 import도 가능.<br />
+        <span style={{ color: 'var(--text3)' }}>
+          • 시트명 <code>원본 데이터</code> 자동 감지
+          • 거래처코드(C-00xxx)로 자동 매칭, 신규 고객 자동 생성
+          • 금액 0원 행 자동 제외 (정상 수주/매출만)
+          • dedupe 키: 연도-월-account_id-제품군코드
+        </span>
+      </p>
+
+      {(promesOrdersCount > 0 || promesSalesCount > 0) && (
+        <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(46,125,50,.08)', borderColor: 'rgba(46,125,50,.3)' }}>
+          <span>📋</span> ProMES 수주 <strong>{promesOrdersCount.toLocaleString()}건</strong> / 매출 <strong>{promesSalesCount.toLocaleString()}건</strong> import됨
+        </div>
+      )}
+
+      {/* 두 파일 선택 영역 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        {/* 수주 */}
+        <div style={{ padding: 10, background: 'var(--bg2)', borderRadius: 6, border: orderPreview ? '1px solid var(--accent)' : '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 13 }}>📦 수주 파일</div>
+          <input ref={orderFileRef} type="file" accept=".xlsx,.xls" onChange={handleOrderFile} style={{ display: 'none' }} />
+          <button className="btn btn-ghost" onClick={() => orderFileRef.current?.click()} style={{ marginBottom: 6, fontSize: 12 }}>
+            {orderPreview ? '수주 파일 변경' : '수주 파일 선택'}
+          </button>
+          {orderPreview ? (
+            <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 600 }}>{orderPreview.fileName}</div>
+              <div>총 <strong>{orderPreview.totalRows.toLocaleString()}건</strong></div>
+              <div>매칭 <strong>{orderPreview.matchedCount}사</strong> / 미매칭 <span style={{ color: orderPreview.unmatchedCount > 0 ? 'var(--red)' : 'inherit' }}><strong>{orderPreview.unmatchedCount}사</strong></span></div>
+              <button onClick={() => { setOrderPreview(null); orderParsedRef.current = null; }} style={{ fontSize: 10, padding: '2px 6px', marginTop: 4, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}>제거</button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>예: 영업현황_원본_2026-2026_수주.xlsx</div>
+          )}
+        </div>
+        {/* 매출 */}
+        <div style={{ padding: 10, background: 'var(--bg2)', borderRadius: 6, border: salesPreview ? '1px solid var(--accent)' : '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 13 }}>💰 매출 파일</div>
+          <input ref={salesFileRef} type="file" accept=".xlsx,.xls" onChange={handleSalesFile} style={{ display: 'none' }} />
+          <button className="btn btn-ghost" onClick={() => salesFileRef.current?.click()} style={{ marginBottom: 6, fontSize: 12 }}>
+            {salesPreview ? '매출 파일 변경' : '매출 파일 선택'}
+          </button>
+          {salesPreview ? (
+            <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 600 }}>{salesPreview.fileName}</div>
+              <div>총 <strong>{salesPreview.totalRows.toLocaleString()}건</strong></div>
+              <div>매칭 <strong>{salesPreview.matchedCount}사</strong> / 미매칭 <span style={{ color: salesPreview.unmatchedCount > 0 ? 'var(--red)' : 'inherit' }}><strong>{salesPreview.unmatchedCount}사</strong></span></div>
+              <button onClick={() => { setSalesPreview(null); salesParsedRef.current = null; }} style={{ fontSize: 10, padding: '2px 6px', marginTop: 4, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}>제거</button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>예: 영업현황_원본_2026-2026_매출.xlsx</div>
+          )}
+        </div>
+      </div>
+
+      {/* 미매칭 고객 미리보기 */}
+      {(orderPreview?.unmatchedCount > 0 || salesPreview?.unmatchedCount > 0) && (
+        <details style={{ fontSize: 11, color: 'var(--red)', marginBottom: 12, padding: 8, background: 'rgba(220,38,38,0.04)', borderRadius: 4 }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+            ⚠ 미매칭 고객 ({Math.max(orderPreview?.unmatchedCount || 0, salesPreview?.unmatchedCount || 0)}사) — Import 시 신규 account 자동 생성됨
+          </summary>
+          {orderPreview?.unmatchedCount > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontWeight: 600, color: 'var(--text2)' }}>수주 미매칭:</div>
+              <div style={{ color: 'var(--text2)' }}>{orderPreview.unmatchedNames.join(', ')}{orderPreview.unmatchedTotal > 30 ? ` 외 ${orderPreview.unmatchedTotal - 30}사` : ''}</div>
+            </div>
+          )}
+          {salesPreview?.unmatchedCount > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontWeight: 600, color: 'var(--text2)' }}>매출 미매칭:</div>
+              <div style={{ color: 'var(--text2)' }}>{salesPreview.unmatchedNames.join(', ')}{salesPreview.unmatchedTotal > 30 ? ` 외 ${salesPreview.unmatchedTotal - 30}사` : ''}</div>
+            </div>
+          )}
+        </details>
+      )}
+
+      {/* 연도 선택 */}
+      {(orderPreview || salesPreview) && yearCandidates.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 12, flexWrap: 'wrap', padding: 10, background: 'var(--bg2)', borderRadius: 6 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, fontWeight: 700 }}>📅 Import 연도</span>
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>당해+전년 권장</span>
+          </div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1, alignItems: 'center' }}>
+            {yearCandidates.map(y => {
+              const checked = importYears.has(y);
+              const oC = orderPreview?.yearCounts?.[y] || 0;
+              const sC = salesPreview?.yearCounts?.[y] || 0;
+              return (
+                <label key={y} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '4px 10px', borderRadius: 6,
+                  border: checked ? '2px solid var(--accent)' : '1px solid var(--border)',
+                  background: checked ? 'rgba(46,125,50,0.08)' : 'var(--bg)',
+                  cursor: 'pointer', fontSize: 11, fontWeight: checked ? 700 : 400, userSelect: 'none',
+                }}>
+                  <input type="checkbox" checked={checked} onChange={() => setImportYears(prev => {
+                    const next = new Set(prev);
+                    if (next.has(y)) next.delete(y); else next.add(y);
+                    return next;
+                  })} style={{ margin: 0, cursor: 'pointer' }} />
+                  <span>{y}년</span>
+                  <span style={{ fontSize: 9, color: 'var(--text3)' }}>
+                    (수주 {oC.toLocaleString()} / 매출 {sC.toLocaleString()})
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Import 실행 */}
+      {(orderPreview || salesPreview) && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" onClick={handleImport} disabled={importing || importYears.size === 0}>
+            {importing
+              ? 'Import 중...'
+              : importYears.size === 0
+                ? '⚠ 연도 선택 필요'
+                : `${[...importYears].sort().reverse().join('+')} ProMES Import 실행`}
+          </button>
+          <button className="btn btn-ghost" onClick={() => {
+            setOrderPreview(null); orderParsedRef.current = null;
+            setSalesPreview(null); salesParsedRef.current = null;
+          }} disabled={importing}>전체 취소</button>
         </div>
       )}
     </div>
@@ -3012,12 +3595,28 @@ export default function Settings() {
         )}
       </div>
 
-      {/* ── 영업현황 Import (수주 O sheet + 매출 S sheet) ── */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-title">📥 영업현황 Import (수주 + 매출)</div>
+      {/* ── v3.13: ProMES 영업통계 Import (현재 권장) ── */}
+      <PromesImportTool
+        accounts={accounts}
+        saveAccount={saveAccount}
+        orders={orders}
+        sales={sales}
+        importOrders={importOrders}
+        importSales={importSales}
+        showToast={showToast}
+      />
+
+      {/* ── 영업현황 Import (Legacy — 영업현황_2026.xlsm 호환용) ── */}
+      <div className="card" style={{ marginBottom: 16, opacity: 0.85 }}>
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>📥 영업현황 Import (수주 + 매출)</span>
+          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)', padding: '2px 8px', background: 'var(--bg2)', borderRadius: 12 }}>
+            Legacy — 영업현황_2026.xlsm 형식 (~2026-04)
+          </span>
+        </div>
         <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
-          영업현황 엑셀 파일의 <strong>O시트(수주, 오더일 기준)</strong>와 <strong>S시트(매출, B/L date 기준)</strong>를 동시에 import합니다.<br />
-          수주취소·무상샘플은 자동 제외. 재업로드 시 기존 import 데이터를 교체합니다.
+          기존 <strong>영업현황_2026.xlsm</strong> 파일의 O/S 시트 형식 import (참고용 보존).<br />
+          <span style={{ color: 'var(--text3)' }}>2026년 5월 이후 영업현황 Excel은 갱신되지 않습니다 → 위 <strong>ProMES 영업통계 Import</strong> 사용 권장.</span>
         </p>
 
         {currentOrderImports > 0 && (

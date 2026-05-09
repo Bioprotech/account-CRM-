@@ -3,16 +3,56 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-04-30 (v3.12 배포 완료)
+**최종 갱신**: 2026-05-09 (v3.13 배포 완료 — ProMES 영업통계 Import 도입)
 
 ---
 
 ## 🎯 현재 상태
 
-- **운영 버전**: v3.12 (정상 작동 중)
+- **운영 버전**: v3.13 (정상 작동 중)
 - **배포 URL**: https://bioprotech-account-crm.web.app
 - **GitHub**: https://github.com/Bioprotech/account-CRM-.git
-- **마지막 커밋**: `42f51a5` (v3.12 명시적 고객 분류)
+- **마지막 커밋**: v3.13 (ProMES 영업통계 Import)
+
+## 🆕 v3.13 핵심 변화 — ProMES 도입
+
+### 배경
+- `영업현황_2026.xlsm`이 더 이상 갱신되지 않음 (2026-04 기준 종료)
+- **ProMES 영업통계 리포트**에서 매출/수주를 별도 통계로 산출
+- 다운로드: 수주.xlsx + 매출.xlsx (분리)
+
+### 신규 import 모듈: Settings → PromesImportTool
+- 시트명 `원본 데이터` 자동 감지
+- 헤더: `연도/분기/월/지역코드/지역명/거래처코드/거래처명/제품군코드/제품군명/건수/수량/금액(KRW)`
+- 각 행 = 월 × 거래처 × 제품군 집계 (월 단위 정밀도)
+
+### Account 매칭 3단계
+1. **external_code** (거래처코드 C-00xxx) — 가장 정확
+2. **company_name + alias** 매칭
+3. **신규 자동 생성** + external_code 자동 저장
+
+### dedupe 키 변경
+- 기존(영업현황): 수주번호 기반
+- ProMES: `${year}-${month}-${account_id}-${product_code}` (같은 키 다중 행 자동 합산)
+
+### 자동 제외 규칙
+- 금액 0원 행 자동 제외 (사용자 확인: 정상 수주/매출만)
+- ProMES 통계가 이미 취소·샘플·수리 등 비정상 데이터 정제
+
+### 영업담당 컬럼 부재 — 영향 없음
+- `classifyForRepView`는 plan/account 기반 attribution
+- transaction의 `sales_rep` 필드는 핵심 분류 로직에 사용 안 됨
+- 사업계획 매칭 거래처 → plan.sales_rep / 외 거래처 → 4 버킷 자동
+
+### 리포트 영향
+- ✅ 월간/연간 리포트: 기존과 동일
+- ✅ 담당자별 집계: 정상 작동
+- ⚠ 주간 리포트 일자 정밀도: 월 단위 → "월목표 대비 누적실적" 표시는 정상
+
+### 기존 영업현황 Import 처리
+- "Legacy — 영업현황_2026.xlsm 형식" 표시로 보존
+- source 분리됨: excel_import_영업현황(_S) vs excel_import_promes_O/S
+- 두 source 데이터는 Firestore에 공존 가능 (마이그레이션 불필요)
 
 ---
 
