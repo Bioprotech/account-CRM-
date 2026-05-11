@@ -955,16 +955,12 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
 function PromesBackfillTool({ orders, sales, importOrders, importSales, showToast }) {
   const [running, setRunning] = useState(false);
 
-  // 기본 baseline 일자 = 이번 주 월요일 - 1일 (= 직전 주 일요일)
-  // → 이번 주 / 이전 주차의 주간 분석 범위에 들어가지 않도록 직전 주 일요일을 default
-  // 하지만 사용자가 명시적으로 조정 가능
+  // 기본 baseline 일자 = 전년 12/31 (어떤 주차에도 속하지 않도록 가장 안전)
+  // 이전 default(직전 주 일요일)는 그 주차 안에 baseline이 잡혀 부풀림이 남는 문제 발생
+  // → 전년 마지막 날로 변경: 올해 모든 주차 분석에서 안 보임, 누적 amount는 보존
   const defaultBaselineDate = (() => {
     const now = new Date();
-    const day = now.getDay(); // 0=일, 1=월, ...
-    const offset = day === 0 ? 7 : day; // 이번 주 월요일까지 거리
-    const lastSunday = new Date(now);
-    lastSunday.setDate(now.getDate() - offset);
-    return lastSunday.toISOString().slice(0, 10);
+    return `${now.getFullYear() - 1}-12-31`;
   })();
   const [baselineDate, setBaselineDate] = useState(defaultBaselineDate);
 
