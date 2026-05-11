@@ -938,59 +938,94 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   v3.14 — ProMES Delta 백필 도구 (One-time)
+   v3.14.2 — ProMES Baseline 재설정 도구
    ──────────────────────────────────────────────────────────────────
-   이미 import된 ProMES transaction에 imports[] 배열을 1회용으로 채움.
-   - 기존 데이터: { import_date, order_amount }
-   - 백필 후:    { import_date, order_amount, imports: [{date, amount, delta}] }
-                 (delta = order_amount, 첫 entry로 간주)
+   v3.14 백필의 문제: imports[0].delta = 누적 amount → 그 한 주에 1~5월
+   전체 누적이 몰림. 주간 수주가 비현실적으로 부풀려짐.
 
-   백필 완료 후 카드 자동으로 사라짐.
+   해결: Baseline 개념 도입.
+     - 백필 시 imports[0] = { date, amount, delta: 0, _baseline: true }
+     - 즉 "이건 historical baseline, 이미 발생한 누적 amount일 뿐"
+     - 다음 ProMES Import 시 delta = newAmount - baseline.amount → 진짜 신규 수주
+
+   이 도구는 항상 표시 (이미 잘못 백필된 데이터를 정정하는 용도):
+     - 이미 imports[] 있어도 강제로 baseline 1개로 재설정 가능
+     - 사용자가 baseline 기준일 선택 (default: 직전 주 일요일 → 모든 주차 분석 범위 밖)
    ══════════════════════════════════════════════════════════════════ */
 function PromesBackfillTool({ orders, sales, importOrders, importSales, showToast }) {
   const [running, setRunning] = useState(false);
 
-  const targetOrders = orders.filter(o => o.source === 'excel_import_promes_O' && !Array.isArray(o.imports));
-  const targetSales = sales.filter(s => s.source === 'excel_import_promes_S' && !Array.isArray(s.imports));
+  // 기본 baseline 일자 = 이번 주 월요일 - 1일 (= 직전 주 일요일)
+  // → 이번 주 / 이전 주차의 주간 분석 범위에 들어가지 않도록 직전 주 일요일을 default
+  // 하지만 사용자가 명시적으로 조정 가능
+  const defaultBaselineDate = (() => {
+    const now = new Date();
+    const day = now.getDay(); // 0=일, 1=월, ...
+    const offset = day === 0 ? 7 : day; // 이번 주 월요일까지 거리
+    const lastSunday = new Date(now);
+    lastSunday.setDate(now.getDate() - offset);
+    return lastSunday.toISOString().slice(0, 10);
+  })();
+  const [baselineDate, setBaselineDate] = useState(defaultBaselineDate);
 
-  if (targetOrders.length === 0 && targetSales.length === 0) return null;
+  const allPromesOrders = orders.filter(o => o.source === 'excel_import_promes_O');
+  const allPromesSales = sales.filter(s => s.source === 'excel_import_promes_S');
 
-  const handleBackfill = async () => {
+  // 이미 baseline 적용된 데이터 카운트 (참고용)
+  const baselineDoneOrders = allPromesOrders.filter(o =>
+    Array.isArray(o.imports) && o.imports.length > 0 && o.imports[0]._baseline === true
+  ).length;
+  const baselineDoneSales = allPromesSales.filter(s =>
+    Array.isArray(s.imports) && s.imports.length > 0 && s.imports[0]._baseline === true
+  ).length;
+  const allBaseline = baselineDoneOrders === allPromesOrders.length && baselineDoneSales === allPromesSales.length;
+
+  // ProMES 데이터가 아예 없으면 표시 안 함
+  if (allPromesOrders.length === 0 && allPromesSales.length === 0) return null;
+
+  const handleBaseline = async () => {
     if (!confirm(
-      `기존 ProMES transaction에 imports[] 배열을 1회 백필합니다.\n\n` +
-      `▸ 수주: ${targetOrders.length.toLocaleString()}건\n` +
-      `▸ 매출: ${targetSales.length.toLocaleString()}건\n\n` +
-      `각 transaction의 import_date와 amount를 기준으로 imports[0]을 채웁니다.\n` +
-      `누적 amount는 그대로 보존, 주간 delta 추적용 배열만 추가됩니다.\n\n` +
+      `ProMES 데이터의 imports[] 배열을 baseline 1개로 재설정합니다.\n\n` +
+      `▸ 수주: ${allPromesOrders.length.toLocaleString()}건\n` +
+      `▸ 매출: ${allPromesSales.length.toLocaleString()}건\n` +
+      `▸ Baseline 기준일: ${baselineDate}\n\n` +
+      `imports[0] = { date: ${baselineDate}, amount: 누적, delta: 0, _baseline: true }\n\n` +
+      `※ 이미 백필된 imports[]는 모두 재설정됨\n` +
+      `※ 누적 amount(order_amount/sale_amount)는 그대로 보존\n` +
+      `※ delta = 0이라 baseline은 주간 리포트에 표시되지 않음\n` +
+      `※ 다음 ProMES Import부터 baseline 대비 정확한 주간 delta 추적\n\n` +
       `계속할까요?`
     )) return;
     setRunning(true);
     try {
-      // ProMES source 전체를 imports[] 추가한 버전으로 batch 교체
-      const allPromesOrders = orders.filter(o => o.source === 'excel_import_promes_O');
-      const allPromesSales = sales.filter(s => s.source === 'excel_import_promes_S');
-
-      const updatedOrders = allPromesOrders.map(o => {
-        if (Array.isArray(o.imports) && o.imports.length > 0) return o; // 이미 있으면 보존
-        return {
-          ...o,
-          imports: [{ date: o.import_date || today(), amount: o.order_amount || 0, delta: o.order_amount || 0 }],
-        };
-      });
-      const updatedSales = allPromesSales.map(s => {
-        if (Array.isArray(s.imports) && s.imports.length > 0) return s;
-        return {
-          ...s,
-          imports: [{ date: s.import_date || today(), amount: s.sale_amount || 0, delta: s.sale_amount || 0 }],
-        };
-      });
+      const updatedOrders = allPromesOrders.map(o => ({
+        ...o,
+        imports: [{
+          date: baselineDate,
+          amount: o.order_amount || 0,
+          delta: 0,
+          _baseline: true,
+        }],
+      }));
+      const updatedSales = allPromesSales.map(s => ({
+        ...s,
+        imports: [{
+          date: baselineDate,
+          amount: s.sale_amount || 0,
+          delta: 0,
+          _baseline: true,
+        }],
+      }));
 
       if (updatedOrders.length > 0) await importOrders(updatedOrders, 'excel_import_promes_O');
       if (updatedSales.length > 0) await importSales(updatedSales, 'excel_import_promes_S');
-      showToast(`백필 완료: 수주 ${updatedOrders.length.toLocaleString()}건 / 매출 ${updatedSales.length.toLocaleString()}건`, 'success');
+      showToast(
+        `Baseline 재설정 완료: 수주 ${updatedOrders.length.toLocaleString()}건 / 매출 ${updatedSales.length.toLocaleString()}건 (delta=0, ${baselineDate} 기준)`,
+        'success'
+      );
     } catch (e) {
-      console.error('Backfill 실패:', e);
-      showToast('백필 실패: ' + e.message, 'error');
+      console.error('Baseline 실패:', e);
+      showToast('Baseline 실패: ' + e.message, 'error');
     } finally {
       setRunning(false);
     }
@@ -999,26 +1034,55 @@ function PromesBackfillTool({ orders, sales, importOrders, importSales, showToas
   return (
     <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #f59e0b' }}>
       <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span>⚡ ProMES Delta 백필</span>
+        <span>⏬ ProMES Baseline 재설정</span>
         <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)', padding: '2px 8px', background: 'var(--bg2)', borderRadius: 12 }}>
-          One-time (v3.14)
+          {allBaseline ? '✅ 적용됨' : '⚠ 필수 1회 실행'} (v3.14.2)
         </span>
       </div>
       <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.5 }}>
-        <strong>주간 리포트가 정상 작동하려면 1회 실행 필요</strong>합니다.<br />
-        ProMES는 월 단위 집계라 일자가 모두 월 첫째 날로 저장됨 → 주간 분석을 위해 매 import 시점의 누적 amount/delta를 배열로 추적합니다.
-        다음 ProMES Import부터 자동 누적됩니다.
+        {!allBaseline && (
+          <span style={{ color: 'var(--red)', fontWeight: 600 }}>
+            ⚠ 주간 리포트가 비정상이라면 (예: 한 주에 824억 표시) 이 도구로 재설정하세요.<br />
+          </span>
+        )}
+        ProMES 누적 데이터를 <strong>baseline (delta=0)</strong>으로 표시합니다.
+        baseline은 주간 분석에서 제외되고, 다음 ProMES Import부터 baseline 대비 정확한 delta(그 주 신규 수주)가 자동 추적됩니다.
+        <br />
+        <span style={{ color: 'var(--text3)' }}>
+          • 매주 월요일에 ProMES 새로 다운 → Import → 그 주의 신규 데이터로 표시
+          • 백필을 다시 실행하면 imports[] 전체가 baseline 1개로 reset (안전)
+        </span>
       </p>
-      <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.3)' }}>
-        <span>⚡</span> 백필 대상: 수주 <strong>{targetOrders.length.toLocaleString()}건</strong> / 매출 <strong>{targetSales.length.toLocaleString()}건</strong> (imports[] 없는 ProMES transaction)
+
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, padding: 10, background: 'var(--bg2)', borderRadius: 6, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 12, fontWeight: 700 }}>📅 Baseline 기준일:</label>
+        <input
+          type="date"
+          value={baselineDate}
+          onChange={e => setBaselineDate(e.target.value)}
+          style={{ padding: '4px 8px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 4 }}
+        />
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+          이 날짜를 imports[0].date로 사용 — 주간 분석 시 이 날짜가 속한 주에 표시됨. 보통 직전 주 일요일로 두면 가장 안전.
+        </span>
       </div>
+
+      <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.3)' }}>
+        <span>⏬</span> 대상: ProMES 수주 <strong>{allPromesOrders.length.toLocaleString()}건</strong> / 매출 <strong>{allPromesSales.length.toLocaleString()}건</strong> 전체
+        {allBaseline && (
+          <span style={{ color: 'var(--green, #16a34a)', marginLeft: 8 }}>
+            (현재 모두 baseline 적용됨 — 다시 클릭 시 기준일/누적 amount만 갱신)
+          </span>
+        )}
+      </div>
+
       <button
         className="btn btn-primary"
-        onClick={handleBackfill}
+        onClick={handleBaseline}
         disabled={running}
         style={{ background: '#f59e0b', color: '#fff' }}
       >
-        {running ? '백필 중...' : `⚡ imports[] 배열 백필 (${(targetOrders.length + targetSales.length).toLocaleString()}건)`}
+        {running ? '재설정 중...' : `⏬ Baseline 재설정 (${(allPromesOrders.length + allPromesSales.length).toLocaleString()}건, ${baselineDate} 기준)`}
       </button>
     </div>
   );
