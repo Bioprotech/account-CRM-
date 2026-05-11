@@ -130,6 +130,10 @@ export default function Dashboard() {
   );
   const [syncing, setSyncing] = useState(false);
 
+  // v3.15.1: 카드별 펼치기 토글 (상위 N건 + 클릭 시 전체)
+  const [expandedCards, setExpandedCards] = useState({});
+  const toggleCardExpand = (key) => setExpandedCards(prev => ({ ...prev, [key]: !prev[key] }));
+
   // ── 담당자별 데이터 필터링 ──
   // 대시보드는 엄격 필터: sales_rep === currentUser인 고객만 (미배정 고객 제외)
   // 관리자/미로그인은 전체
@@ -315,7 +319,9 @@ export default function Dashboard() {
       });
   }, [myAccounts, contracts, forecasts, customerPlans, hasPlan]);
 
-  // ── 목표미달 고객 경고 (연간 확정+FCST < 목표) ──
+  // ── v3.15.1: 목표미달 고객 (YTD 기준으로 변경)
+  //   기존: 연간 목표 - 실적 - FCST → 5월 시점에 연말까지 부족분이 표시되어 비현실적
+  //   변경: 사업계획의 1~현재월 누적 (ytdTarget) - YTD 실적 → 현재 시점 진도 부족분
   const gapWarningAccounts = useMemo(() => {
     if (!hasPlan) return [];
     const result = [];
@@ -323,13 +329,32 @@ export default function Dashboard() {
       if (!p.account_id) return;
       const acc = myAccounts.find(a => a.id === p.account_id);
       if (!acc) return;
-      const target = p.annual_target || 0;
-      if (target <= 0) return;
-      const actual = yearOrders.filter(o => o.account_id === p.account_id).reduce((s, o) => s + (o.order_amount || 0), 0);
-      const fcst = forecasts.filter(f => f.account_id === p.account_id && f.year === CURRENT_YEAR).reduce((s, f) => s + (f.forecast_amount || 0), 0);
-      const gap = target - actual - fcst;
+      // YTD 목표 = 1~CURRENT_MONTH 월별 목표 합산
+      let ytdTarget = 0;
+      if (p.targets) {
+        for (let m = 1; m <= CURRENT_MONTH; m++) {
+          ytdTarget += (p.targets[String(m).padStart(2, '0')] || 0);
+        }
+      }
+      if (ytdTarget <= 0) return;
+      // YTD 실적 = 1~CURRENT_MONTH 사이 수주
+      const ytdActual = yearOrders
+        .filter(o => {
+          const mm = (o.order_date || '').slice(5, 7);
+          return o.account_id === p.account_id && mm && parseInt(mm, 10) <= CURRENT_MONTH;
+        })
+        .reduce((s, o) => s + (o.order_amount || 0), 0);
+      const gap = ytdTarget - ytdActual;
       if (gap > 0) {
-        result.push({ account: acc, target, actual, fcst, gap, pct: Math.round(((actual + fcst) / target) * 100) });
+        // 참고용: 연간 누적, FCST도 별도로 보관
+        const annualTarget = p.annual_target || 0;
+        const fcst = forecasts.filter(f => f.account_id === p.account_id && f.year === CURRENT_YEAR).reduce((s, f) => s + (f.forecast_amount || 0), 0);
+        result.push({
+          account: acc,
+          ytdTarget, ytdActual, gap,
+          annualTarget, fcst,
+          pct: Math.round((ytdActual / ytdTarget) * 100),
+        });
       }
     });
     result.sort((a, b) => b.gap - a.gap);
@@ -843,22 +868,37 @@ export default function Dashboard() {
               — 트리거: 🔴Score&lt;50%+미접촉30일 · 🟡계약만료D-60 · 🔵FCST/🟢사업계획/🟡트렌드 재구매임박 · 🟡Open이슈14일+ · 사업형태별 미실행
             </span>
           </div>
-          {/* v3.15: 우선순위 정렬 (danger → warning → info) + 전체 스크롤 */}
-          <div className="issue-list" style={{ maxHeight: 480 }}>
-            {[...myAlarms]
-              .sort((a, b) => {
-                const order = { danger: 0, warning: 1, info: 2 };
-                return (order[a.level] ?? 3) - (order[b.level] ?? 3);
-              })
-              .map((alarm, i) => (
-                <div key={i} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(alarm.account)}>
-                  <span style={{ fontSize: 14, marginRight: 4 }}>{alarm.level === 'danger' ? '🔴' : alarm.level === 'info' ? '🔵' : '🟡'}</span>
-                  <span className="issue-company">{alarm.account?.company_name || '?'}</span>
-                  <span style={{ fontSize: 11, color: alarm.level === 'danger' ? 'var(--red)' : alarm.level === 'info' ? 'var(--accent)' : 'var(--yellow)' }}>{alarm.msg}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{alarm.account?.sales_rep}</span>
+          {/* v3.15.1: 상위 15건 + "전체 보기" 펼치기 (danger 우선) */}
+          {(() => {
+            const sorted = [...myAlarms].sort((a, b) => {
+              const order = { danger: 0, warning: 1, info: 2 };
+              return (order[a.level] ?? 3) - (order[b.level] ?? 3);
+            });
+            const isExpanded = expandedCards.alarms;
+            const visible = isExpanded ? sorted : sorted.slice(0, 15);
+            return (
+              <>
+                <div className="issue-list" style={{ maxHeight: isExpanded ? 480 : 'auto' }}>
+                  {visible.map((alarm, i) => (
+                    <div key={i} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(alarm.account)}>
+                      <span style={{ fontSize: 14, marginRight: 4 }}>{alarm.level === 'danger' ? '🔴' : alarm.level === 'info' ? '🔵' : '🟡'}</span>
+                      <span className="issue-company">{alarm.account?.company_name || '?'}</span>
+                      <span style={{ fontSize: 11, color: alarm.level === 'danger' ? 'var(--red)' : alarm.level === 'info' ? 'var(--accent)' : 'var(--yellow)' }}>{alarm.msg}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{alarm.account?.sales_rep}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-          </div>
+                {sorted.length > 15 && (
+                  <button
+                    onClick={() => toggleCardExpand('alarms')}
+                    style={{ width: '100%', textAlign: 'center', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 0', fontSize: 11, fontWeight: 600, marginTop: 8, cursor: 'pointer', color: 'var(--accent)' }}
+                  >
+                    {isExpanded ? '▲ 접기' : `▼ 전체 ${sorted.length}건 보기 (외 ${sorted.length - 15}건 더)`}
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -875,18 +915,33 @@ export default function Dashboard() {
             <div className="empty-state" style={{ padding: '24px 0' }}>
               <p style={{ color: 'var(--green)' }}>진행 중인 이슈가 없습니다</p>
             </div>
-          ) : (
-            <div className="issue-list" style={{ maxHeight: 360 }}>
-              {recentOpenIssues.map(log => (
-                <div key={log.id} className="issue-row">
-                  <span className="issue-company">{log.company_name}</span>
-                  <span className={`issue-badge ${log.issue_type?.replace('·', '')}`}>{log.issue_type}</span>
-                  <span className={`status-badge ${log.status === 'Open' ? 'open' : 'in-progress'}`}>{log.status}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{log.date}</span>
+          ) : (() => {
+            // v3.15.1: 상위 10건 + 펼치기
+            const isExpanded = expandedCards.openIssues;
+            const visible = isExpanded ? recentOpenIssues : recentOpenIssues.slice(0, 10);
+            return (
+              <>
+                <div className="issue-list" style={{ maxHeight: isExpanded ? 360 : 'auto' }}>
+                  {visible.map(log => (
+                    <div key={log.id} className="issue-row">
+                      <span className="issue-company">{log.company_name}</span>
+                      <span className={`issue-badge ${log.issue_type?.replace('·', '')}`}>{log.issue_type}</span>
+                      <span className={`status-badge ${log.status === 'Open' ? 'open' : 'in-progress'}`}>{log.status}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{log.date}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
+                {recentOpenIssues.length > 10 && (
+                  <button
+                    onClick={() => toggleCardExpand('openIssues')}
+                    style={{ width: '100%', textAlign: 'center', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 0', fontSize: 11, fontWeight: 600, marginTop: 8, cursor: 'pointer', color: 'var(--accent)' }}
+                  >
+                    {isExpanded ? '▲ 접기' : `▼ 전체 ${recentOpenIssues.length}건 보기`}
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         <div className="card">
@@ -900,22 +955,37 @@ export default function Dashboard() {
             <div className="empty-state" style={{ padding: '24px 0' }}>
               <p style={{ color: 'var(--green)' }}>긴급 대상 없음</p>
             </div>
-          ) : (
-            <div className="issue-list" style={{ maxHeight: 360 }}>
-              {urgentAccounts.map(a => {
-                const score = a.intelligence?.total_score ?? 0;
-                const days = daysSince(a.last_contact_date);
-                return (
-                  <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
-                    <span className="issue-company">{a.company_name || '(미입력)'}</span>
-                    <span className="score-badge red">{score}%</span>
-                    <span style={{ fontSize: 11, color: 'var(--red)' }}>{days === Infinity ? '미접촉' : `${days}일 경과`}</span>
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{a.sales_rep}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          ) : (() => {
+            // v3.15.1: 상위 10건 + 펼치기
+            const isExpanded = expandedCards.urgent;
+            const visible = isExpanded ? urgentAccounts : urgentAccounts.slice(0, 10);
+            return (
+              <>
+                <div className="issue-list" style={{ maxHeight: isExpanded ? 360 : 'auto' }}>
+                  {visible.map(a => {
+                    const score = a.intelligence?.total_score ?? 0;
+                    const days = daysSince(a.last_contact_date);
+                    return (
+                      <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
+                        <span className="issue-company">{a.company_name || '(미입력)'}</span>
+                        <span className="score-badge red">{score}%</span>
+                        <span style={{ fontSize: 11, color: 'var(--red)' }}>{days === Infinity ? '미접촉' : `${days}일 경과`}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{a.sales_rep}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {urgentAccounts.length > 10 && (
+                  <button
+                    onClick={() => toggleCardExpand('urgent')}
+                    style={{ width: '100%', textAlign: 'center', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 0', fontSize: 11, fontWeight: 600, marginTop: 8, cursor: 'pointer', color: 'var(--accent)' }}
+                  >
+                    {isExpanded ? '▲ 접기' : `▼ 전체 ${urgentAccounts.length}사 보기`}
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 
@@ -956,9 +1026,18 @@ export default function Dashboard() {
             <div className="empty-state" style={{ padding: '24px 0' }}>
               <p style={{ color: 'var(--green)' }}>Watch 대상 없음</p>
             </div>
-          ) : (
-            <div className="issue-list" style={{ maxHeight: 360 }}>
-              {watchAccounts.map(a => {
+          ) : (() => {
+            // v3.15.1: D등급 6건 + 진척률 낮음 6건 + 펼치기
+            const isExpanded = expandedCards.watch;
+            const watchVisible = isExpanded ? watchAccounts : watchAccounts.slice(0, 6);
+            const lowInsightFiltered = lowInsightAccounts.filter(a => a.strategic_tier !== 'D');
+            const lowVisible = isExpanded ? lowInsightFiltered : lowInsightFiltered.slice(0, 6);
+            const totalWatch = watchAccounts.length + lowInsightFiltered.length;
+            const visibleCount = watchVisible.length + lowVisible.length;
+            return (
+              <>
+                <div className="issue-list" style={{ maxHeight: isExpanded ? 480 : 'auto' }}>
+                  {watchVisible.map(a => {
                 const score = a.intelligence?.total_score ?? 0;
                 const health = a.customer_insight?.health;
                 const supplier = a.customer_insight?.supplier;
@@ -973,7 +1052,7 @@ export default function Dashboard() {
                   </div>
                 );
               })}
-              {lowInsightAccounts.filter(a => a.strategic_tier !== 'D').map(a => {
+              {lowVisible.map(a => {
                 const score = a.intelligence?.total_score ?? 0;
                 return (
                   <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
@@ -984,8 +1063,18 @@ export default function Dashboard() {
                   </div>
                 );
               })}
-            </div>
-          )}
+                </div>
+                {totalWatch > visibleCount && (
+                  <button
+                    onClick={() => toggleCardExpand('watch')}
+                    style={{ width: '100%', textAlign: 'center', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 0', fontSize: 11, fontWeight: 600, marginTop: 8, cursor: 'pointer', color: 'var(--accent)' }}
+                  >
+                    {isExpanded ? '▲ 접기' : `▼ 전체 ${totalWatch}사 보기`}
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 
@@ -1063,30 +1152,44 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* 목표미달 GAP 경고 */}
+          {/* v3.15.1: 목표미달 GAP — YTD 기준 + 펼치기 */}
           <div className="card">
             <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
-              <span>⚠️ 목표 미달 고객 ({gapWarningAccounts.length.toLocaleString()}사 · 총 GAP {fmtKRW(gapWarningAccounts.reduce((s, w) => s + (w.gap || 0), 0))})</span>
+              <span>⚠️ YTD 목표 미달 고객 ({gapWarningAccounts.length.toLocaleString()}사 · 총 GAP {fmtKRW(gapWarningAccounts.reduce((s, w) => s + (w.gap || 0), 0))})</span>
               <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                — 연간 확정 수주 + 입력된 FCST &lt; 사업계획 목표
+                — 사업계획 1~{CURRENT_MONTH}월 누적 목표 &gt; YTD 실적
               </span>
             </div>
             {gapWarningAccounts.length === 0 ? (
               <div className="empty-state" style={{ padding: '24px 0' }}>
-                <p style={{ color: 'var(--green)' }}>모든 고객이 목표 달성 궤도</p>
+                <p style={{ color: 'var(--green)' }}>모든 고객이 진도 정상</p>
               </div>
-            ) : (
-              <div className="issue-list" style={{ maxHeight: 360 }}>
-                {gapWarningAccounts.map(w => (
-                  <div key={w.account.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(w.account)}>
-                    <span className="issue-company">{w.account.company_name}</span>
-                    <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 600 }}>GAP {fmtKRW(w.gap)}</span>
-                    <span className={`score-badge ${w.pct >= 70 ? 'yellow' : 'red'}`} style={{ fontSize: 9 }}>{w.pct}%</span>
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{w.account.sales_rep}</span>
+            ) : (() => {
+              const isExpanded = expandedCards.gapWarning;
+              const visible = isExpanded ? gapWarningAccounts : gapWarningAccounts.slice(0, 12);
+              return (
+                <>
+                  <div className="issue-list" style={{ maxHeight: isExpanded ? 480 : 'auto' }}>
+                    {visible.map(w => (
+                      <div key={w.account.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(w.account)}>
+                        <span className="issue-company">{w.account.company_name}</span>
+                        <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 600 }}>▼ {fmtKRW(w.gap)}</span>
+                        <span className={`score-badge ${w.pct >= 80 ? 'yellow' : 'red'}`} style={{ fontSize: 9 }}>{w.pct}%</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{w.account.sales_rep}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                  {gapWarningAccounts.length > 12 && (
+                    <button
+                      onClick={() => toggleCardExpand('gapWarning')}
+                      style={{ width: '100%', textAlign: 'center', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 0', fontSize: 11, fontWeight: 600, marginTop: 8, cursor: 'pointer', color: 'var(--accent)' }}
+                    >
+                      {isExpanded ? '▲ 접기' : `▼ 전체 ${gapWarningAccounts.length}사 보기`}
+                    </button>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

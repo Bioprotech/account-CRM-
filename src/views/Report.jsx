@@ -3350,13 +3350,8 @@ export default function Report() {
             )}
           </div>
 
-          {/* ── KPI 카드 (MTD + YTD 진도율) ── */}
-          <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(5, 1fr)' : 'repeat(3, 1fr)', marginBottom: 16 }}>
-            <div className="kpi accent">
-              <div className="kpi-label">금주 수주</div>
-              <div className="kpi-value">{fmtKRW(sectionAData.total.thisWeek)}</div>
-              <div style={{ fontSize: 10, color: 'var(--text3)' }}>{weeklyData.weekOrderCount}건</div>
-            </div>
+          {/* ── KPI 카드 (월간 MTD + YTD 진도) — v3.15.1: 주간 수주 제거 (ProMES는 월 단위 집계) ── */}
+          <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)', marginBottom: 16 }}>
             <div className="kpi">
               <div className="kpi-label">금주 활동</div>
               <div className="kpi-value">{weeklyData.weekActivityCount}</div>
@@ -3474,8 +3469,6 @@ export default function Report() {
                   <thead>
                     <tr>
                       <th style={{ minWidth: 90 }}>구분</th>
-                      <th style={{ textAlign: 'right' }}>전주 누적</th>
-                      <th style={{ textAlign: 'right' }}>금주 신규</th>
                       <th style={{ textAlign: 'right' }}>당월 누적</th>
                       <th style={{ textAlign: 'right' }}>당월 목표</th>
                       <th style={{ textAlign: 'right' }}>달성률</th>
@@ -3488,8 +3481,6 @@ export default function Report() {
                       return (
                         <tr key={team}>
                           <td style={{ fontWeight: 600 }}>{TEAM_DISPLAY[team] || team}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtM(d.prevCum)}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, color: d.thisWeek > 0 ? 'var(--accent)' : undefined }}>{fmtM(d.thisWeek)}</td>
                           <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(d.monthCum)}</td>
                           <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(d.monthTarget)}</td>
                           <td style={{ textAlign: 'right', ...achieveStyle(rate) }}>{d.monthTarget > 0 ? `${rate}%` : '-'}</td>
@@ -3499,8 +3490,6 @@ export default function Report() {
                     {/* 합계 행 */}
                     <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
                       <td>합계</td>
-                      <td style={{ textAlign: 'right' }}>{fmtM(sectionAData.total.prevCum)}</td>
-                      <td style={{ textAlign: 'right', color: sectionAData.total.thisWeek > 0 ? 'var(--accent)' : undefined }}>{fmtM(sectionAData.total.thisWeek)}</td>
                       <td style={{ textAlign: 'right' }}>{fmtM(sectionAData.total.monthCum)}</td>
                       <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(sectionAData.total.monthTarget)}</td>
                       <td style={{ textAlign: 'right', ...achieveStyle(pct(sectionAData.total.monthCum, sectionAData.total.monthTarget)) }}>
@@ -3511,7 +3500,7 @@ export default function Report() {
                 </table>
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                ※ 수주: Import 실적 기준 / 목표: 사업계획 Import 고정값 / 전주 누적: 당월 1일 ~ 금주 시작 전일
+                ※ v3.15.1: ProMES는 월 단위 집계라 주차 분리 표시 제거 — 당월 누적/목표/달성률만 표시
               </div>
             </div>
           )}
@@ -3528,8 +3517,6 @@ export default function Report() {
                   <thead>
                     <tr>
                       <th style={{ minWidth: 110 }}>사업부</th>
-                      <th style={{ textAlign: 'right' }}>전주 누적</th>
-                      <th style={{ textAlign: 'right' }}>금주 신규</th>
                       <th style={{ textAlign: 'right' }}>당월 누적</th>
                       <th style={{ textAlign: 'right' }}>당월 목표</th>
                       <th style={{ textAlign: 'right' }}>달성률</th>
@@ -3542,8 +3529,6 @@ export default function Report() {
                       return (
                         <tr key={team}>
                           <td style={{ fontWeight: 600 }}>{SALES_TEAM_DISPLAY[team] || team}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtM(d.prevCum)}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, color: d.thisWeek > 0 ? '#2563eb' : undefined }}>{fmtM(d.thisWeek)}</td>
                           <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtM(d.monthCum)}</td>
                           <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(d.monthTarget)}</td>
                           <td style={{ textAlign: 'right', ...achieveStyle(rate) }}>{d.monthTarget > 0 && d.monthCum > 0 ? `${rate}%` : '-'}</td>
@@ -3553,8 +3538,6 @@ export default function Report() {
                     {/* 합계 행 */}
                     <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
                       <td>합계</td>
-                      <td style={{ textAlign: 'right' }}>{fmtM(sectionAData.salesTotal.prevCum)}</td>
-                      <td style={{ textAlign: 'right', color: sectionAData.salesTotal.thisWeek > 0 ? '#2563eb' : undefined }}>{fmtM(sectionAData.salesTotal.thisWeek)}</td>
                       <td style={{ textAlign: 'right' }}>{fmtM(sectionAData.salesTotal.monthCum)}</td>
                       <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmtM(sectionAData.salesTotal.monthTarget)}</td>
                       <td style={{ textAlign: 'right', ...achieveStyle(pct(sectionAData.salesTotal.monthCum, sectionAData.salesTotal.monthTarget)) }}>
