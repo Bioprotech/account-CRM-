@@ -949,18 +949,23 @@ export default function Report() {
     });
     teamData['기타'] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
 
-    prevWeekOrders.forEach(o => {
+    // v3.14.3: monthCum은 monthOrders 직접 합산 (누적 amount 그대로 — baseline 영향 없음)
+    //   prevCum/thisWeek는 expand의 delta (baseline 제외, 그 주 신규만)
+    //   prevCum = monthCum - thisWeek로 자동 일관성
+    //   이전 코드는 monthCum = prevCum + thisWeek로 계산해서 baseline 적용 시 0이 되는 버그
+    monthOrders.forEach(o => {
       const team = getTeamForOrder(o);
       if (!teamData[team]) teamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
-      teamData[team].prevCum += (o.order_amount || 0);
       teamData[team].monthCum += (o.order_amount || 0);
     });
-
     thisWeekOrders.forEach(o => {
       const team = getTeamForOrder(o);
       if (!teamData[team]) teamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
       teamData[team].thisWeek += (o.order_amount || 0);
-      teamData[team].monthCum += (o.order_amount || 0);
+    });
+    // prevCum = monthCum - thisWeek (음수 방지)
+    Object.values(teamData).forEach(d => {
+      d.prevCum = Math.max(0, (d.monthCum || 0) - (d.thisWeek || 0));
     });
 
     // 당월 목표 (사업계획 팀별)
@@ -1011,19 +1016,21 @@ export default function Report() {
     });
     salesTeamData['기타'] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
 
-    prevWeekSales.forEach(s => {
+    // v3.14.3: 매출 monthCum도 monthSales 직접 합산
+    monthSales.forEach(s => {
       const team = getSalesTeamForSale(s);
       if (!salesTeamData[team]) salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
-      salesTeamData[team].prevCum += (s.sale_amount || 0);
       salesTeamData[team].monthCum += (s.sale_amount || 0);
     });
     thisWeekSales.forEach(s => {
       const team = getSalesTeamForSale(s);
       if (!salesTeamData[team]) salesTeamData[team] = { prevCum: 0, thisWeek: 0, monthCum: 0, monthTarget: 0 };
       salesTeamData[team].thisWeek += (s.sale_amount || 0);
-      salesTeamData[team].monthCum += (s.sale_amount || 0);
     });
-
+    // prevCum = monthCum - thisWeek
+    Object.values(salesTeamData).forEach(d => {
+      d.prevCum = Math.max(0, (d.monthCum || 0) - (d.thisWeek || 0));
+    });
     // 매출 목표 우선순위:
     //   1순위: businessPlans의 type === 'team_sales' (사업계획 월별매출 시트에서 추출한 전용 매출목표)
     //   2순위 (Fallback): customerPlans의 수주 목표를 팀별로 집계해 매출목표로 사용

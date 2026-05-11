@@ -1072,14 +1072,54 @@ function PromesBackfillTool({ orders, sales, importOrders, importSales, showToas
         )}
       </div>
 
-      <button
-        className="btn btn-primary"
-        onClick={handleBaseline}
-        disabled={running}
-        style={{ background: '#f59e0b', color: '#fff' }}
-      >
-        {running ? '재설정 중...' : `⏬ Baseline 재설정 (${(allPromesOrders.length + allPromesSales.length).toLocaleString()}건, ${baselineDate} 기준)`}
-      </button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          className="btn btn-primary"
+          onClick={handleBaseline}
+          disabled={running}
+          style={{ background: '#f59e0b', color: '#fff' }}
+        >
+          {running ? '재설정 중...' : `⏬ Baseline 재설정 (${(allPromesOrders.length + allPromesSales.length).toLocaleString()}건, ${baselineDate} 기준)`}
+        </button>
+        <button
+          className="btn btn-ghost"
+          onClick={async () => {
+            if (!confirm(
+              `⚠️ 롤백: 모든 ProMES transaction에서 imports[] 배열을 완전히 제거합니다.\n\n` +
+              `▸ 수주: ${allPromesOrders.length.toLocaleString()}건\n` +
+              `▸ 매출: ${allPromesSales.length.toLocaleString()}건\n\n` +
+              `누적 amount는 그대로 보존, imports[] 추적만 제거됩니다.\n` +
+              `주간 리포트는 일자 기반 fallback으로 동작 (ProMES는 5월 데이터가 5/1로 잡혀 주차 분석 불가).\n\n` +
+              `v3.14 도입 이전 상태로 돌리는 용도. 계속할까요?`
+            )) return;
+            setRunning(true);
+            try {
+              const updatedOrders = allPromesOrders.map(o => {
+                const copy = { ...o };
+                delete copy.imports;
+                return copy;
+              });
+              const updatedSales = allPromesSales.map(s => {
+                const copy = { ...s };
+                delete copy.imports;
+                return copy;
+              });
+              if (updatedOrders.length > 0) await importOrders(updatedOrders, 'excel_import_promes_O');
+              if (updatedSales.length > 0) await importSales(updatedSales, 'excel_import_promes_S');
+              showToast(`롤백 완료: imports[] 제거됨 (수주 ${updatedOrders.length}건 / 매출 ${updatedSales.length}건)`, 'success');
+            } catch (e) {
+              console.error('롤백 실패:', e);
+              showToast('롤백 실패: ' + e.message, 'error');
+            } finally {
+              setRunning(false);
+            }
+          }}
+          disabled={running}
+          style={{ color: 'var(--red)' }}
+        >
+          {running ? '...' : '⏎ 롤백 (imports[] 완전 제거)'}
+        </button>
+      </div>
     </div>
   );
 }
