@@ -3,7 +3,7 @@ import { useAccount } from '../context/AccountContext';
 import { GAP_CAUSES, OPPORTUNITY_TYPES, SCORE_CATEGORIES, SALES_TEAMS, TASK_TYPES, TASK_STATUSES, TASK_PRIORITIES } from '../lib/constants';
 import { daysSince } from '../lib/utils';
 import { HBarChart, DonutChart, ProgressBars } from '../components/Charts';
-import { aggregateByRep, classifyForRepView, loadPriorYearCustomers } from '../lib/customerClassification';
+import { aggregateByRep, classifyForRepView, loadPriorYearCustomers, isDomestic } from '../lib/customerClassification';
 import { getValidSalesReps, getSortedValidReps } from '../lib/salesReps';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -1220,7 +1220,9 @@ export default function Report() {
     if (acc) {
       const namePlan = planLookup.byName[(acc.company_name || '').toLowerCase().trim()];
       if (namePlan?.team) return namePlan.team;
-      if (acc.region === '한국') return '국내영업';
+      // v3.14.1: isDomestic 사용 — 한글명/병원 키워드/한국 region/country 모두 국내로 분류
+      // (이전: region === '한국'만 체크 → 분당서울대 등 한국 병원이 region 정보 부정확 시 해외로 빠짐)
+      if (isDomestic(acc)) return '국내영업';
     }
     return '해외영업';
   };
@@ -1246,7 +1248,8 @@ export default function Report() {
         team: t,
         display: TEAM_DISPLAY[t] || t,
         activity: { contacts: 0, orderActivity: 0, crossSelling: 0, sampleRequest: 0, priceNegotiation: 0 },
-        majorIssues: [],   // 금주 발생 + priority ≥ 2
+        majorIssues: [],         // 금주 발생 + priority ≥ 2 (주요/긴급)
+        normalActivities: [],    // v3.14.1: 금주 일반 활동 (priority < 2) — UI 펼치기 토글용
         openIssues: [],    // 누적 미해결, 우선순위별 그룹핑
         nextActions: [],   // 차주 예정 + 금주 미완료 이월
         risks: {
@@ -1270,13 +1273,13 @@ export default function Report() {
     });
 
     // ── 주요 이슈 (금주 발생 + priority ≥ 2) ──
+    // v3.14.1: 일반 활동(priority < 2)도 normalActivities로 별도 수집 → UI 펼치기 토글
     weekLogs.forEach(l => {
       const priority = l.priority ?? 1;
-      if (priority < 2) return;
       const team = getTeamForAccount(l.account_id);
       if (!blocks[team]) return;
       const acc = accounts.find(a => a.id === l.account_id);
-      blocks[team].majorIssues.push({
+      const entry = {
         id: l.id,
         company: acc?.company_name || '?',
         accountId: l.account_id,
@@ -1286,11 +1289,18 @@ export default function Report() {
         priority,
         date: l.date,
         rep: l.sales_rep || '-',
-      });
+      };
+      if (priority >= 2) {
+        blocks[team].majorIssues.push(entry);
+      } else {
+        if (!blocks[team].normalActivities) blocks[team].normalActivities = [];
+        blocks[team].normalActivities.push(entry);
+      }
     });
     // 긴급 먼저
     Object.values(blocks).forEach(b => {
       b.majorIssues.sort((a, b2) => (b2.priority - a.priority) || (b2.date || '').localeCompare(a.date || ''));
+      if (b.normalActivities) b.normalActivities.sort((a, b2) => (b2.date || '').localeCompare(a.date || ''));
     });
 
     // ── Open 이슈 (누적, 고객별 그룹핑 + 우선순위) ──
@@ -1700,7 +1710,8 @@ export default function Report() {
       if (acc) {
         const namePlan = planLookup.byName[(acc.company_name || '').toLowerCase().trim()];
         if (namePlan?.team) return namePlan.team;
-        if (acc.region === '한국') return '국내영업';
+        // v3.14.1: isDomestic 사용 (한글명/병원/한국 region/country 통합)
+        if (isDomestic(acc)) return '국내영업';
       }
       return '해외영업';
     };
@@ -2925,6 +2936,15 @@ export default function Report() {
               });
             }
             rows.push([]);
+            // v3.14.1: 일반 활동 (priority < 2) 포함
+            if ((blk.normalActivities || []).length > 0) {
+              rows.push([`🟢 일반 활동 (${blk.normalActivities.length}건)`]);
+              rows.push(['', '고객명', '유형', '내용', '담당', '상태', '날짜']);
+              blk.normalActivities.forEach(iss => {
+                rows.push(['🟢 일반', iss.company, iss.issueType, iss.content, iss.rep, iss.status, iss.date]);
+              });
+              rows.push([]);
+            }
             rows.push(['⏳ Open 이슈 (누적)']);
             if (blk.openIssues.length === 0) {
               rows.push(['', '없음']);
@@ -3609,6 +3629,44 @@ export default function Report() {
                     </div>
                   )}
                 </div>
+
+                {/* ── v3.14.1: 일반 활동 (priority 🟢일반) — 펼치기 토글 ── */}
+                {(blk.normalActivities || []).length > 0 && (() => {
+                  const normalKey = `n-${teamKey}-normal`;
+                  const isOpen = repDrillOpen[normalKey];
+                  return (
+                    <div style={{ marginBottom: 10 }}>
+                      <button
+                        onClick={() => toggleRepDrill(normalKey)}
+                        style={{ width: '100%', textAlign: 'left', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', padding: '6px 10px', fontSize: 12, fontWeight: 600 }}
+                      >
+                        <span style={{ marginRight: 4 }}>{isOpen ? '▾' : '▸'}</span>
+                        🟢 일반 활동 {blk.normalActivities.length}건 보기
+                        <span style={{ float: 'right', fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                          (priority = 일반)
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div style={{ display: 'grid', gap: 3, marginTop: 4, paddingLeft: 8 }}>
+                          {blk.normalActivities.map((iss, i) => (
+                            <div key={i} style={{ fontSize: 11, padding: '3px 8px', background: 'var(--bg)', borderLeft: '2px solid var(--text3)', borderRadius: 3 }}>
+                              <span style={{ marginRight: 4 }}>🟢</span>
+                              <strong>
+                                {iss.accountId ? (
+                                  <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === iss.accountId); if (acc) setEditingAccount(acc); }}
+                                    style={{ color: 'var(--accent)', textDecoration: 'none' }}>{iss.company}</a>
+                                ) : iss.company}
+                              </strong>
+                              <span style={{ marginLeft: 4, color: 'var(--text3)' }}>[{iss.issueType}]</span>
+                              <span style={{ marginLeft: 4 }}>{iss.content.length > 80 ? iss.content.slice(0, 80) + '...' : iss.content}</span>
+                              <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>— {iss.rep}, {iss.status}, {iss.date}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ── Open 이슈 ── */}
                 <div style={{ marginBottom: 10 }}>
