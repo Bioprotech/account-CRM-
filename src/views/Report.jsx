@@ -835,7 +835,8 @@ export default function Report() {
      WEEKLY DATA
      ══════════════════════════════ */
   const weeklyData = useMemo(() => {
-    const { start, end } = getWeekRange();
+    // v3.14.4: weekOffset 반영 — 이전/다음 주 보기 시 weeklyData도 갱신
+    const { start, end } = getWeekRangeByOffset(weekOffset);
     const weekLogs = activityLogs.filter(l => (l.date || '') >= start && (l.date || '') <= end);
     // v3.14: ProMES delta-aware (imports[] 배열의 그 주 entry만 expand)
     const weekOrders = expandWeeklyTransactions(orders, start, end, 'order_amount', 'order_date');
@@ -896,7 +897,7 @@ export default function Report() {
       overdueIssues,
       breakdown,
     };
-  }, [activityLogs, orders, accounts, openIssues, yearOrders, customerPlans, productPlans, planLookup, teamMembers]);
+  }, [activityLogs, orders, accounts, openIssues, yearOrders, customerPlans, productPlans, planLookup, teamMembers, weekOffset]);
 
   /* ══════════════════════════════
      SECTION A — 매출·수주 현황 (팀별)

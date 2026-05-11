@@ -1,5 +1,22 @@
 export const CHANGELOG = [
   {
+    version: 'v3.14.4',
+    date: '2026-05-11',
+    title: '🐛 weeklyData가 weekOffset 무시하던 버그 수정',
+    items: [
+      '🐛 **문제**: 이전 주 / 다음 주 클릭해도 금주 활동 KPI가 갱신 안 됨',
+      '  ↳ weeklyData useMemo가 getWeekRange()를 호출 (항상 현재 주만 반환)',
+      '  ↳ dependency에 weekOffset 없어서 weekOffset 변경 시 갱신 안 됨',
+      '',
+      '✅ **수정**: getWeekRangeByOffset(weekOffset) 사용 + dependency에 weekOffset 추가',
+      '  ↳ 이전 주/다음 주 변경 시 weekLogs, weekOrders, weekActivityCount 모두 정상 갱신',
+      '',
+      '📝 **참고**: Open 이슈(openIssueCount)는 의도된 설계',
+      '  ↳ 모든 미해결 활동 누적이라 주차와 무관 (어느 주차에서 봐도 동일)',
+      '  ↳ "이 시점 기준 미해결 N건" 의미 (KPI 카드 라벨에 명시 권장)',
+    ],
+  },
+  {
     version: 'v3.14.3',
     date: '2026-05-11',
     title: '🔧 월간 누적/MTD 달성률 핫픽스 + 롤백 옵션',
