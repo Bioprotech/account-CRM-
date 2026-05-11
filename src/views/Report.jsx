@@ -1070,10 +1070,58 @@ export default function Report() {
     // 매출 표시 팀 목록 (3사업부만, region fallback으로 '기타' 발생 안 함)
     const displaySalesTeams = [...SALES_TEAM_ORDER];
 
-    // ── MTD 달성률 (수주 기준) ──
+    // ── MTD 달성률 (수주 기준, 당월 단일) ──
     const mtdActual = total.monthCum;
     const mtdTarget = total.monthTarget;
     const mtdPct = mtdTarget > 0 ? Math.round((mtdActual / mtdTarget) * 100) : 0;
+
+    // ── v3.15: YTD 진도율 (1~wkMonth 누적 vs 사업계획 월별 누적) ──
+    // 사업계획의 1~wkMonth 월별 target 합산
+    let ytdOrderTarget = 0;
+    customerPlans.forEach(p => {
+      if (!p.targets) return;
+      for (let m = 1; m <= wkMonth; m++) {
+        ytdOrderTarget += (p.targets[String(m).padStart(2, '0')] || 0);
+      }
+    });
+    // 실적 = 1~wkMonth 사이 yearOrders 누적
+    const ytdOrderActual = (orders || []).reduce((s, o) => {
+      const dStr = (o.order_date || '');
+      if (!dStr || dStr.slice(0, 4) !== String(wkYear)) return s;
+      const mm = parseInt(dStr.slice(5, 7), 10);
+      if (mm < 1 || mm > wkMonth) return s;
+      return s + (o.order_amount || 0);
+    }, 0);
+    const ytdOrderShortage = Math.max(0, ytdOrderTarget - ytdOrderActual);
+    const ytdOrderSurplus = Math.max(0, ytdOrderActual - ytdOrderTarget);
+    const ytdOrderPct = ytdOrderTarget > 0 ? Math.round((ytdOrderActual / ytdOrderTarget) * 100) : 0;
+    const ytdOrderStatus = ytdOrderTarget <= 0 ? 'no_target' : ytdOrderPct >= 100 ? 'on_track' : ytdOrderPct >= 80 ? 'caution' : 'behind';
+
+    // 매출도 동일
+    let ytdSalesTarget = 0;
+    const teamSalesPlansYTD = (businessPlans || []).filter(p => p.type === 'team_sales' && p.year === wkYear);
+    if (teamSalesPlansYTD.length > 0) {
+      teamSalesPlansYTD.forEach(p => {
+        if (!p.targets) return;
+        for (let m = 1; m <= wkMonth; m++) {
+          ytdSalesTarget += (p.targets[String(m).padStart(2, '0')] || 0);
+        }
+      });
+    } else {
+      // fallback: customerPlans
+      ytdSalesTarget = ytdOrderTarget;
+    }
+    const ytdSalesActual = (sales || []).reduce((s, x) => {
+      const dStr = (x.sale_date || '');
+      if (!dStr || dStr.slice(0, 4) !== String(wkYear)) return s;
+      const mm = parseInt(dStr.slice(5, 7), 10);
+      if (mm < 1 || mm > wkMonth) return s;
+      return s + (x.sale_amount || 0);
+    }, 0);
+    const ytdSalesShortage = Math.max(0, ytdSalesTarget - ytdSalesActual);
+    const ytdSalesSurplus = Math.max(0, ytdSalesActual - ytdSalesTarget);
+    const ytdSalesPct = ytdSalesTarget > 0 ? Math.round((ytdSalesActual / ytdSalesTarget) * 100) : 0;
+    const ytdSalesStatus = ytdSalesTarget <= 0 ? 'no_target' : ytdSalesPct >= 100 ? 'on_track' : ytdSalesPct >= 80 ? 'caution' : 'behind';
 
     // ── 담당자별 주간 실적 (신 분류 체계) ──
     const planByNameWk = {};
@@ -1199,6 +1247,9 @@ export default function Report() {
       total,
       salesTeamData, salesTotal, hasSalesData, hasSalesTarget, displaySalesTeams, salesTargetSource,
       mtdActual, mtdTarget, mtdPct,
+      // v3.15: YTD 진도율 (1~wkMonth 누적 vs 사업계획 월별 누적)
+      ytdOrderTarget, ytdOrderActual, ytdOrderShortage, ytdOrderSurplus, ytdOrderPct, ytdOrderStatus,
+      ytdSalesTarget, ytdSalesActual, ytdSalesShortage, ytdSalesSurplus, ytdSalesPct, ytdSalesStatus,
       quarterData,
       weekRepRows, wkNewDetails, wkEtcDetails,
     };
@@ -3299,8 +3350,8 @@ export default function Report() {
             )}
           </div>
 
-          {/* ── KPI 카드 (MTD 중심) ── */}
-          <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', marginBottom: 16 }}>
+          {/* ── KPI 카드 (MTD + YTD 진도율) ── */}
+          <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(5, 1fr)' : 'repeat(3, 1fr)', marginBottom: 16 }}>
             <div className="kpi accent">
               <div className="kpi-label">금주 수주</div>
               <div className="kpi-value">{fmtKRW(sectionAData.total.thisWeek)}</div>
@@ -3317,11 +3368,37 @@ export default function Report() {
             </div>
             {hasPlan && (
               <div className={`kpi ${pctColor(sectionAData.mtdPct)}`}>
-                <div className="kpi-label">MTD 달성률</div>
+                <div className="kpi-label">MTD 달성률 (당월)</div>
                 <div className="kpi-value">{sectionAData.mtdPct}%</div>
                 <div style={{ fontSize: 10, color: 'var(--text3)' }}>{fmtKRW(sectionAData.mtdActual)} / {fmtKRW(sectionAData.mtdTarget)}</div>
               </div>
             )}
+            {hasPlan && (() => {
+              // v3.15: YTD 진도율 카드 — 사업계획 월별 누적 vs 실적
+              const s = sectionAData.ytdOrderStatus;
+              const bgColor = s === 'on_track' ? 'green'
+                : s === 'caution' ? 'yellow'
+                : s === 'behind' ? 'red' : '';
+              const statusLabel = s === 'on_track' ? '🟢 정상'
+                : s === 'caution' ? '🟡 주의'
+                : s === 'behind' ? '🔴 위험' : '목표 없음';
+              return (
+                <div className={`kpi ${bgColor}`}>
+                  <div className="kpi-label">📈 YTD 진도 ({sectionAData.monday.getMonth() + 1}월)</div>
+                  <div className="kpi-value" style={{ fontSize: 22 }}>{sectionAData.ytdOrderPct}%</div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1.4 }}>
+                    <div>{statusLabel}</div>
+                    <div>실적 {fmtKRW(sectionAData.ytdOrderActual)} / 목표 {fmtKRW(sectionAData.ytdOrderTarget)}</div>
+                    {sectionAData.ytdOrderShortage > 0 && (
+                      <div style={{ color: 'var(--red)', fontWeight: 700 }}>▼ {fmtKRW(sectionAData.ytdOrderShortage)}</div>
+                    )}
+                    {sectionAData.ytdOrderSurplus > 0 && (
+                      <div style={{ color: 'var(--green, #16a34a)', fontWeight: 700 }}>▲ {fmtKRW(sectionAData.ytdOrderSurplus)}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* ══ 분기별 진행 현황 ══ */}
@@ -3831,10 +3908,21 @@ export default function Report() {
             </div>
             {/* 수주 YTD */}
             <div className={`kpi ${pctColor(monthlyReportData.kpi.order.ytdPct)}`} style={{ padding: 12 }}>
-              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>📦 수주 YTD 누적달성률</div>
+              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>📦 수주 YTD 진도</div>
               <div className="kpi-value" style={{ fontSize: 22, marginBottom: 4 }}>{monthlyReportData.kpi.order.ytdPct}%</div>
               <div style={{ fontSize: 10, color: 'var(--text3)' }}>
                 {fmtKRW(monthlyReportData.kpi.order.ytdActual)} / {fmtKRW(monthlyReportData.kpi.order.ytdTarget)}
+              </div>
+              {/* v3.15: 진도 status + shortage */}
+              <div style={{ fontSize: 10, fontWeight: 700, marginTop: 2,
+                color: monthlyReportData.kpi.order.ytdPct >= 100 ? 'var(--green, #16a34a)'
+                  : monthlyReportData.kpi.order.ytdPct >= 80 ? '#d97706' : 'var(--red)' }}>
+                {monthlyReportData.kpi.order.ytdPct >= 100 ? '🟢 정상' : monthlyReportData.kpi.order.ytdPct >= 80 ? '🟡 주의' : '🔴 위험'}
+                {monthlyReportData.kpi.order.ytdTarget > monthlyReportData.kpi.order.ytdActual && (
+                  <span style={{ color: 'var(--red)', marginLeft: 4 }}>
+                    ▼ {fmtKRW(monthlyReportData.kpi.order.ytdTarget - monthlyReportData.kpi.order.ytdActual)}
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 10, color: monthlyReportData.kpi.order.ytdYoyPct >= 100 ? 'var(--green, #16a34a)' : 'var(--red)', marginTop: 2 }}>
                 전년 {monthlyReportData.kpi.order.ytdYoyPct > 0 ? `${monthlyReportData.kpi.order.ytdYoyPct}%` : '-'}
@@ -3853,10 +3941,21 @@ export default function Report() {
             </div>
             {/* 매출 YTD */}
             <div className={`kpi ${pctColor(monthlyReportData.kpi.sales.ytdPct)}`} style={{ padding: 12, background: 'rgba(59,130,246,0.05)' }}>
-              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>💰 매출 YTD 누적달성률</div>
+              <div className="kpi-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>💰 매출 YTD 진도</div>
               <div className="kpi-value" style={{ fontSize: 22, marginBottom: 4 }}>{monthlyReportData.kpi.sales.ytdPct}%</div>
               <div style={{ fontSize: 10, color: 'var(--text3)' }}>
                 {fmtKRW(monthlyReportData.kpi.sales.ytdActual)} / {fmtKRW(monthlyReportData.kpi.sales.ytdTarget)}
+              </div>
+              {/* v3.15: 진도 status + shortage */}
+              <div style={{ fontSize: 10, fontWeight: 700, marginTop: 2,
+                color: monthlyReportData.kpi.sales.ytdPct >= 100 ? 'var(--green, #16a34a)'
+                  : monthlyReportData.kpi.sales.ytdPct >= 80 ? '#d97706' : 'var(--red)' }}>
+                {monthlyReportData.kpi.sales.ytdPct >= 100 ? '🟢 정상' : monthlyReportData.kpi.sales.ytdPct >= 80 ? '🟡 주의' : '🔴 위험'}
+                {monthlyReportData.kpi.sales.ytdTarget > monthlyReportData.kpi.sales.ytdActual && (
+                  <span style={{ color: 'var(--red)', marginLeft: 4 }}>
+                    ▼ {fmtKRW(monthlyReportData.kpi.sales.ytdTarget - monthlyReportData.kpi.sales.ytdActual)}
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 10, color: monthlyReportData.kpi.sales.ytdYoyPct >= 100 ? 'var(--green, #16a34a)' : 'var(--red)', marginTop: 2 }}>
                 전년 {monthlyReportData.kpi.sales.ytdYoyPct > 0 ? `${monthlyReportData.kpi.sales.ytdYoyPct}%` : '-'}

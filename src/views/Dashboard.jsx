@@ -28,6 +28,92 @@ function pctColor(p) {
   return 'red';
 }
 
+/**
+ * v3.15 — YTD 진도율 헬퍼
+ * 사업계획의 월별 targets[01..12] 합산을 기준으로 "현재월까지 정상 진도"를 판단
+ *
+ * @param {Array} plans - 사업계획 plan 배열 (해당 카테고리만)
+ * @param {number} actualYTD - YTD 실적 합계
+ * @returns {{ ytdTarget, ytdActual, shortage, surplus, progressPct, status, statusLabel, statusColor }}
+ *   - progressPct: YTD실적 / YTD목표 × 100
+ *   - status: 'on_track' | 'caution' | 'behind' | 'no_target'
+ *   - shortage: 미달액 (양수면 부족, 0이면 달성/초과)
+ *   - surplus: 초과액
+ */
+function computeYtdProgress(plans, actualYTD) {
+  let ytdTarget = 0;
+  (plans || []).forEach(p => {
+    if (!p?.targets) return;
+    for (let m = 1; m <= CURRENT_MONTH; m++) {
+      ytdTarget += (p.targets[String(m).padStart(2, '0')] || 0);
+    }
+  });
+  const ytdActual = actualYTD || 0;
+  const diff = ytdActual - ytdTarget;
+  const shortage = diff < 0 ? Math.abs(diff) : 0;
+  const surplus = diff >= 0 ? diff : 0;
+  const progressPct = ytdTarget > 0 ? Math.round((ytdActual / ytdTarget) * 100) : 0;
+
+  let status = 'on_track';
+  let statusLabel = '정상';
+  let statusColor = 'var(--green, #16a34a)';
+  if (ytdTarget <= 0) {
+    status = 'no_target';
+    statusLabel = '목표 없음';
+    statusColor = 'var(--text3)';
+  } else if (progressPct >= 100) {
+    status = 'on_track';
+    statusLabel = '정상';
+    statusColor = 'var(--green, #16a34a)';
+  } else if (progressPct >= 80) {
+    status = 'caution';
+    statusLabel = '주의';
+    statusColor = '#d97706';
+  } else {
+    status = 'behind';
+    statusLabel = '위험';
+    statusColor = 'var(--red)';
+  }
+
+  return { ytdTarget, ytdActual, shortage, surplus, progressPct, status, statusLabel, statusColor };
+}
+
+/**
+ * v3.15 — 진도율 표시용 작은 컴포넌트 (인라인 표시)
+ * "진도 94% 🟢정상 · YTD목표 720억 vs 실적 681억 (▼39억)"
+ */
+function YtdProgressBadge({ ytdTarget, ytdActual, shortage, surplus, progressPct, statusLabel, statusColor, compact = false }) {
+  if (ytdTarget <= 0) {
+    return <span style={{ fontSize: 10, color: 'var(--text3)' }}>YTD 목표 없음</span>;
+  }
+  if (compact) {
+    return (
+      <span style={{ fontSize: 10, color: statusColor, fontWeight: 600 }}>
+        진도 {progressPct}% {statusLabel}
+        {shortage > 0 && <span> · ▼{fmtKRW(shortage)}</span>}
+      </span>
+    );
+  }
+  return (
+    <div style={{ fontSize: 10, color: statusColor, fontWeight: 600, lineHeight: 1.4 }}>
+      <span>진도 {progressPct}% · {statusLabel}</span>
+      <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+        (YTD목표 {fmtKRW(ytdTarget)} vs 실적 {fmtKRW(ytdActual)})
+      </span>
+      {shortage > 0 && (
+        <div style={{ color: 'var(--red)', fontWeight: 700 }}>
+          ▼ Shortage {fmtKRW(shortage)}
+        </div>
+      )}
+      {surplus > 0 && progressPct > 100 && (
+        <div style={{ color: 'var(--green, #16a34a)', fontWeight: 700 }}>
+          ▲ Surplus {fmtKRW(surplus)} (목표 초과 달성)
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, forecasts, contracts, currentUser, isAdmin, saveAccount, showToast, appSettings, teamMembers } = useAccount();
 
@@ -250,10 +336,10 @@ export default function Dashboard() {
     return result;
   }, [customerPlans, yearOrders, forecasts, myAccounts, hasPlan]);
 
-  // 지역별 목표 vs 실적
+  // 지역별 목표 vs 실적 + v3.15: ytdTarget (1~currentMonth 누적)
   const regionStats = useMemo(() => {
     const map = {};
-    REGIONS.forEach(r => { map[r] = { count: 0, target: 0, actual: 0 }; });
+    REGIONS.forEach(r => { map[r] = { count: 0, target: 0, ytdTarget: 0, actual: 0 }; });
 
     myAccounts.forEach(a => {
       if (a.region && map[a.region]) map[a.region].count++;
@@ -262,18 +348,23 @@ export default function Dashboard() {
     if (hasPlan) {
       customerPlans.forEach(p => {
         const region = p.region || '';
-        if (!map[region]) map[region] = { count: 0, target: 0, actual: 0 };
+        if (!map[region]) map[region] = { count: 0, target: 0, ytdTarget: 0, actual: 0 };
         map[region].target += (p.annual_target || 0);
+        // v3.15: ytdTarget = 1~CURRENT_MONTH 월별 목표 합산
+        if (p.targets) {
+          for (let m = 1; m <= CURRENT_MONTH; m++) {
+            map[region].ytdTarget += (p.targets[String(m).padStart(2, '0')] || 0);
+          }
+        }
       });
       yearOrders.forEach(o => {
-        // plan의 region 우선 사용 (order의 region보다 사업계획 기준이 정확)
         const plan = findPlanForOrder(o);
         const region = plan?.region || o.region || '';
         if (map[region]) map[region].actual += (o.order_amount || 0);
         else {
           const acc = accounts.find(a => a.id === o.account_id);
           const r = acc?.region || '';
-          if (!map[r]) map[r] = { count: 0, target: 0, actual: 0 };
+          if (!map[r]) map[r] = { count: 0, target: 0, ytdTarget: 0, actual: 0 };
           if (map[r]) map[r].actual += (o.order_amount || 0);
         }
       });
@@ -287,28 +378,39 @@ export default function Dashboard() {
     const map = {};
     const bucketNames = ['해외기타', '직판영업', '국내 신규', '국내 기타'];
 
-    // 사업계획 담당자 + teamMembers 초기화
-    validReps.forEach(r => { map[r] = { count: 0, target: 0, actual: 0, isBucket: false }; });
+    // 사업계획 담당자 + teamMembers 초기화 (v3.15: ytdTarget 추가)
+    validReps.forEach(r => { map[r] = { count: 0, target: 0, ytdTarget: 0, actual: 0, isBucket: false }; });
     // 버킷 4종 초기화
     ['국내기타', '해외기타', '국내신규', '해외신규'].forEach(k => {
-      map[k] = { count: 0, target: 0, actual: 0, isBucket: true, isNew: k.endsWith('신규') };
+      map[k] = { count: 0, target: 0, ytdTarget: 0, actual: 0, isBucket: true, isNew: k.endsWith('신규') };
     });
 
     if (hasPlan) {
       customerPlans.forEach(p => {
         const name = (p.customer_name || '').trim();
+        // v3.15: ytdTarget 합산용
+        let pYtd = 0;
+        if (p.targets) {
+          for (let m = 1; m <= CURRENT_MONTH; m++) {
+            pYtd += (p.targets[String(m).padStart(2, '0')] || 0);
+          }
+        }
         // 버킷 플랜 → 해당 버킷 target에 반영
         if (bucketNames.includes(name)) {
           let key = null;
           if (name === '해외기타') key = '해외기타';
           else if (name === '국내 기타') key = '국내기타';
           else if (name === '국내 신규') key = '국내신규';
-          if (key && map[key]) map[key].target += (p.annual_target || 0);
+          if (key && map[key]) {
+            map[key].target += (p.annual_target || 0);
+            map[key].ytdTarget += pYtd;
+          }
           return;
         }
         const rep = p.sales_rep || '미배정';
-        if (!map[rep]) map[rep] = { count: 0, target: 0, actual: 0, isBucket: false };
+        if (!map[rep]) map[rep] = { count: 0, target: 0, ytdTarget: 0, actual: 0, isBucket: false };
         map[rep].target += (p.annual_target || 0);
+        map[rep].ytdTarget += pYtd;
       });
 
       // 신 분류 체계로 실적 배분
@@ -333,7 +435,7 @@ export default function Dashboard() {
           priorSet: priorYearSet,
         });
         if (!rep) return;
-        if (!map[rep]) map[rep] = { count: 0, target: 0, actual: 0, isBucket: false };
+        if (!map[rep]) map[rep] = { count: 0, target: 0, ytdTarget: 0, actual: 0, isBucket: false };
         map[rep].actual += (o.order_amount || 0);
       });
     }
@@ -347,21 +449,26 @@ export default function Dashboard() {
     return map;
   }, [myAccounts, customerPlans, yearOrders, hasPlan, planLookup, accounts, validReps, priorYearSet]);
 
-  // 구분(사업형태)별 목표 vs 실적
+  // 구분(사업형태)별 목표 vs 실적 + v3.15: ytdTarget
   const bizTypeStats = useMemo(() => {
     if (!hasPlan) return {};
     const map = {};
 
     customerPlans.forEach(p => {
       const biz = p.biz_type || '기타';
-      if (!map[biz]) map[biz] = { count: 0, target: 0, actual: 0 };
+      if (!map[biz]) map[biz] = { count: 0, target: 0, ytdTarget: 0, actual: 0 };
       map[biz].target += (p.annual_target || 0);
+      if (p.targets) {
+        for (let m = 1; m <= CURRENT_MONTH; m++) {
+          map[biz].ytdTarget += (p.targets[String(m).padStart(2, '0')] || 0);
+        }
+      }
     });
     yearOrders.forEach(o => {
       const plan = findPlanForOrder(o);
       const acc = myAccounts.find(a => a.id === o.account_id) || accounts.find(a => a.id === o.account_id);
       const biz = plan?.biz_type || acc?.business_type || '기타';
-      if (!map[biz]) map[biz] = { count: 0, target: 0, actual: 0 };
+      if (!map[biz]) map[biz] = { count: 0, target: 0, ytdTarget: 0, actual: 0 };
       map[biz].actual += (o.order_amount || 0);
     });
 
@@ -386,8 +493,13 @@ export default function Dashboard() {
 
     productPlans.forEach(p => {
       const product = p.product || '기타';
-      if (!map[product]) map[product] = { target: 0, actual: 0 };
+      if (!map[product]) map[product] = { target: 0, ytdTarget: 0, actual: 0 };
       map[product].target += (p.annual_target || 0);
+      if (p.targets) {
+        for (let m = 1; m <= CURRENT_MONTH; m++) {
+          map[product].ytdTarget += (p.targets[String(m).padStart(2, '0')] || 0);
+        }
+      }
     });
 
     yearOrders.forEach(o => {
@@ -725,16 +837,27 @@ export default function Dashboard() {
       {/* Alarms */}
       {myAlarms.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-title">🔔 알람 ({myAlarms.length}건)</div>
-          <div className="issue-list" style={{ maxHeight: 200 }}>
-            {myAlarms.slice(0, 15).map((alarm, i) => (
-              <div key={i} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(alarm.account)}>
-                <span style={{ fontSize: 14, marginRight: 4 }}>{alarm.level === 'danger' ? '🔴' : alarm.level === 'info' ? '🔵' : '🟡'}</span>
-                <span className="issue-company">{alarm.account?.company_name || '?'}</span>
-                <span style={{ fontSize: 11, color: alarm.level === 'danger' ? 'var(--red)' : alarm.level === 'info' ? 'var(--accent)' : 'var(--yellow)' }}>{alarm.msg}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{alarm.account?.sales_rep}</span>
-              </div>
-            ))}
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>🔔 알람 ({myAlarms.length.toLocaleString()}건)</span>
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+              — 트리거: 🔴Score&lt;50%+미접촉30일 · 🟡계약만료D-60 · 🔵FCST/🟢사업계획/🟡트렌드 재구매임박 · 🟡Open이슈14일+ · 사업형태별 미실행
+            </span>
+          </div>
+          {/* v3.15: 우선순위 정렬 (danger → warning → info) + 전체 스크롤 */}
+          <div className="issue-list" style={{ maxHeight: 480 }}>
+            {[...myAlarms]
+              .sort((a, b) => {
+                const order = { danger: 0, warning: 1, info: 2 };
+                return (order[a.level] ?? 3) - (order[b.level] ?? 3);
+              })
+              .map((alarm, i) => (
+                <div key={i} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(alarm.account)}>
+                  <span style={{ fontSize: 14, marginRight: 4 }}>{alarm.level === 'danger' ? '🔴' : alarm.level === 'info' ? '🔵' : '🟡'}</span>
+                  <span className="issue-company">{alarm.account?.company_name || '?'}</span>
+                  <span style={{ fontSize: 11, color: alarm.level === 'danger' ? 'var(--red)' : alarm.level === 'info' ? 'var(--accent)' : 'var(--yellow)' }}>{alarm.msg}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{alarm.account?.sales_rep}</span>
+                </div>
+              ))}
           </div>
         </div>
       )}
@@ -742,13 +865,18 @@ export default function Dashboard() {
       {/* Open 이슈 + 긴급 고객 */}
       <div className="two-col">
         <div className="card">
-          <div className="card-title">📋 Open 이슈 현황</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>📋 Open 이슈 ({myOpenIssues.length.toLocaleString()}건)</span>
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+              — Activity Log status ≠ Closed (담당자가 닫지 않은 모든 활동)
+            </span>
+          </div>
           {recentOpenIssues.length === 0 ? (
             <div className="empty-state" style={{ padding: '24px 0' }}>
               <p style={{ color: 'var(--green)' }}>진행 중인 이슈가 없습니다</p>
             </div>
           ) : (
-            <div className="issue-list">
+            <div className="issue-list" style={{ maxHeight: 360 }}>
               {recentOpenIssues.map(log => (
                 <div key={log.id} className="issue-row">
                   <span className="issue-company">{log.company_name}</span>
@@ -762,14 +890,19 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <div className="card-title">🔴 긴급 관리 대상</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>🔴 긴급 관리 대상 ({urgentAccounts.length.toLocaleString()}사)</span>
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+              — Insight Score &lt; 50% AND 미접촉 30일+ (한번이라도 입력된 계정만)
+            </span>
+          </div>
           {urgentAccounts.length === 0 ? (
             <div className="empty-state" style={{ padding: '24px 0' }}>
               <p style={{ color: 'var(--green)' }}>긴급 대상 없음</p>
             </div>
           ) : (
-            <div className="issue-list">
-              {urgentAccounts.slice(0, 10).map(a => {
+            <div className="issue-list" style={{ maxHeight: 360 }}>
+              {urgentAccounts.map(a => {
                 const score = a.intelligence?.total_score ?? 0;
                 const days = daysSince(a.last_contact_date);
                 return (
@@ -813,14 +946,19 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <div className="card-title">⚠️ Watch 알람</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>⚠️ Watch 알람 ({(watchAccounts.length + lowInsightAccounts.filter(a => a.strategic_tier !== 'D').length).toLocaleString()}사)</span>
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+              — 🔴D등급 (수익축소·대체재탐색 등) OR 🟡Insight 진척률 &lt; 30%
+            </span>
+          </div>
           {watchAccounts.length === 0 && lowInsightAccounts.length === 0 ? (
             <div className="empty-state" style={{ padding: '24px 0' }}>
               <p style={{ color: 'var(--green)' }}>Watch 대상 없음</p>
             </div>
           ) : (
-            <div className="issue-list">
-              {watchAccounts.slice(0, 6).map(a => {
+            <div className="issue-list" style={{ maxHeight: 360 }}>
+              {watchAccounts.map(a => {
                 const score = a.intelligence?.total_score ?? 0;
                 const health = a.customer_insight?.health;
                 const supplier = a.customer_insight?.supplier;
@@ -835,7 +973,7 @@ export default function Dashboard() {
                   </div>
                 );
               })}
-              {lowInsightAccounts.filter(a => a.strategic_tier !== 'D').slice(0, 6).map(a => {
+              {lowInsightAccounts.filter(a => a.strategic_tier !== 'D').map(a => {
                 const score = a.intelligence?.total_score ?? 0;
                 return (
                   <div key={a.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(a)}>
@@ -927,14 +1065,19 @@ export default function Dashboard() {
 
           {/* 목표미달 GAP 경고 */}
           <div className="card">
-            <div className="card-title">⚠️ 목표 미달 고객 (확정+FCST &lt; 목표)</div>
+            <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+              <span>⚠️ 목표 미달 고객 ({gapWarningAccounts.length.toLocaleString()}사 · 총 GAP {fmtKRW(gapWarningAccounts.reduce((s, w) => s + (w.gap || 0), 0))})</span>
+              <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                — 연간 확정 수주 + 입력된 FCST &lt; 사업계획 목표
+              </span>
+            </div>
             {gapWarningAccounts.length === 0 ? (
               <div className="empty-state" style={{ padding: '24px 0' }}>
                 <p style={{ color: 'var(--green)' }}>모든 고객이 목표 달성 궤도</p>
               </div>
             ) : (
-              <div className="issue-list" style={{ maxHeight: 220 }}>
-                {gapWarningAccounts.slice(0, 12).map(w => (
+              <div className="issue-list" style={{ maxHeight: 360 }}>
+                {gapWarningAccounts.map(w => (
                   <div key={w.account.id} className="issue-row" style={{ cursor: 'pointer' }} onClick={() => setEditingAccount(w.account)}>
                     <span className="issue-company">{w.account.company_name}</span>
                     <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 600 }}>GAP {fmtKRW(w.gap)}</span>
@@ -951,34 +1094,57 @@ export default function Dashboard() {
       {/* 지역별 + 담당자별 목표 vs 실적 */}
       <div className="two-col">
         <div className="card">
-          <div className="card-title">🌍 지역별 {hasPlan ? '목표 vs 실적' : '분포'}</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>🌍 지역별 {hasPlan ? '목표 vs 실적' : '분포'}</span>
+            {hasPlan && (
+              <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                — 진도: YTD실적/YTD목표 (현재월까지 사업계획 누적) · 🟢≥100% / 🟡80-100% / 🔴&lt;80%
+              </span>
+            )}
+          </div>
           {hasPlan ? (
-            <div className="table-wrap" style={{ maxHeight: 300 }}>
+            <div className="table-wrap" style={{ maxHeight: 360 }}>
               <table className="data-table">
                 <thead>
                   <tr>
                     <th>지역</th>
                     <th style={{ textAlign: 'right' }}>고객수</th>
                     <th style={{ textAlign: 'right' }}>연간 목표</th>
+                    <th style={{ textAlign: 'right' }}>YTD 목표</th>
                     <th style={{ textAlign: 'right' }}>YTD 실적</th>
-                    <th style={{ textAlign: 'right' }}>달성률</th>
+                    <th style={{ textAlign: 'right' }}>진도</th>
+                    <th style={{ textAlign: 'right' }}>Shortage</th>
                   </tr>
                 </thead>
                 <tbody>
                   {Object.entries(regionStats)
                     .filter(([, v]) => v.target > 0 || v.actual > 0 || v.count > 0)
                     .sort((a, b) => b[1].target - a[1].target)
-                    .map(([region, v]) => (
-                      <tr key={region}>
-                        <td style={{ fontWeight: 600 }}>{region}</td>
-                        <td style={{ textAlign: 'right' }}>{v.count}</td>
-                        <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(v.target)}</td>
-                        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(v.actual)}</td>
-                        <td style={{ textAlign: 'right' }}>
-                          {v.target > 0 && <span className={`score-badge ${pctColor(pct(v.actual, v.target))}`}>{pct(v.actual, v.target)}%</span>}
-                        </td>
-                      </tr>
-                    ))}
+                    .map(([region, v]) => {
+                      const ytdPct = v.ytdTarget > 0 ? Math.round((v.actual / v.ytdTarget) * 100) : 0;
+                      const shortage = Math.max(0, v.ytdTarget - v.actual);
+                      const surplus = Math.max(0, v.actual - v.ytdTarget);
+                      const statusColor = v.ytdTarget <= 0 ? 'var(--text3)'
+                        : ytdPct >= 100 ? 'var(--green, #16a34a)'
+                        : ytdPct >= 80 ? '#d97706'
+                        : 'var(--red)';
+                      const statusIcon = v.ytdTarget <= 0 ? '·' : ytdPct >= 100 ? '🟢' : ytdPct >= 80 ? '🟡' : '🔴';
+                      return (
+                        <tr key={region}>
+                          <td style={{ fontWeight: 600 }}>{region}</td>
+                          <td style={{ textAlign: 'right' }}>{v.count}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(v.target)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>{fmtKRW(v.ytdTarget)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(v.actual)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: statusColor }}>
+                            {v.ytdTarget > 0 ? `${statusIcon} ${ytdPct}%` : '-'}
+                          </td>
+                          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: shortage > 0 ? 'var(--red)' : surplus > 0 ? 'var(--green, #16a34a)' : 'var(--text3)' }}>
+                            {shortage > 0 ? `▼${fmtKRW(shortage)}` : surplus > 0 ? `▲${fmtKRW(surplus)}` : '-'}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -998,34 +1164,57 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <div className="card-title">👤 담당자별 {hasPlan ? '목표 vs 실적' : '분포'}</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>👤 담당자별 {hasPlan ? '목표 vs 실적' : '분포'}</span>
+            {hasPlan && (
+              <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                — 진도: YTD실적/YTD목표 (사업계획 월별 누적)
+              </span>
+            )}
+          </div>
           {hasPlan ? (
-            <div className="table-wrap" style={{ maxHeight: 300 }}>
+            <div className="table-wrap" style={{ maxHeight: 360 }}>
               <table className="data-table">
                 <thead>
                   <tr>
                     <th>담당자</th>
                     <th style={{ textAlign: 'right' }}>고객수</th>
                     <th style={{ textAlign: 'right' }}>연간 목표</th>
+                    <th style={{ textAlign: 'right' }}>YTD 목표</th>
                     <th style={{ textAlign: 'right' }}>YTD 실적</th>
-                    <th style={{ textAlign: 'right' }}>달성률</th>
+                    <th style={{ textAlign: 'right' }}>진도</th>
+                    <th style={{ textAlign: 'right' }}>Shortage</th>
                   </tr>
                 </thead>
                 <tbody>
                   {Object.entries(repStats)
                     .filter(([, v]) => v.target > 0 || v.actual > 0 || v.count > 0)
                     .sort((a, b) => b[1].target - a[1].target)
-                    .map(([rep, v]) => (
-                      <tr key={rep}>
-                        <td style={{ fontWeight: 600 }}>{rep}</td>
-                        <td style={{ textAlign: 'right' }}>{v.count}</td>
-                        <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(v.target)}</td>
-                        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(v.actual)}</td>
-                        <td style={{ textAlign: 'right' }}>
-                          {v.target > 0 && <span className={`score-badge ${pctColor(pct(v.actual, v.target))}`}>{pct(v.actual, v.target)}%</span>}
-                        </td>
-                      </tr>
-                    ))}
+                    .map(([rep, v]) => {
+                      const ytdPct = v.ytdTarget > 0 ? Math.round((v.actual / v.ytdTarget) * 100) : 0;
+                      const shortage = Math.max(0, v.ytdTarget - v.actual);
+                      const surplus = Math.max(0, v.actual - v.ytdTarget);
+                      const statusColor = v.ytdTarget <= 0 ? 'var(--text3)'
+                        : ytdPct >= 100 ? 'var(--green, #16a34a)'
+                        : ytdPct >= 80 ? '#d97706'
+                        : 'var(--red)';
+                      const statusIcon = v.ytdTarget <= 0 ? '·' : ytdPct >= 100 ? '🟢' : ytdPct >= 80 ? '🟡' : '🔴';
+                      return (
+                        <tr key={rep}>
+                          <td style={{ fontWeight: 600 }}>{rep}</td>
+                          <td style={{ textAlign: 'right' }}>{v.count}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(v.target)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>{fmtKRW(v.ytdTarget)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(v.actual)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: statusColor }}>
+                            {v.ytdTarget > 0 ? `${statusIcon} ${ytdPct}%` : '-'}
+                          </td>
+                          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: shortage > 0 ? 'var(--red)' : surplus > 0 ? 'var(--green, #16a34a)' : 'var(--text3)' }}>
+                            {shortage > 0 ? `▼${fmtKRW(shortage)}` : surplus > 0 ? `▲${fmtKRW(surplus)}` : '-'}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -1048,16 +1237,22 @@ export default function Dashboard() {
       {/* 구분(사업형태)별 현황 */}
       {hasPlan && Object.keys(bizTypeStats).length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-title">📊 사업구분별 목표 vs 실적</div>
-          <div className="table-wrap" style={{ maxHeight: 300 }}>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>📊 사업구분별 목표 vs 실적</span>
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+              — 진도: YTD실적/YTD목표 (사업계획 월별 누적, {CURRENT_MONTH}월까지)
+            </span>
+          </div>
+          <div className="table-wrap" style={{ maxHeight: 360 }}>
             <table className="data-table">
               <thead>
                 <tr>
                   <th>구분</th>
                   <th style={{ textAlign: 'right' }}>연간 목표</th>
+                  <th style={{ textAlign: 'right' }}>YTD 목표</th>
                   <th style={{ textAlign: 'right' }}>YTD 실적</th>
-                  <th style={{ textAlign: 'right' }}>달성률</th>
-                  <th style={{ width: 120 }}>진도</th>
+                  <th style={{ textAlign: 'right' }}>진도</th>
+                  <th style={{ textAlign: 'right' }}>Shortage</th>
                 </tr>
               </thead>
               <tbody>
@@ -1065,19 +1260,25 @@ export default function Dashboard() {
                   .filter(([, v]) => v.target > 0)
                   .sort((a, b) => b[1].target - a[1].target)
                   .map(([biz, v]) => {
-                    const p = pct(v.actual, v.target);
+                    const ytdPct = v.ytdTarget > 0 ? Math.round((v.actual / v.ytdTarget) * 100) : 0;
+                    const shortage = Math.max(0, v.ytdTarget - v.actual);
+                    const surplus = Math.max(0, v.actual - v.ytdTarget);
+                    const statusColor = v.ytdTarget <= 0 ? 'var(--text3)'
+                      : ytdPct >= 100 ? 'var(--green, #16a34a)'
+                      : ytdPct >= 80 ? '#d97706'
+                      : 'var(--red)';
+                    const statusIcon = v.ytdTarget <= 0 ? '·' : ytdPct >= 100 ? '🟢' : ytdPct >= 80 ? '🟡' : '🔴';
                     return (
                       <tr key={biz}>
                         <td style={{ fontWeight: 600 }}>{biz}</td>
                         <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(v.target)}</td>
+                        <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>{fmtKRW(v.ytdTarget)}</td>
                         <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(v.actual)}</td>
-                        <td style={{ textAlign: 'right' }}>
-                          <span className={`score-badge ${pctColor(p)}`}>{p}%</span>
+                        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: statusColor }}>
+                          {v.ytdTarget > 0 ? `${statusIcon} ${ytdPct}%` : '-'}
                         </td>
-                        <td>
-                          <div className="score-gauge" style={{ height: 10 }}>
-                            <div className={`score-gauge-fill ${pctColor(p)}`} style={{ width: `${Math.min(100, p)}%` }} />
-                          </div>
+                        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: shortage > 0 ? 'var(--red)' : surplus > 0 ? 'var(--green, #16a34a)' : 'var(--text3)' }}>
+                          {shortage > 0 ? `▼${fmtKRW(shortage)}` : surplus > 0 ? `▲${fmtKRW(surplus)}` : '-'}
                         </td>
                       </tr>
                     );
@@ -1091,16 +1292,22 @@ export default function Dashboard() {
       {/* 품목별 목표 vs 실적 */}
       {productPlans.length > 0 && Object.keys(productStats).length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-title">📦 품목별 목표 vs 실적</div>
-          <div className="table-wrap" style={{ maxHeight: 300 }}>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>📦 품목별 목표 vs 실적</span>
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+              — 진도: YTD실적/YTD목표 (사업계획 월별 누적, {CURRENT_MONTH}월까지)
+            </span>
+          </div>
+          <div className="table-wrap" style={{ maxHeight: 360 }}>
             <table className="data-table">
               <thead>
                 <tr>
                   <th>품목</th>
                   <th style={{ textAlign: 'right' }}>연간 목표</th>
+                  <th style={{ textAlign: 'right' }}>YTD 목표</th>
                   <th style={{ textAlign: 'right' }}>YTD 실적</th>
-                  <th style={{ textAlign: 'right' }}>달성률</th>
-                  <th style={{ width: 120 }}>진도</th>
+                  <th style={{ textAlign: 'right' }}>진도</th>
+                  <th style={{ textAlign: 'right' }}>Shortage</th>
                 </tr>
               </thead>
               <tbody>
@@ -1108,19 +1315,25 @@ export default function Dashboard() {
                   .filter(([, v]) => v.target > 0)
                   .sort((a, b) => b[1].target - a[1].target)
                   .map(([product, v]) => {
-                    const p = pct(v.actual, v.target);
+                    const ytdPct = v.ytdTarget > 0 ? Math.round((v.actual / v.ytdTarget) * 100) : 0;
+                    const shortage = Math.max(0, v.ytdTarget - v.actual);
+                    const surplus = Math.max(0, v.actual - v.ytdTarget);
+                    const statusColor = v.ytdTarget <= 0 ? 'var(--text3)'
+                      : ytdPct >= 100 ? 'var(--green, #16a34a)'
+                      : ytdPct >= 80 ? '#d97706'
+                      : 'var(--red)';
+                    const statusIcon = v.ytdTarget <= 0 ? '·' : ytdPct >= 100 ? '🟢' : ytdPct >= 80 ? '🟡' : '🔴';
                     return (
                       <tr key={product}>
                         <td style={{ fontWeight: 600 }}>{product}</td>
                         <td style={{ textAlign: 'right', fontSize: 11 }}>{fmtKRW(v.target)}</td>
+                        <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text3)' }}>{fmtKRW(v.ytdTarget)}</td>
                         <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtKRW(v.actual)}</td>
-                        <td style={{ textAlign: 'right' }}>
-                          <span className={`score-badge ${pctColor(p)}`}>{p}%</span>
+                        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: statusColor }}>
+                          {v.ytdTarget > 0 ? `${statusIcon} ${ytdPct}%` : '-'}
                         </td>
-                        <td>
-                          <div className="score-gauge" style={{ height: 10 }}>
-                            <div className={`score-gauge-fill ${pctColor(p)}`} style={{ width: `${Math.min(100, p)}%` }} />
-                          </div>
+                        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: shortage > 0 ? 'var(--red)' : surplus > 0 ? 'var(--green, #16a34a)' : 'var(--text3)' }}>
+                          {shortage > 0 ? `▼${fmtKRW(shortage)}` : surplus > 0 ? `▲${fmtKRW(surplus)}` : '-'}
                         </td>
                       </tr>
                     );
