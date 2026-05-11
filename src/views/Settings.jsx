@@ -578,6 +578,42 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
       collectCodeUpdates(salesParsedRef.current);
       for (const acc of codeUpdatesMap.values()) await saveAccount(acc);
 
+      // ── v3.14: imports[] 배열 빌더 (주간 delta 추적) ──
+      //   각 ProMES transaction에 매 import 시점의 누적 amount와 직전 대비 delta 보관.
+      //   주간 리포트(Report.expandWeeklyTransactions)가 imports[].date 기준으로 그 주의
+      //   delta만 합산해서 "그 주 신규 수주"를 산출.
+      //   - 첫 import: delta = 전체 amount
+      //   - 새 날짜 import: delta = 이번 amount - 직전 amount
+      //   - 같은 날 재import: 마지막 entry 갱신 (delta는 그 이전 amount 기준)
+      const importDate = today();
+      const buildImportsArray = (prevTx, newAmount) => {
+        const prevImports = Array.isArray(prevTx?.imports) ? prevTx.imports : [];
+        if (prevImports.length === 0) {
+          return [{ date: importDate, amount: newAmount, delta: newAmount }];
+        }
+        const last = prevImports[prevImports.length - 1];
+        if (last && last.date === importDate) {
+          const prevPrevAmount = prevImports.length >= 2 ? prevImports[prevImports.length - 2].amount : 0;
+          return [
+            ...prevImports.slice(0, -1),
+            { date: importDate, amount: newAmount, delta: newAmount - prevPrevAmount },
+          ];
+        }
+        return [
+          ...prevImports,
+          { date: importDate, amount: newAmount, delta: newAmount - (last?.amount || 0) },
+        ];
+      };
+      // 기존 ProMES transaction 인덱스 (id → tx) — imports 보존용
+      const existingPromesOrdersById = {};
+      orders.forEach(o => {
+        if (o.source === 'excel_import_promes_O') existingPromesOrdersById[o.id] = o;
+      });
+      const existingPromesSalesById = {};
+      sales.forEach(s => {
+        if (s.source === 'excel_import_promes_S') existingPromesSalesById[s.id] = s;
+      });
+
       // ── 수주 build ──
       const newOrders = [];
       if (orderParsedRef.current) {
@@ -635,9 +671,13 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
             country: '',
             status: '',
             source: 'excel_import_promes_O',
-            import_date: today(),
+            import_date: importDate,
           });
         });
+        // 2nd pass: 각 transaction에 imports[] delta 배열 부여
+        for (const tx of dedupe.values()) {
+          tx.imports = buildImportsArray(existingPromesOrdersById[tx.id], tx.order_amount);
+        }
         newOrders.push(...dedupe.values());
       }
 
@@ -699,9 +739,13 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
             region_code: regionCode,
             country: '',
             source: 'excel_import_promes_S',
-            import_date: today(),
+            import_date: importDate,
           });
         });
+        // 2nd pass: 각 transaction에 imports[] delta 배열 부여
+        for (const tx of dedupe.values()) {
+          tx.imports = buildImportsArray(existingPromesSalesById[tx.id], tx.sale_amount);
+        }
         newSales.push(...dedupe.values());
       }
 
@@ -889,6 +933,93 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
           }} disabled={importing}>전체 취소</button>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v3.14 — ProMES Delta 백필 도구 (One-time)
+   ──────────────────────────────────────────────────────────────────
+   이미 import된 ProMES transaction에 imports[] 배열을 1회용으로 채움.
+   - 기존 데이터: { import_date, order_amount }
+   - 백필 후:    { import_date, order_amount, imports: [{date, amount, delta}] }
+                 (delta = order_amount, 첫 entry로 간주)
+
+   백필 완료 후 카드 자동으로 사라짐.
+   ══════════════════════════════════════════════════════════════════ */
+function PromesBackfillTool({ orders, sales, importOrders, importSales, showToast }) {
+  const [running, setRunning] = useState(false);
+
+  const targetOrders = orders.filter(o => o.source === 'excel_import_promes_O' && !Array.isArray(o.imports));
+  const targetSales = sales.filter(s => s.source === 'excel_import_promes_S' && !Array.isArray(s.imports));
+
+  if (targetOrders.length === 0 && targetSales.length === 0) return null;
+
+  const handleBackfill = async () => {
+    if (!confirm(
+      `기존 ProMES transaction에 imports[] 배열을 1회 백필합니다.\n\n` +
+      `▸ 수주: ${targetOrders.length.toLocaleString()}건\n` +
+      `▸ 매출: ${targetSales.length.toLocaleString()}건\n\n` +
+      `각 transaction의 import_date와 amount를 기준으로 imports[0]을 채웁니다.\n` +
+      `누적 amount는 그대로 보존, 주간 delta 추적용 배열만 추가됩니다.\n\n` +
+      `계속할까요?`
+    )) return;
+    setRunning(true);
+    try {
+      // ProMES source 전체를 imports[] 추가한 버전으로 batch 교체
+      const allPromesOrders = orders.filter(o => o.source === 'excel_import_promes_O');
+      const allPromesSales = sales.filter(s => s.source === 'excel_import_promes_S');
+
+      const updatedOrders = allPromesOrders.map(o => {
+        if (Array.isArray(o.imports) && o.imports.length > 0) return o; // 이미 있으면 보존
+        return {
+          ...o,
+          imports: [{ date: o.import_date || today(), amount: o.order_amount || 0, delta: o.order_amount || 0 }],
+        };
+      });
+      const updatedSales = allPromesSales.map(s => {
+        if (Array.isArray(s.imports) && s.imports.length > 0) return s;
+        return {
+          ...s,
+          imports: [{ date: s.import_date || today(), amount: s.sale_amount || 0, delta: s.sale_amount || 0 }],
+        };
+      });
+
+      if (updatedOrders.length > 0) await importOrders(updatedOrders, 'excel_import_promes_O');
+      if (updatedSales.length > 0) await importSales(updatedSales, 'excel_import_promes_S');
+      showToast(`백필 완료: 수주 ${updatedOrders.length.toLocaleString()}건 / 매출 ${updatedSales.length.toLocaleString()}건`, 'success');
+    } catch (e) {
+      console.error('Backfill 실패:', e);
+      showToast('백필 실패: ' + e.message, 'error');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #f59e0b' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>⚡ ProMES Delta 백필</span>
+        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)', padding: '2px 8px', background: 'var(--bg2)', borderRadius: 12 }}>
+          One-time (v3.14)
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.5 }}>
+        <strong>주간 리포트가 정상 작동하려면 1회 실행 필요</strong>합니다.<br />
+        ProMES는 월 단위 집계라 일자가 모두 월 첫째 날로 저장됨 → 주간 분석을 위해 매 import 시점의 누적 amount/delta를 배열로 추적합니다.
+        다음 ProMES Import부터 자동 누적됩니다.
+      </p>
+      <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.3)' }}>
+        <span>⚡</span> 백필 대상: 수주 <strong>{targetOrders.length.toLocaleString()}건</strong> / 매출 <strong>{targetSales.length.toLocaleString()}건</strong> (imports[] 없는 ProMES transaction)
+      </div>
+      <button
+        className="btn btn-primary"
+        onClick={handleBackfill}
+        disabled={running}
+        style={{ background: '#f59e0b', color: '#fff' }}
+      >
+        {running ? '백필 중...' : `⚡ imports[] 배열 백필 (${(targetOrders.length + targetSales.length).toLocaleString()}건)`}
+      </button>
     </div>
   );
 }
@@ -3669,6 +3800,15 @@ export default function Settings() {
       <PromesImportTool
         accounts={accounts}
         saveAccount={saveAccount}
+        orders={orders}
+        sales={sales}
+        importOrders={importOrders}
+        importSales={importSales}
+        showToast={showToast}
+      />
+
+      {/* ── v3.14: ProMES Delta 백필 (One-time, imports[] 없는 ProMES 데이터 있을 때만 표시) ── */}
+      <PromesBackfillTool
         orders={orders}
         sales={sales}
         importOrders={importOrders}

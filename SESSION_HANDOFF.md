@@ -3,16 +3,48 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-05-09 (v3.13 배포 완료 — ProMES 영업통계 Import 도입)
+**최종 갱신**: 2026-05-11 (v3.14 배포 완료 — ProMES Delta 추적, 주간 리포트 정상화)
 
 ---
 
 ## 🎯 현재 상태
 
-- **운영 버전**: v3.13 (정상 작동 중)
+- **운영 버전**: v3.14 (정상 작동 중)
 - **배포 URL**: https://bioprotech-account-crm.web.app
 - **GitHub**: https://github.com/Bioprotech/account-CRM-.git
-- **마지막 커밋**: v3.13 (ProMES 영업통계 Import)
+- **마지막 커밋**: v3.14 (ProMES Delta 추적 — 주간 리포트)
+
+## 🆕 v3.14 핵심 변화 — Delta 추적
+
+### 문제
+ProMES Import은 월 단위 집계 → 일자가 모두 월 첫째 날(YYYY-MM-01)로 저장 → 주간 리포트가 "5/3~5/9" 범위 조회 시 5월 데이터가 모두 5/1로 잡혀 **0건 표시**.
+
+### 해결: imports[] 배열로 매 import 시점 추적
+```js
+transaction.imports = [
+  { date: '2026-05-02', amount: 0,   delta: 0 },
+  { date: '2026-05-09', amount: 200, delta: 200 },   // 5월 1주차 수주
+  { date: '2026-05-16', amount: 500, delta: 300 },   // 5월 2주차 수주
+]
+```
+- `amount`: 그 시점의 월 누적 합계 (월간 리포트는 마지막 값 사용)
+- `delta`: 직전 import 대비 증가분 = 그 주의 신규 수주
+
+### 신규/변경
+- **expandWeeklyTransactions** (Report.jsx 헬퍼): ProMES transaction을 imports[] 기준으로 expand
+  - 영업현황/수동: 기존 order_date 기반 필터
+  - ProMES: imports[].date가 주간 범위에 있는 entry만 → amount=delta, date=imports.date로 변환
+- **PromesImportTool**: 매 import마다 imports[] 자동 누적
+  - 첫 import: delta = amount
+  - 새 날짜: delta = newAmount - prevAmount
+  - 같은 날 재import: 마지막 entry 갱신
+- **PromesBackfillTool** (Settings): 기존 ProMES 데이터에 imports[0] 1회 백필 → 백필 후 자동 숨김
+
+### 사용 흐름
+1. (이미 완료) ProMES Import 1회
+2. **Settings → ⚡ ProMES Delta 백필** 1회 클릭 (필수)
+3. 매주 ProMES 새로 다운로드 → Import → 그 주 delta 자동 추적
+4. Report → 주간 리포트 정상 표시
 
 ## 🆕 v3.13 핵심 변화 — ProMES 도입
 
