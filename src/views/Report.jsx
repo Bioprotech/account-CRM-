@@ -838,8 +838,10 @@ export default function Report() {
     // v3.14.4: weekOffset 반영 — 이전/다음 주 보기 시 weeklyData도 갱신
     const { start, end } = getWeekRangeByOffset(weekOffset);
     const weekLogs = activityLogs.filter(l => (l.date || '') >= start && (l.date || '') <= end);
-    // v3.14: ProMES delta-aware (imports[] 배열의 그 주 entry만 expand)
-    const weekOrders = expandWeeklyTransactions(orders, start, end, 'order_amount', 'order_date');
+    // v3.15.2: 옵션 B — 일자 기반 필터로 복원 (ProMES 월 단위 집계라 주간 분리 의미 없음)
+    //   ProMES는 일자가 YYYY-MM-01로 정규화 → 주간 범위에 거의 안 잡힘 → weekOrders 사실상 0건
+    //   weeklyData.weekOrders는 카드/표에서 사용 안 함 (KPI에서 '금주 수주' 제거됨)
+    const weekOrders = orders.filter(o => (o.order_date || '') >= start && (o.order_date || '') <= end);
     const weekOrderTotal = weekOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
 
     // 담당자별 배정 고객수 (accounts.sales_rep 기준)
@@ -931,17 +933,17 @@ export default function Report() {
       return '해외영업';
     };
 
-    // 당월 전체 주문 (ProMES는 월 첫째 날 정규화되어 그대로 잡힘 — 월간 합계는 누적 amount 사용)
+    // 당월 전체 주문 (ProMES는 월 첫째 날로 정규화되어 그대로 잡힘 — 월간 합계 정확)
     const monthOrders = orders.filter(o => (o.order_date || '').startsWith(monthStr));
-    // v3.14: 주차 분리는 ProMES delta-aware
-    // 금주 주문 = 금주 안에 import된 ProMES delta + 일자 매칭 영업현황
-    const thisWeekOrders = expandWeeklyTransactions(orders, wkStart, wkEnd, 'order_amount', 'order_date');
-    // 전주까지 누적 (당월 시작 ~ 금주 시작 전날) = 그 기간의 모든 delta 합산
+    // v3.15.2: 일자 기반 필터로 복원 (옵션 B — 월 단위 운영)
+    //   주간 표/KPI에서 thisWeek/prevCum 컬럼 제거됨, 이 데이터는 사용 안 함
+    //   ProMES 일자가 YYYY-MM-01이라 주차 분리 시 거의 0건 (의도된 동작)
+    const thisWeekOrders = monthOrders.filter(o => (o.order_date || '') >= wkStart && (o.order_date || '') <= wkEnd);
     const prevWeekEndExcl = (() => {
       const d = new Date(wkStart); d.setDate(d.getDate() - 1);
       return d.toISOString().slice(0, 10);
     })();
-    const prevWeekOrders = expandWeeklyTransactions(orders, monthStartStr, prevWeekEndExcl, 'order_amount', 'order_date');
+    const prevWeekOrders = monthOrders.filter(o => (o.order_date || '') >= monthStartStr && (o.order_date || '') < wkStart);
 
     // 팀별 집계
     const teamData = {};
@@ -1007,9 +1009,9 @@ export default function Report() {
     };
 
     const monthSales = (sales || []).filter(s => (s.sale_date || '').startsWith(monthStr));
-    // v3.14: 매출도 ProMES delta-aware 주차 분리
-    const thisWeekSales = expandWeeklyTransactions(sales, wkStart, wkEnd, 'sale_amount', 'sale_date');
-    const prevWeekSales = expandWeeklyTransactions(sales, monthStartStr, prevWeekEndExcl, 'sale_amount', 'sale_date');
+    // v3.15.2: 매출도 일자 기반 필터로 복원
+    const thisWeekSales = monthSales.filter(s => (s.sale_date || '') >= wkStart && (s.sale_date || '') <= wkEnd);
+    const prevWeekSales = monthSales.filter(s => (s.sale_date || '') >= monthStartStr && (s.sale_date || '') < wkStart);
 
     const salesTeamData = {};
     SALES_TEAM_ORDER.forEach(team => {
