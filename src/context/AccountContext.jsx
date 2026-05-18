@@ -749,9 +749,20 @@ export default function AccountProvider({ children }) {
     });
 
     // Open 이슈 14일 초과
+    // v3.17 Phase B4: recovery_plan_date 또는 due_date가 오늘 이후면 알람 일시 정지
+    //   "회복 계획" 또는 "예정 처리일"이 있는 경우 그 일자까지 리스크 표시 안 함
+    //   예정일이 도래하면 자동으로 다시 알람 표시
+    const todayStr = today;
     activityLogs.filter(l => l.status !== 'Closed').forEach(l => {
       const d = daysSince(l.date);
       if (d > 14) {
+        // v3.17 Phase B4: 회복 계획·예정 처리일 체크
+        const recoveryFuture = l.recovery_plan_date && l.recovery_plan_date >= todayStr;
+        const dueFuture = l.due_date && l.due_date >= todayStr;
+        if (recoveryFuture || dueFuture) {
+          // 알람 일시 정지 (모니터링 중)
+          return;
+        }
         const account = accounts.find(a => a.id === l.account_id);
         result.push({ type: 'overdue_issue', level: 'warning', account: account || { company_name: '?' }, msg: `Open 이슈 ${d}일 경과 (${l.issue_type})` });
       }

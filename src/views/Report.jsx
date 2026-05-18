@@ -1304,6 +1304,12 @@ export default function Report() {
     const nEnd = nextSunday.toISOString().slice(0, 10);
     const now = new Date();
 
+    // v3.17 Phase B2: 전주 범위 계산
+    const prevSunday = new Date(monday); prevSunday.setDate(monday.getDate() - 1);
+    const prevMonday = new Date(prevSunday); prevMonday.setDate(prevSunday.getDate() - 6);
+    const pStart = prevMonday.toISOString().slice(0, 10);
+    const pEnd = prevSunday.toISOString().slice(0, 10);
+
     // 팀별 빈 구조 초기화
     const blocks = {};
     TEAM_ORDER.forEach(t => {
@@ -1313,12 +1319,15 @@ export default function Report() {
         activity: { contacts: 0, orderActivity: 0, crossSelling: 0, sampleRequest: 0, priceNegotiation: 0 },
         majorIssues: [],         // 금주 발생 + priority ≥ 2 (주요/긴급)
         normalActivities: [],    // v3.14.1: 금주 일반 활동 (priority < 2) — UI 펼치기 토글용
+        crossDeptIssues: [],     // v3.17 Phase B1: 금주 발생 + cross_dept_share=true (타부서 공유/협조 필요)
         openIssues: [],    // 누적 미해결, 우선순위별 그룹핑
         nextActions: [],   // 차주 예정 + 금주 미완료 이월
+        prevWeekActions: { completed: [], missed: [] },  // v3.17 Phase B2: 전주 due_date 활동 이행 점검
         risks: {
           reorderSoon: [],
           contractExpiring: [],
           overdue: [],
+          managedWithPlan: [],   // v3.17 Phase B3: 회복 계획 있음 (BOWA UK 같은 사례 — 리스크 아님)
         },
       };
     });
@@ -1337,6 +1346,7 @@ export default function Report() {
 
     // ── 주요 이슈 (금주 발생 + priority ≥ 2) ──
     // v3.14.1: 일반 활동(priority < 2)도 normalActivities로 별도 수집 → UI 펼치기 토글
+    // v3.17 Phase B1: cross_dept_share=true는 crossDeptIssues로 추가 수집 (중복 가능)
     weekLogs.forEach(l => {
       const priority = l.priority ?? 1;
       const team = getTeamForAccount(l.account_id);
@@ -1352,6 +1362,10 @@ export default function Report() {
         priority,
         date: l.date,
         rep: l.sales_rep || '-',
+        crossDeptShare: !!l.cross_dept_share,
+        recoveryPlanDate: l.recovery_plan_date || '',
+        recoveryPlanAmount: l.recovery_plan_amount || 0,
+        recoveryPlanNote: l.recovery_plan_note || '',
       };
       if (priority >= 2) {
         blocks[team].majorIssues.push(entry);
@@ -1359,11 +1373,16 @@ export default function Report() {
         if (!blocks[team].normalActivities) blocks[team].normalActivities = [];
         blocks[team].normalActivities.push(entry);
       }
+      // v3.17 Phase B1: 타부서 공유 이슈 별도 수집 (priority 무관)
+      if (l.cross_dept_share) {
+        blocks[team].crossDeptIssues.push(entry);
+      }
     });
     // 긴급 먼저
     Object.values(blocks).forEach(b => {
       b.majorIssues.sort((a, b2) => (b2.priority - a.priority) || (b2.date || '').localeCompare(a.date || ''));
       if (b.normalActivities) b.normalActivities.sort((a, b2) => (b2.date || '').localeCompare(a.date || ''));
+      if (b.crossDeptIssues) b.crossDeptIssues.sort((a, b2) => (b2.priority - a.priority) || (b2.date || '').localeCompare(a.date || ''));
     });
 
     // ── Open 이슈 (누적, 고객별 그룹핑 + 우선순위) ──
@@ -1454,6 +1473,53 @@ export default function Report() {
       });
     });
 
+    // ── v3.17 Phase B2: 전주 계획 이행 점검 ──
+    // 전주 (pStart ~ pEnd) 범위에 due_date가 있던 활동을 이행/미이행으로 분류
+    activityLogs.forEach(l => {
+      if (!l.due_date || l.due_date < pStart || l.due_date > pEnd) return;
+      const team = getTeamForAccount(l.account_id);
+      if (!blocks[team]) return;
+      const acc = accounts.find(a => a.id === l.account_id);
+      const entry = {
+        id: l.id,
+        company: acc?.company_name || '?',
+        accountId: l.account_id,
+        action: l.next_action || `[${l.issue_type}] ${l.content || '-'}`,
+        dueDate: l.due_date,
+        rep: l.sales_rep || '-',
+        status: l.status || 'Open',
+        resolutionDate: l.resolution_date || l.closed_at || '',
+        // 이행 = Closed 또는 처리완료 일자 있음
+        completed: l.status === 'Closed' || !!l.resolution_date,
+      };
+      if (entry.completed) {
+        blocks[team].prevWeekActions.completed.push(entry);
+      } else {
+        blocks[team].prevWeekActions.missed.push(entry);
+      }
+    });
+    // 담당자별 이행률 계산
+    Object.values(blocks).forEach(b => {
+      const all = [...b.prevWeekActions.completed, ...b.prevWeekActions.missed];
+      const byRep = {};
+      all.forEach(a => {
+        if (!byRep[a.rep]) byRep[a.rep] = { total: 0, completed: 0 };
+        byRep[a.rep].total++;
+        if (a.completed) byRep[a.rep].completed++;
+      });
+      b.prevWeekActions.byRep = Object.entries(byRep).map(([rep, v]) => ({
+        rep,
+        total: v.total,
+        completed: v.completed,
+        rate: v.total > 0 ? Math.round((v.completed / v.total) * 100) : 0,
+      })).sort((a, b2) => b2.rate - a.rate || b2.total - a.total);
+      b.prevWeekActions.totalCount = all.length;
+      b.prevWeekActions.completedCount = b.prevWeekActions.completed.length;
+      b.prevWeekActions.missedCount = b.prevWeekActions.missed.length;
+      b.prevWeekActions.completionRate = all.length > 0
+        ? Math.round((b.prevWeekActions.completed.length / all.length) * 100) : null;
+    });
+
     // ── 리스크 (재구매 임박 + 계약만료 임박 + 14일+ 미해결) ──
     // 재구매 임박: alarms에서 수집 + 팀 분배
     (alarms || []).filter(a => a.type === 'reorder' && a.level === 'danger').forEach(al => {
@@ -1479,22 +1545,46 @@ export default function Report() {
         });
       }
     });
-    // 14일+ 미해결
+    // 14일+ 미해결 — v3.17 Phase B3: 회복 계획 유무로 2개 카테고리 분리
+    // managedWithPlan = recovery_plan_date 또는 due_date가 미래에 있는 경우 → 모니터링
+    // overdue = 위 둘 다 없거나 모두 과거 → 실질 리스크
+    const todayStr = now.toISOString().slice(0, 10);
     openLogs.forEach(l => {
       const d = daysSince(l.date);
       if (d <= 14) return;
       const team = getTeamForAccount(l.account_id);
       if (!blocks[team]) return;
       const acc = accounts.find(a => a.id === l.account_id);
-      blocks[team].risks.overdue.push({
-        company: acc?.company_name || '?', issueType: l.issue_type,
-        daysOpen: d, accountId: l.account_id,
-      });
+      // v3.17 Phase B4 base: recovery_plan_date 또는 due_date가 오늘 이후면 회복 계획 있음
+      const recoveryDate = l.recovery_plan_date && l.recovery_plan_date >= todayStr ? l.recovery_plan_date : '';
+      const futureDue = l.due_date && l.due_date >= todayStr ? l.due_date : '';
+      const planDate = recoveryDate || futureDue;
+      const entry = {
+        company: acc?.company_name || '?',
+        issueType: l.issue_type,
+        daysOpen: d,
+        accountId: l.account_id,
+        // v3.17 Phase B3 추가 필드
+        recoveryDate,
+        futureDue,
+        planDate,
+        recoveryAmount: l.recovery_plan_amount || 0,
+        recoveryNote: l.recovery_plan_note || '',
+        rep: l.sales_rep || '-',
+      };
+      if (planDate) {
+        blocks[team].risks.managedWithPlan.push(entry);
+      } else {
+        blocks[team].risks.overdue.push(entry);
+      }
     });
     Object.values(blocks).forEach(b => {
       b.risks.reorderSoon.sort((a, c) => (a.company || '').localeCompare(b.company || ''));
       b.risks.contractExpiring.sort((a, c) => a.daysLeft - c.daysLeft);
       b.risks.overdue.sort((a, c) => c.daysOpen - a.daysOpen);
+      if (b.risks.managedWithPlan) {
+        b.risks.managedWithPlan.sort((a, c) => (a.planDate || '').localeCompare(c.planDate || ''));
+      }
     });
 
     return { blocks, nextWeekLabel: `${nStart} ~ ${nEnd}` };
@@ -3715,6 +3805,81 @@ export default function Report() {
                   {blk.activity.crossSelling > 0 && <span style={{ marginLeft: 6 }}>| 크로스셀링 {blk.activity.crossSelling}</span>}
                 </div>
 
+                {/* ── v3.17 Phase B1: 타부서 공유 / 협조 필요 이슈 ── */}
+                {(blk.crossDeptIssues || []).length > 0 && (
+                  <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(37, 99, 235, 0.04)', border: '1px solid rgba(37, 99, 235, 0.25)', borderRadius: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: '#2563eb' }}>
+                      🤝 유관부서 공유 / 협조 필요 ({blk.crossDeptIssues.length}건)
+                      <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+                        — 영업본부 외 부서와 공유/협업 안건
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {blk.crossDeptIssues.map((iss, i) => (
+                        <div key={i} style={{ fontSize: 11, padding: '4px 8px', background: '#fff', borderLeft: '3px solid #2563eb', borderRadius: 3 }}>
+                          <span style={{ marginRight: 4, fontSize: 11 }}>🤝</span>
+                          <strong>
+                            {iss.accountId ? (
+                              <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === iss.accountId); if (acc) setEditingAccount(acc); }}
+                                style={{ color: '#2563eb', textDecoration: 'none' }}>{iss.company}</a>
+                            ) : iss.company}
+                          </strong>
+                          <span style={{ marginLeft: 4, color: 'var(--text3)' }}>[{iss.issueType}]</span>
+                          {iss.priority >= 2 && <span style={{ marginLeft: 4, fontSize: 10, color: iss.priority === 3 ? 'var(--red)' : '#d97706' }}>{iss.priority === 3 ? '🔴긴급' : '🟡주요'}</span>}
+                          <span style={{ marginLeft: 4 }}>{iss.content.length > 80 ? iss.content.slice(0, 80) + '...' : iss.content}</span>
+                          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>— {iss.rep}, {iss.status}, {iss.date}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── v3.17 Phase B2: 전주 계획 이행 점검 ── */}
+                {blk.prevWeekActions && blk.prevWeekActions.totalCount > 0 && (
+                  <div style={{ marginBottom: 10, padding: '8px 10px', background: 'var(--bg2)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>
+                      📋 전주 계획 이행 점검 ({blk.prevWeekActions.completedCount}/{blk.prevWeekActions.totalCount} = {blk.prevWeekActions.completionRate}%)
+                    </div>
+                    {/* 담당자별 이행률 */}
+                    {(blk.prevWeekActions.byRep || []).length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                        {blk.prevWeekActions.byRep.map(r => (
+                          <span key={r.rep} style={{
+                            fontSize: 10, padding: '2px 8px', borderRadius: 10,
+                            background: r.rate >= 80 ? 'rgba(22,163,74,0.1)' : r.rate >= 50 ? 'rgba(217,119,6,0.1)' : 'rgba(220,38,38,0.1)',
+                            color: r.rate >= 80 ? 'var(--green, #16a34a)' : r.rate >= 50 ? '#d97706' : 'var(--red)',
+                            fontWeight: 600,
+                          }}>
+                            {r.rep}: {r.completed}/{r.total} ({r.rate}%)
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {/* 미이행 리스트 */}
+                    {blk.prevWeekActions.missed.length > 0 && (
+                      <div style={{ marginTop: 4 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--red)', marginBottom: 4 }}>
+                          ⚠ 미이행 {blk.prevWeekActions.missed.length}건
+                        </div>
+                        <div style={{ display: 'grid', gap: 3 }}>
+                          {blk.prevWeekActions.missed.map((a, i) => (
+                            <div key={i} style={{ fontSize: 11, padding: '3px 8px', background: 'rgba(220,38,38,0.04)', borderLeft: '2px solid var(--red)', borderRadius: 3 }}>
+                              <strong>
+                                {a.accountId ? (
+                                  <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a2 => a2.id === a.accountId); if (acc) setEditingAccount(acc); }}
+                                    style={{ color: 'var(--accent)', textDecoration: 'none' }}>{a.company}</a>
+                                ) : a.company}
+                              </strong>
+                              <span style={{ marginLeft: 4 }}>{a.action.length > 80 ? a.action.slice(0, 80) + '...' : a.action}</span>
+                              <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>— {a.rep}, 기한 {a.dueDate}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* ── 주요 이슈 ── */}
                 <div style={{ marginBottom: 10 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: 'var(--red)' }}>🔴 주요 이슈 (금주 발생, 🟡주요·🔴긴급)</div>
@@ -3870,12 +4035,35 @@ export default function Report() {
                         </div>
                       )}
                       {blk.risks.overdue.length > 0 && (
-                        <div style={{ padding: '3px 8px', background: 'rgba(220,38,38,.06)', borderRadius: 3 }}>
-                          <strong>⏰ 14일+ 미해결 ({blk.risks.overdue.length}건)</strong>:&nbsp;
+                        <div style={{ padding: '3px 8px', background: 'rgba(220,38,38,.06)', borderRadius: 3, borderLeft: '3px solid var(--red)' }}>
+                          <strong style={{ color: 'var(--red)' }}>🔴 리스크 ({blk.risks.overdue.length}건)</strong>
+                          <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 4 }}>회복 계획 없음 — 즉시 액션 필요</span>
+                          :&nbsp;
                           <span style={{ color: 'var(--text2)' }}>
                             {blk.risks.overdue.slice(0, 5).map(o => `${o.company}(${o.daysOpen}일)`).join(', ')}
                             {blk.risks.overdue.length > 5 && ` 외 ${blk.risks.overdue.length - 5}건`}
                           </span>
+                        </div>
+                      )}
+                      {/* v3.17 Phase B3: 회복 계획 있음 (모니터링) */}
+                      {(blk.risks.managedWithPlan || []).length > 0 && (
+                        <div style={{ padding: '3px 8px', background: 'rgba(217,119,6,.06)', borderRadius: 3, borderLeft: '3px solid #d97706' }}>
+                          <strong style={{ color: '#d97706' }}>🟡 관리 중 ({blk.risks.managedWithPlan.length}건)</strong>
+                          <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 4 }}>회복 계획 있음 — 모니터링</span>
+                          <div style={{ marginTop: 3, display: 'grid', gap: 2 }}>
+                            {blk.risks.managedWithPlan.slice(0, 5).map((m, i) => (
+                              <div key={i} style={{ fontSize: 10, color: 'var(--text2)' }}>
+                                • <strong>{m.company}</strong>
+                                {m.recoveryDate && <span> — 회복 예정 {m.recoveryDate}{m.recoveryAmount > 0 && ` (${fmtKRW(m.recoveryAmount)})`}</span>}
+                                {!m.recoveryDate && m.futureDue && <span> — 처리 예정 {m.futureDue}</span>}
+                                {m.recoveryNote && <span style={{ color: 'var(--text3)', marginLeft: 4 }}>· {m.recoveryNote.length > 50 ? m.recoveryNote.slice(0, 50) + '...' : m.recoveryNote}</span>}
+                                <span style={{ color: 'var(--text3)', marginLeft: 4 }}>· {m.rep}</span>
+                              </div>
+                            ))}
+                            {blk.risks.managedWithPlan.length > 5 && (
+                              <div style={{ fontSize: 9, color: 'var(--text3)' }}>외 {blk.risks.managedWithPlan.length - 5}건</div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
