@@ -1,5 +1,27 @@
 export const CHANGELOG = [
   {
+    version: 'v3.17.2',
+    date: '2026-05-18',
+    title: '🧬 활동 점수 통합 (사양서 v1.0 기반) + PPT 일시 제거',
+    items: [
+      '🧬 **월간 리포트 — AM별 활동 품질 표 → 담당자 활동 점수 통합표로 교체**',
+      '  ↳ 점수 시스템 (사양서 v1.0) = 메인 평가 도구',
+      '  ↳ AM 활동 품질의 정성 정보만 보완 (Insight, 액션 완료율, Gap 원인 Top 3)',
+      '  ↳ 중복 항목 제거: 90일 컨택 / YTD 달성률 (점수 항목에 포함되어 있음)',
+      '',
+      '📐 **통합 표 컬럼**',
+      '  ↳ 정량: 담당자 · 총점(100) · 영업성과(60) · CRM품질(40) · 감점',
+      '  ↳ 정성 보완: 고객수 · 평균 Insight · 액션 완료율 · Gap 원인 Top 3',
+      '  ↳ 등급 색상 (S/A/B/C/D) 자동 적용',
+      '',
+      '🗑 **리포트 PPT 다운로드 기능 일시 제거** (사용자 요청 — 추후 보완 예정)',
+      '  ↳ 버튼 + handlePptDownload 함수 제거',
+      '  ↳ pptxgenjs 의존성 + src/lib/pptExport.js 모듈은 보존 (재활성화 가능)',
+      '',
+      '✅ **일관성**: Dashboard ScoreCardSection / TeamScoreboard + 월간 리포트 통합 점수표가 동일 scoring.js 사용',
+    ],
+  },
+  {
     version: 'v3.17.1',
     date: '2026-05-18',
     title: '🧩 주간 KPI에 담당자별 break down — 한눈에 분배 확인',

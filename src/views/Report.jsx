@@ -5,6 +5,7 @@ import { daysSince } from '../lib/utils';
 import { HBarChart, DonutChart, ProgressBars } from '../components/Charts';
 import { aggregateByRep, classifyForRepView, loadPriorYearCustomers, isDomestic } from '../lib/customerClassification';
 import { getValidSalesReps, getSortedValidReps } from '../lib/salesReps';
+import { computeScore } from '../lib/scoring';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -3824,32 +3825,8 @@ export default function Report() {
     }
   };
 
-  // v3.16: 월간 PPT 다운로드 (월간 리포트 탭에서만)
-  const [pptGenerating, setPptGenerating] = useState(false);
-  const handlePptDownload = async () => {
-    if (tab !== 'monthly') {
-      alert('PPT 다운로드는 월간 리포트에서만 가능합니다.');
-      return;
-    }
-    setPptGenerating(true);
-    try {
-      const { generateMonthlyPpt } = await import('../lib/pptExport');
-      const fileName = await generateMonthlyPpt({
-        monthlyReportData,
-        execSummary,
-        nextMonthPlan,
-        accounts,
-        activityLogs,
-        teamMembers,
-      });
-      console.log('PPT 생성 완료:', fileName);
-    } catch (err) {
-      console.error('PPT 다운로드 실패:', err);
-      alert('PPT 다운로드 실패: ' + (err.message || err));
-    } finally {
-      setPptGenerating(false);
-    }
-  };
+  // v3.17.2: PPT 다운로드 기능 제거 (사용자 요청 — 추후 보완 예정)
+  //   pptxgenjs 의존성 + src/lib/pptExport.js 모듈은 보존 (재활성화 가능)
 
   /* ══════════════════════════════
      RENDER
@@ -3865,17 +3842,7 @@ export default function Report() {
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="btn btn-ghost" onClick={() => window.print()} style={{ fontSize: 11 }}>인쇄</button>
           <button className="btn btn-success" onClick={handleExcelDownload}>Excel 다운로드</button>
-          {tab === 'monthly' && (
-            <button
-              className="btn btn-primary"
-              onClick={handlePptDownload}
-              disabled={pptGenerating}
-              style={{ background: '#c43e1c', color: '#fff', borderColor: '#c43e1c' }}
-              title="월간 보고서를 PowerPoint 파일로 다운로드 (12 슬라이드)"
-            >
-              {pptGenerating ? 'PPT 생성 중...' : '📊 PPT 다운로드'}
-            </button>
-          )}
+          {/* v3.17.2: PPT 다운로드 버튼 제거 — 추후 보완 예정 */}
         </div>
       </div>
 
@@ -6356,63 +6323,92 @@ export default function Report() {
                 )}
               </div>
 
-              {/* GAP-4: AM별 활동 품질 지표 */}
-              {Object.keys(gapAnalysisData.amMetrics).length > 0 && (
-                <div className="card" style={{ marginBottom: 16 }}>
-                  <div className="card-title">AM별 활동 품질 지표</div>
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>담당자</th>
-                          <th style={{ textAlign: 'right' }}>고객수</th>
-                          <th style={{ textAlign: 'right' }}>90일 컨택</th>
-                          <th style={{ textAlign: 'right' }}>고객당 빈도</th>
-                          <th style={{ textAlign: 'right' }}>평균 Score</th>
-                          <th style={{ textAlign: 'right' }}>YTD 달성률</th>
-                          <th>주요 Gap 원인</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Object.entries(gapAnalysisData.amMetrics)
-                          .sort((a, b) => b[1].achieveRate - a[1].achieveRate)
-                          .map(([rep, m]) => (
-                            <tr key={rep}>
-                              <td style={{ fontWeight: 600 }}>{rep}</td>
-                              <td style={{ textAlign: 'right' }}>{m.accountCount}</td>
-                              <td style={{ textAlign: 'right' }}>{m.contactCount90d}건</td>
-                              <td style={{ textAlign: 'right' }}>
-                                <span style={{ color: m.avgContactFreq >= 2 ? 'var(--green)' : m.avgContactFreq >= 1 ? 'var(--yellow)' : 'var(--red)' }}>
-                                  {m.avgContactFreq}
-                                </span>
-                              </td>
-                              <td style={{ textAlign: 'right' }}>
-                                <span className={`score-badge ${m.avgScore >= 70 ? 'green' : m.avgScore >= 50 ? 'yellow' : 'red'}`} style={{ fontSize: 10 }}>
-                                  {m.avgScore}%
-                                </span>
-                              </td>
-                              <td style={{ textAlign: 'right' }}>
-                                {m.ytdTarget > 0 ? (
-                                  <span className={`score-badge ${pctColor(m.achieveRate)}`} style={{ fontSize: 10 }}>
-                                    {m.achieveRate}%
+              {/* v3.17.2: AM별 활동 품질 표 → 통합 점수 표로 교체
+                  점수 시스템(사양서 v1.0)이 메인 평가, 정성 정보(Insight, 액션, Gap원인)는 보완 컬럼
+                  중복 항목(90일 컨택, YTD 달성률)은 점수 항목에 포함되어 별도 컬럼 제거 */}
+              {Object.keys(gapAnalysisData.amMetrics).length > 0 && (() => {
+                const yearMonth = monthlyReportData.selMonthStr;
+                const repsInTable = Object.keys(gapAnalysisData.amMetrics);
+                const scoredRows = repsInTable.map(rep => {
+                  const scoreResult = computeScore({
+                    rep, accounts, activityLogs, orders, businessPlans, yearMonth,
+                  });
+                  return {
+                    rep,
+                    score: scoreResult,
+                    am: gapAnalysisData.amMetrics[rep],
+                  };
+                }).sort((a, b) => b.score.total - a.score.total);
+
+                return (
+                  <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--accent)' }}>
+                    <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                      <span>■ 11. 담당자 활동 점수 (사양서 v1.0)</span>
+                      <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                        — 100점 만점 + 정성 보완 (Insight·액션·Gap 원인)
+                      </span>
+                    </div>
+                    <div className="table-wrap">
+                      <table className="data-table" style={{ fontSize: 11 }}>
+                        <thead>
+                          <tr>
+                            <th>담당자</th>
+                            <th style={{ textAlign: 'right' }}>총점 (100)</th>
+                            <th style={{ textAlign: 'right' }}>영업성과 (60)</th>
+                            <th style={{ textAlign: 'right' }}>CRM품질 (40)</th>
+                            <th style={{ textAlign: 'right' }}>감점</th>
+                            <th style={{ textAlign: 'right' }}>고객수</th>
+                            <th style={{ textAlign: 'right' }}>평균 Insight</th>
+                            <th style={{ textAlign: 'right' }}>액션 완료율</th>
+                            <th>Gap 원인 Top 3</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scoredRows.map(({ rep, score, am }) => {
+                            const totalColor = score.total >= 90 ? '#16a34a' : score.total >= 75 ? '#16a34a' : score.total >= 60 ? '#d97706' : score.total >= 40 ? '#dc2626' : '#7f1d1d';
+                            return (
+                              <tr key={rep}>
+                                <td style={{ fontWeight: 700 }}>{rep}</td>
+                                <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 14, color: totalColor }}>{score.total}</td>
+                                <td style={{ textAlign: 'right' }}>{score.performance}</td>
+                                <td style={{ textAlign: 'right' }}>{score.quality}</td>
+                                <td style={{ textAlign: 'right', color: score.deduction > 0 ? 'var(--red)' : 'var(--text3)' }}>
+                                  {score.deduction > 0 ? `−${score.deduction}` : '-'}
+                                </td>
+                                <td style={{ textAlign: 'right' }}>{am.accountCount}</td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <span className={`score-badge ${am.avgScore >= 70 ? 'green' : am.avgScore >= 50 ? 'yellow' : 'red'}`} style={{ fontSize: 10 }}>
+                                    {am.avgScore}%
                                   </span>
-                                ) : '-'}
-                              </td>
-                              <td style={{ fontSize: 10 }}>
-                                {m.gapCauses.length > 0
-                                  ? m.gapCauses.map(([k, cnt]) => {
-                                      const c = GAP_CAUSES.find(gc => gc.key === k);
-                                      return <span key={k} style={{ marginRight: 4 }}>{c?.icon}{c?.label}({cnt})</span>;
-                                    })
-                                  : <span style={{ color: 'var(--text3)' }}>-</span>}
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
+                                </td>
+                                <td style={{ textAlign: 'right' }}>
+                                  {am.actionTotal > 0 ? (
+                                    <span style={{ color: am.actionRate >= 70 ? 'var(--green, #16a34a)' : am.actionRate >= 40 ? '#d97706' : 'var(--red)', fontWeight: 600 }}>
+                                      {am.actionRate}% ({am.actionDone}/{am.actionTotal})
+                                    </span>
+                                  ) : '-'}
+                                </td>
+                                <td style={{ fontSize: 10 }}>
+                                  {am.gapCauses.length > 0
+                                    ? am.gapCauses.map(([k, cnt]) => {
+                                        const c = GAP_CAUSES.find(gc => gc.key === k);
+                                        return <span key={k} style={{ marginRight: 4 }}>{c?.icon}{c?.label}({cnt})</span>;
+                                      })
+                                    : <span style={{ color: 'var(--text3)' }}>-</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
+                      ※ <strong>점수 시스템 (사양서 v1.0):</strong> 영업 성과 60 (당월 30 + YTD 20 + 전월비 10) + CRM 품질 40 (접촉 10 + 해결률 10 + 14일+ 미해결 10 + GAP 입력 5 + A등급 30일 5) − 감점 max 20 (주간 0건/A45일+/GAP 미분류/허위 입력).<br />
+                      ※ <strong>정성 컬럼:</strong> 고객수·평균 Insight·액션 완료율·Gap 원인은 점수 외 보완 정보. 90일 컨택·YTD 달성률은 점수 항목에 포함되어 별도 표시 제거.
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </>
           )}
         </div>
