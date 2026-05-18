@@ -2125,6 +2125,152 @@ export default function Report() {
     const continentOrder = ['북미', '유럽', '중남미', '아시아', '중동', '아프리카', 'CIS', '한국'];
     const getContinent = (region) => CONTINENT_MAP[(region || '').trim()] || '기타';
 
+    // ══════════════════════════════════════════════════════
+    // v3.17 Phase E: 품목별 미래 예측 (대표이사 요구사항)
+    //   각 품목별:
+    //     - 현재 (YTD 실적 + 진도)
+    //     - 진행 중 영업활동 (FCST + 크로스셀링 + 계약분할 + GAP 회복)
+    //     - 미래 예측 시나리오 3가지 (낙관/현실/비관)
+    //     - 연말 예상 합계 + 권장 액션 자동 생성
+    // ══════════════════════════════════════════════════════
+    const productFutureForecast = (() => {
+      const productPlansHere = (businessPlans || []).filter(p => p.type === 'product' && p.year === selYear);
+      if (productPlansHere.length === 0) return [];
+
+      // 품목별 분석
+      const results = productPlansHere.map(pp => {
+        const product = pp.product || '기타';
+        const annualTarget = pp.annual_target || 0;
+        // YTD 목표 (1~selMonth)
+        let ytdTarget = 0;
+        if (pp.targets) {
+          for (let m = 1; m <= selMonth; m++) {
+            ytdTarget += (pp.targets[String(m).padStart(2, '0')] || 0);
+          }
+        }
+        // YTD 실적 (orders의 product_category 매칭)
+        const ytdActual = (orders || []).reduce((s, o) => {
+          if (!o.order_date || !o.order_date.startsWith(String(selYear))) return s;
+          const mm = parseInt(o.order_date.slice(5, 7), 10);
+          if (mm < 1 || mm > selMonth) return s;
+          const cat = (o.product_category || '').toLowerCase();
+          const pLower = product.toLowerCase();
+          if (cat.includes(pLower) || pLower.includes(cat) || cat === pLower) {
+            return s + (o.order_amount || 0);
+          }
+          return s;
+        }, 0);
+        // 잔여 목표 (selMonth+1 ~ 12월)
+        let remainingTarget = 0;
+        if (pp.targets) {
+          for (let m = selMonth + 1; m <= 12; m++) {
+            remainingTarget += (pp.targets[String(m).padStart(2, '0')] || 0);
+          }
+        }
+        // 진행 중 영업활동 (선택월 이후만)
+        // ① FCST
+        let fcstFuture = 0;
+        (forecasts || []).forEach(f => {
+          if (f.year !== selYear) return;
+          const fm = f.order_month?.length === 7 ? parseInt(f.order_month.slice(5, 7), 10) : parseInt(f.order_month || 0, 10);
+          if (fm <= selMonth) return;
+          const cat = (f.product_category || '').toLowerCase();
+          if (cat && (cat.includes(product.toLowerCase()) || product.toLowerCase().includes(cat))) {
+            fcstFuture += (f.forecast_amount || f.amount || 0);
+          } else if (!cat) {
+            // category 없으면 전 품목 분배 시뮬레이션 — 무시
+          }
+        });
+        // ② 크로스셀링 (gap.opportunities)
+        let crossExpected = 0, crossWeighted = 0;
+        (accounts || []).forEach(a => {
+          const opps = a.gap?.opportunities || [];
+          opps.forEach(o => {
+            if (!o.expected_date) return;
+            const oMonth = parseInt(o.expected_date.slice(5, 7), 10);
+            const oYear = parseInt(o.expected_date.slice(0, 4), 10);
+            if (oYear !== selYear || oMonth <= selMonth) return;
+            const oProd = (o.product || '').toLowerCase();
+            if (!oProd || !(oProd.includes(product.toLowerCase()) || product.toLowerCase().includes(oProd))) return;
+            const amt = parseFloat(o.amount) || 0;
+            const prob = parseFloat(o.probability) || 50;
+            crossExpected += amt;
+            crossWeighted += amt * (prob / 100);
+          });
+        });
+        // ③ 계약 분할
+        let contractFuture = 0;
+        (contracts || []).forEach(c => {
+          if (!c.delivery_schedule) return;
+          const cProd = (c.product_category || '').toLowerCase();
+          if (!cProd || !(cProd.includes(product.toLowerCase()) || product.toLowerCase().includes(cProd))) return;
+          c.delivery_schedule.forEach(d => {
+            if (!d.date) return;
+            const dYear = parseInt(d.date.slice(0, 4), 10);
+            const dMonth = parseInt(d.date.slice(5, 7), 10);
+            if (dYear !== selYear || dMonth <= selMonth) return;
+            contractFuture += (c.unit_price || 0) * (parseInt(d.qty) || 0);
+          });
+        });
+        // ④ GAP 회복 계획
+        let recoveryFuture = 0;
+        (activityLogs || []).forEach(l => {
+          if (!l.recovery_plan_date) return;
+          const lYear = parseInt(l.recovery_plan_date.slice(0, 4), 10);
+          const lMonth = parseInt(l.recovery_plan_date.slice(5, 7), 10);
+          if (lYear !== selYear || lMonth <= selMonth) return;
+          if (l.status === 'Closed') return;
+          // 품목 매칭 (있을 경우)
+          const lProd = (l.product_category || '').toLowerCase();
+          if (lProd && !(lProd.includes(product.toLowerCase()) || product.toLowerCase().includes(lProd))) return;
+          recoveryFuture += parseFloat(l.recovery_plan_amount) || 0;
+        });
+
+        // 시나리오
+        const optimistic = ytdActual + fcstFuture + crossExpected + contractFuture + recoveryFuture;
+        const realistic = ytdActual + (fcstFuture * 0.8) + crossWeighted + (contractFuture * 0.9) + (recoveryFuture * 0.7);
+        const pessimistic = ytdActual + (fcstFuture * 0.5);
+
+        const ytdPct = ytdTarget > 0 ? Math.round((ytdActual / ytdTarget) * 100) : 0;
+        const optimisticPct = annualTarget > 0 ? Math.round((optimistic / annualTarget) * 100) : 0;
+        const realisticPct = annualTarget > 0 ? Math.round((realistic / annualTarget) * 100) : 0;
+        const pessimisticPct = annualTarget > 0 ? Math.round((pessimistic / annualTarget) * 100) : 0;
+
+        // 권장 액션 자동 생성
+        const actions = [];
+        if (annualTarget > 0) {
+          const remainingShortfall = annualTarget - realistic;
+          if (realisticPct < 100 && remainingShortfall > 0) {
+            actions.push(`현실 시나리오로는 연말까지 ${fmtKRW(remainingShortfall)} 부족 → 신규 영업 또는 기존 고객 확대 필요`);
+          }
+          if (fcstFuture < remainingTarget * 0.5) {
+            actions.push(`잔여 목표 대비 FCST가 50% 미만 — 담당자에게 FCST 입력 강화 요청`);
+          }
+          if (crossExpected === 0) {
+            actions.push(`크로스셀링 진행 건수 0 — 신규 기회 발굴 필요`);
+          }
+          if (optimisticPct < 100) {
+            actions.push(`낙관 시나리오로도 연간 목표 미달 — 사업 계획 재검토 또는 신규 전략 수립 필요`);
+          }
+        }
+
+        return {
+          product, annualTarget, ytdTarget, ytdActual, ytdPct,
+          remainingTarget,
+          activeSources: {
+            fcstFuture, crossExpected, crossWeighted, contractFuture, recoveryFuture,
+          },
+          scenarios: {
+            optimistic, realistic, pessimistic,
+            optimisticPct, realisticPct, pessimisticPct,
+          },
+          actions,
+        };
+      });
+
+      return results.sort((a, b) => (b.annualTarget || 0) - (a.annualTarget || 0));
+    })();
+
     const continentMonthRows = (() => {
       const map = {};
       continentOrder.forEach(c => { map[c] = { continent: c, monthTarget: 0, ytdTarget: 0, annualTarget: 0, monthActual: 0, ytdActual: 0 }; });
@@ -2827,6 +2973,8 @@ export default function Report() {
       // v3.17 Phase C5: 품목별 + 대륙별 분석
       productMonthRows,
       continentMonthRows,
+      // v3.17 Phase E: 품목별 미래 예측 (대표이사 요구사항)
+      productFutureForecast,
       gapSummary,
       teamGapCauses,
       autoExecSummary,
@@ -5704,6 +5852,90 @@ export default function Report() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* v3.17 Phase E: 품목별 미래 예측 (대표이사 요구사항) */}
+          {/*   각 품목별로 현재 상황 → 진행 중 영업활동 → 미래 시나리오 3종 → 권장 액션 */}
+          {(monthlyReportData.productFutureForecast || []).length > 0 && (
+            <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #7c3aed' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                <span>■ 9-2. 품목별 미래 예측 (대표이사 보고용)</span>
+                <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                  — 현재 영업활동 기반 연말 예상 (낙관/현실/비관) + 자동 권장 액션
+                </span>
+              </div>
+              <div style={{ display: 'grid', gap: 12 }}>
+                {monthlyReportData.productFutureForecast.map(p => {
+                  const realisticColor = p.scenarios.realisticPct >= 100 ? 'var(--green, #16a34a)' : p.scenarios.realisticPct >= 80 ? '#d97706' : 'var(--red)';
+                  const realisticStatus = p.scenarios.realisticPct >= 100 ? '🟢 정상' : p.scenarios.realisticPct >= 80 ? '🟡 주의' : '🔴 위험';
+                  return (
+                    <div key={p.product} style={{ border: `2px solid ${realisticColor}`, borderRadius: 8, overflow: 'hidden' }}>
+                      {/* 헤더 */}
+                      <div style={{ padding: '10px 14px', background: 'var(--bg2)', display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+                        <strong style={{ fontSize: 16 }}>📦 {p.product}</strong>
+                        <span style={{ fontSize: 11, color: 'var(--text2)' }}>연간 목표 <strong>{fmtKRW(p.annualTarget)}</strong></span>
+                        <span style={{ fontSize: 11, color: 'var(--text2)' }}>YTD <strong>{p.ytdPct}%</strong> ({fmtKRW(p.ytdActual)})</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 12, color: realisticColor, fontWeight: 700 }}>
+                          현실 예측: {p.scenarios.realisticPct}% {realisticStatus}
+                        </span>
+                      </div>
+                      {/* 4 컬럼 */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0 }}>
+                        {/* 현재 상황 */}
+                        <div style={{ padding: 10, borderRight: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>[1] 현재 상황</div>
+                          <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                            <div>YTD 목표: <strong>{fmtKRW(p.ytdTarget)}</strong></div>
+                            <div>YTD 실적: <strong>{fmtKRW(p.ytdActual)}</strong></div>
+                            <div>YTD 진도: <strong style={{ color: p.ytdPct >= 100 ? 'var(--green, #16a34a)' : p.ytdPct >= 80 ? '#d97706' : 'var(--red)' }}>{p.ytdPct}%</strong></div>
+                            <div style={{ marginTop: 4, color: 'var(--text3)' }}>잔여 목표: {fmtKRW(p.remainingTarget)}</div>
+                          </div>
+                        </div>
+                        {/* 진행 중 영업활동 */}
+                        <div style={{ padding: 10, borderRight: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>[2] 진행 중 영업활동</div>
+                          <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                            <div>🔵 FCST: {fmtKRW(p.activeSources.fcstFuture)}</div>
+                            <div>🟣 크로스셀링: {fmtKRW(p.activeSources.crossExpected)} <span style={{ fontSize: 9, color: 'var(--text3)' }}>(가중 {fmtKRW(p.activeSources.crossWeighted)})</span></div>
+                            <div>🟢 계약 분할: {fmtKRW(p.activeSources.contractFuture)}</div>
+                            <div>🟡 GAP 회복: {fmtKRW(p.activeSources.recoveryFuture)}</div>
+                          </div>
+                        </div>
+                        {/* 미래 예측 시나리오 */}
+                        <div style={{ padding: 10, borderRight: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>[3] 연말 예상 (3 시나리오)</div>
+                          <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                            <div style={{ color: 'var(--green, #16a34a)' }}>🟢 낙관 {p.scenarios.optimisticPct}%: {fmtKRW(p.scenarios.optimistic)}</div>
+                            <div style={{ color: realisticColor, fontWeight: 700 }}>🟡 현실 {p.scenarios.realisticPct}%: {fmtKRW(p.scenarios.realistic)}</div>
+                            <div style={{ color: 'var(--red)' }}>🔴 비관 {p.scenarios.pessimisticPct}%: {fmtKRW(p.scenarios.pessimistic)}</div>
+                            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--text3)' }}>
+                              ※ 낙관=모든 활동 100% / 현실=신뢰도 가중 / 비관=FCST 50%만
+                            </div>
+                          </div>
+                        </div>
+                        {/* 권장 액션 */}
+                        <div style={{ padding: 10 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>[4] 권장 액션</div>
+                          {p.actions.length === 0 ? (
+                            <div style={{ fontSize: 11, color: 'var(--green, #16a34a)' }}>✅ 정상 궤도</div>
+                          ) : (
+                            <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, lineHeight: 1.6 }}>
+                              {p.actions.map((a, i) => (
+                                <li key={i} style={{ color: 'var(--text2)' }}>{a}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 10, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>
+                ※ <strong>대표이사 요구사항:</strong> 영업활동 기반 미래 변화 예측 — 우선 품목별 적용, 차후 고객별·담당자별·대륙별 확대 예정.<br />
+                ※ 시나리오: 낙관 = 모든 영업활동 100% 달성 / 현실 = FCST 80% + 크로스 확률 가중 + 계약 90% + 회복 70% / 비관 = FCST 50%만
               </div>
             </div>
           )}
