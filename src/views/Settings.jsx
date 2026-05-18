@@ -1484,17 +1484,53 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
       // ── v3.17.5: source별 데이터 분포 진단 (이중 집계 점검) ──
       const sourceCounts = { promes: 0, legacy: 0, manual: 0, other: 0 };
       const sourceAmounts = { promes: 0, legacy: 0, manual: 0, other: 0 };
+      // v3.17.6: 월별 source 분포 + ProMES 내부 중복 점검
+      const monthlySource = {}; // { '05': { promes: {n,amt}, legacy: {n,amt}, manual: {n,amt}, other: {n,amt} } }
+      const dupKeyMap = {}; // dedupe key 별 건수 — 같은 key 2건 이상이면 ProMES 중복 가능
+      months.forEach(m => {
+        monthlySource[m] = {
+          promes: { n: 0, amt: 0 },
+          legacy: { n: 0, amt: 0 },
+          manual: { n: 0, amt: 0 },
+          other: { n: 0, amt: 0 },
+        };
+      });
       orders.forEach(o => {
         if (!o.order_date || !o.order_date.startsWith(yearStr + '-')) return;
         const m = o.order_date.slice(5, 7);
         if (!monthSet.has(m)) return;
         const src = o.source || '';
         const amt = o.order_amount || 0;
-        if (src === 'excel_import_promes_O') { sourceCounts.promes++; sourceAmounts.promes += amt; }
-        else if (src === 'excel_import_영업현황') { sourceCounts.legacy++; sourceAmounts.legacy += amt; }
-        else if (!src) { sourceCounts.manual++; sourceAmounts.manual += amt; }
-        else { sourceCounts.other++; sourceAmounts.other += amt; }
+        let bucket;
+        if (src === 'excel_import_promes_O') bucket = 'promes';
+        else if (src === 'excel_import_영업현황') bucket = 'legacy';
+        else if (!src) bucket = 'manual';
+        else bucket = 'other';
+        sourceCounts[bucket]++;
+        sourceAmounts[bucket] += amt;
+        if (monthlySource[m]) {
+          monthlySource[m][bucket].n++;
+          monthlySource[m][bucket].amt += amt;
+        }
+        // ProMES 내부 중복 점검 (같은 month+account+product 2번 이상)
+        if (bucket === 'promes') {
+          const key = `${m}|${o.account_id || ''}|${o.product_code || ''}`;
+          if (!dupKeyMap[key]) dupKeyMap[key] = { n: 0, amt: 0, samples: [] };
+          dupKeyMap[key].n++;
+          dupKeyMap[key].amt += amt;
+          if (dupKeyMap[key].samples.length < 3) {
+            dupKeyMap[key].samples.push({
+              id: o.id,
+              account_name: o.customer_name || '',
+              product_name: o.product_name || '',
+              amount: amt,
+            });
+          }
+        }
       });
+      const dupEntries = Object.entries(dupKeyMap).filter(([k, v]) => v.n >= 2);
+      const dupTotalAmount = dupEntries.reduce((s, [k, v]) => s + v.amt, 0);
+      const dupTotalCount = dupEntries.reduce((s, [k, v]) => s + v.n, 0);
 
       // ── 1. 사업계획 customer plans (YTD target 합계) ──
       const customerPlans = businessPlans.filter(p => (p.type === 'customer' || !p.type) && p.year === Number(yearStr));
@@ -1625,6 +1661,12 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
         // v3.17.5: source 분포 (이중 집계 점검)
         sourceCounts,
         sourceAmounts,
+        // v3.17.6: 월별 source breakdown + ProMES 내부 중복
+        monthlySource,
+        months,
+        dupEntries,
+        dupTotalAmount,
+        dupTotalCount,
         // 사업계획 측면
         planList: planWithActual,
         planTotalTarget,
@@ -1682,8 +1724,13 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
           <select value={quarterEnd} onChange={e => setQuarterEnd(Number(e.target.value))} style={{ padding: '3px 6px', fontSize: 12 }}>
             <option value={3}>1분기 (1~3월)</option>
             <option value={4}>~ 4월</option>
+            <option value={5}>~ 5월</option>
             <option value={6}>2분기 누계 (1~6월)</option>
+            <option value={7}>~ 7월</option>
+            <option value={8}>~ 8월</option>
             <option value={9}>3분기 누계 (1~9월)</option>
+            <option value={10}>~ 10월</option>
+            <option value={11}>~ 11월</option>
             <option value={12}>연간 (1~12월)</option>
           </select>
         </label>
@@ -1738,6 +1785,83 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                     기타 <strong>{analysis.sourceCounts.other.toLocaleString()}건</strong> ({fmt(analysis.sourceAmounts.other)})
                   </span>
                 )}
+              </div>
+            )}
+
+            {/* v3.17.6: 월별 source breakdown — 어느 월에 인플레이션이 있는지 즉시 확인 */}
+            {analysis.monthlySource && analysis.months && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg2)', borderRadius: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>📅 월별 source 분포 (이중 집계 위치 즉시 식별)</div>
+                <table className="data-table" style={{ fontSize: 10, width: '100%' }}>
+                  <thead>
+                    <tr>
+                      <th>월</th>
+                      <th style={{ textAlign: 'right' }}>ProMES 건/금액</th>
+                      <th style={{ textAlign: 'right' }}>영업현황(잔여)</th>
+                      <th style={{ textAlign: 'right' }}>수동</th>
+                      <th style={{ textAlign: 'right' }}>기타</th>
+                      <th style={{ textAlign: 'right' }}>월 합계</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.months.map(m => {
+                      const ms = analysis.monthlySource[m] || {};
+                      const total = (ms.promes?.amt || 0) + (ms.legacy?.amt || 0) + (ms.manual?.amt || 0) + (ms.other?.amt || 0);
+                      const hasDouble = (ms.promes?.n || 0) > 0 && (ms.legacy?.n || 0) > 0;
+                      return (
+                        <tr key={m} style={hasDouble ? { background: 'rgba(220,38,38,0.06)' } : null}>
+                          <td><strong>{m}월</strong>{hasDouble && <span style={{ color: 'var(--red)', marginLeft: 4 }}>🚨</span>}</td>
+                          <td style={{ textAlign: 'right' }}>{(ms.promes?.n || 0).toLocaleString()}건 · {fmt(ms.promes?.amt || 0)}</td>
+                          <td style={{ textAlign: 'right', color: (ms.legacy?.n || 0) > 0 ? 'var(--red)' : 'inherit' }}>
+                            {(ms.legacy?.n || 0).toLocaleString()}건 · {fmt(ms.legacy?.amt || 0)}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>{(ms.manual?.n || 0).toLocaleString()}건 · {fmt(ms.manual?.amt || 0)}</td>
+                          <td style={{ textAlign: 'right' }}>{(ms.other?.n || 0).toLocaleString()}건 · {fmt(ms.other?.amt || 0)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(total)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* v3.17.6: ProMES 내부 중복 점검 — 같은 month+account+product 2건 이상 */}
+            {analysis.dupEntries && analysis.dupEntries.length > 0 && (
+              <div style={{ marginBottom: 12, padding: '10px 14px', background: 'rgba(220,38,38,0.08)', border: '2px solid var(--red)', borderRadius: 6 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)', marginBottom: 6 }}>
+                  🚨 ProMES 내부 중복 감지 — {analysis.dupEntries.length.toLocaleString()}개 키에 {analysis.dupTotalCount}건 / {fmt(analysis.dupTotalAmount)}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text)', marginBottom: 6 }}>
+                  동일 (월 + 거래처 + 제품) 조합이 2건 이상 — ProMES 재임포트 시 기존 데이터 미삭제로 인한 중복 가능성. 상위 10개:
+                </div>
+                <table className="data-table" style={{ fontSize: 10, width: '100%' }}>
+                  <thead>
+                    <tr>
+                      <th>키 (월|account_id|product_code)</th>
+                      <th style={{ textAlign: 'right' }}>건수</th>
+                      <th style={{ textAlign: 'right' }}>합계</th>
+                      <th>예시 (고객 / 제품 / 금액)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.dupEntries
+                      .sort((a, b) => b[1].amt - a[1].amt)
+                      .slice(0, 10)
+                      .map(([k, v]) => (
+                        <tr key={k}>
+                          <td style={{ fontFamily: 'monospace', fontSize: 9 }}>{k}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--red)' }}>{v.n}건</td>
+                          <td style={{ textAlign: 'right' }}>{fmt(v.amt)}</td>
+                          <td style={{ fontSize: 9 }}>
+                            {v.samples.map((s, i) => (
+                              <div key={i}>{s.account_name} / {s.product_name} / {fmt(s.amount)}</div>
+                            ))}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
             )}
 
