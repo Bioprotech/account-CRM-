@@ -4,6 +4,7 @@ import { REGIONS, CUSTOMER_TYPE_GUIDE, STRATEGIC_TIERS } from '../lib/constants'
 import { daysSince, scoreColorClass } from '../lib/utils';
 import { classifyCustomers, classifyForRepView, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
 import { getSortedValidReps } from '../lib/salesReps';
+import { computeScore } from '../lib/scoring';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -26,6 +27,212 @@ function pctColor(p) {
   if (p >= 90) return 'green';
   if (p >= 70) return 'yellow';
   return 'red';
+}
+
+/**
+ * v3.17 Phase D — 점수 카드 (담당자 1명)
+ *   100점 만점 시각화 + 영업성과/품질/감점 분해
+ */
+function ScoreCardSection({ rep, accounts, activityLogs, orders, businessPlans }) {
+  const yearMonth = new Date().toISOString().slice(0, 7);
+  const result = useMemo(
+    () => computeScore({ rep, accounts, activityLogs, orders, businessPlans, yearMonth }),
+    [rep, accounts, activityLogs, orders, businessPlans, yearMonth]
+  );
+  const [expanded, setExpanded] = useState(false);
+
+  const grade = result.total >= 90 ? { label: 'S', color: '#16a34a' }
+    : result.total >= 75 ? { label: 'A', color: '#16a34a' }
+    : result.total >= 60 ? { label: 'B', color: '#d97706' }
+    : result.total >= 40 ? { label: 'C', color: '#dc2626' }
+    : { label: 'D', color: '#7f1d1d' };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: `4px solid ${grade.color}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: 4 }}>
+        {/* 큰 점수 */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 110 }}>
+          <div style={{ fontSize: 10, color: 'var(--text3)' }}>이번 달 활동 점수</div>
+          <div style={{ fontSize: 36, fontWeight: 800, color: grade.color, lineHeight: 1 }}>{result.total}</div>
+          <div style={{ fontSize: 10, color: 'var(--text3)' }}>/ 100점</div>
+        </div>
+        {/* 영업 성과 + 품질 + 감점 분해 */}
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+          <div style={{ padding: '6px 10px', background: 'rgba(46,125,50,0.08)', borderRadius: 6 }}>
+            <div style={{ fontSize: 10, color: 'var(--text2)' }}>🔵 영업 성과</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{result.performance} <span style={{ fontSize: 10, color: 'var(--text3)' }}>/ 60</span></div>
+          </div>
+          <div style={{ padding: '6px 10px', background: 'rgba(22,163,74,0.06)', borderRadius: 6 }}>
+            <div style={{ fontSize: 10, color: 'var(--text2)' }}>🟢 CRM 활동 품질</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{result.quality} <span style={{ fontSize: 10, color: 'var(--text3)' }}>/ 40</span></div>
+          </div>
+          <div style={{ padding: '6px 10px', background: result.deduction > 0 ? 'rgba(220,38,38,0.06)' : 'var(--bg2)', borderRadius: 6 }}>
+            <div style={{ fontSize: 10, color: 'var(--text2)' }}>🔴 감점</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: result.deduction > 0 ? 'var(--red)' : 'var(--text3)' }}>
+              {result.deduction > 0 ? `−${result.deduction}` : '0'} <span style={{ fontSize: 10, color: 'var(--text3)' }}>/ 20</span>
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => setExpanded(p => !p)}
+          style={{ fontSize: 11, padding: '6px 12px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+        >
+          {expanded ? '▲ 접기' : '▼ 항목별 상세'}
+        </button>
+      </div>
+      {expanded && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          {/* 항목별 점수표 */}
+          <table className="data-table" style={{ fontSize: 11, marginBottom: 8 }}>
+            <thead>
+              <tr>
+                <th>항목</th>
+                <th style={{ textAlign: 'right' }}>점수</th>
+                <th>설명</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ fontWeight: 600 }}>2-1. 당월 수주 달성률</td>
+                <td style={{ textAlign: 'right', color: result.breakdown.monthly.score === 30 ? 'var(--green, #16a34a)' : 'var(--text)' }}>{result.breakdown.monthly.score}/30</td>
+                <td>달성률 {result.breakdown.monthly.pct}% (목표 100%↑→30 / 80%↑→18 / 60%↑→8 / 미만→0)</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>2-2. YTD 진도</td>
+                <td style={{ textAlign: 'right', color: result.breakdown.ytd.score === 20 ? 'var(--green, #16a34a)' : 'var(--text)' }}>{result.breakdown.ytd.score}/20</td>
+                <td>YTD {result.breakdown.ytd.pct}% (100%↑→20 / 80%↑→12 / 60%↑→6 / 미만→0)</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>2-3. 전월 대비 개선</td>
+                <td style={{ textAlign: 'right' }}>{result.breakdown.mom.score}/10</td>
+                <td>{result.breakdown.mom.deltaPp >= 0 ? '+' : ''}{result.breakdown.mom.deltaPp}%p (10%p↑→10 / 5%p↑→5 / 미만→0)</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>3-1. 고객당 월 접촉 빈도</td>
+                <td style={{ textAlign: 'right' }}>{result.breakdown.contact.score}/10</td>
+                <td>{result.breakdown.contact.freq}회 (담당 {result.breakdown.contact.accountCount}사 / 활동 {result.breakdown.contact.activityCount}건)</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>3-2. 이슈 해결률</td>
+                <td style={{ textAlign: 'right' }}>{result.breakdown.resolve.score}/10</td>
+                <td>{result.breakdown.resolve.rate !== null ? `${result.breakdown.resolve.rate}% (${result.breakdown.resolve.resolvedCount}/${result.breakdown.resolve.openedCount})` : result.breakdown.resolve._note}</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>3-3. 14일+ 미해결</td>
+                <td style={{ textAlign: 'right' }}>{result.breakdown.overdue.score}/10</td>
+                <td>{result.breakdown.overdue.count}건 (0건→10 / 1-2→6 / 3-4→2 / 5건↑→0)</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>3-4. GAP 원인 입력</td>
+                <td style={{ textAlign: 'right' }}>{result.breakdown.gapDetail.score}/5</td>
+                <td>{result.breakdown.gapDetail.fillRate !== null ? `${result.breakdown.gapDetail.fillRate}% (${result.breakdown.gapDetail.filledCount}/${result.breakdown.gapDetail.shortfallCount}사)` : result.breakdown.gapDetail._note}</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>3-5. A등급 30일 내 접촉</td>
+                <td style={{ textAlign: 'right' }}>{result.breakdown.aTier.score}/5</td>
+                <td>{result.breakdown.aTier._note || `A등급 ${result.breakdown.aTier.totalATier}사 중 ${result.breakdown.aTier.missCount}사 미접촉`}</td>
+              </tr>
+              {/* 감점 항목 */}
+              {result.breakdown.zeroWeek.deduction > 0 && (
+                <tr style={{ color: 'var(--red)' }}>
+                  <td style={{ fontWeight: 600 }}>4-1. 주간 활동 0건</td>
+                  <td style={{ textAlign: 'right' }}>−{result.breakdown.zeroWeek.deduction}</td>
+                  <td>0건 주 {result.breakdown.zeroWeek.zeroWeeks}회 발생 (출장/전시회 태그 시 예외)</td>
+                </tr>
+              )}
+              {result.breakdown.aTier45.deduction > 0 && (
+                <tr style={{ color: 'var(--red)' }}>
+                  <td style={{ fontWeight: 600 }}>4-2. A등급 45일+ 미접촉</td>
+                  <td style={{ textAlign: 'right' }}>−{result.breakdown.aTier45.deduction}</td>
+                  <td>{result.breakdown.aTier45.missCount}사: {(result.breakdown.aTier45.missList || []).slice(0, 3).join(', ')}{(result.breakdown.aTier45.missList || []).length > 3 ? ` 외 ${result.breakdown.aTier45.missList.length - 3}사` : ''}</td>
+                </tr>
+              )}
+              {result.breakdown.gapMissing.applied && (
+                <tr style={{ color: 'var(--red)' }}>
+                  <td style={{ fontWeight: 600 }}>4-3. GAP 원인 미분류</td>
+                  <td style={{ textAlign: 'right' }}>−{result.breakdown.gapMissing.deduction}</td>
+                  <td>미달 고객 중 cause_detail 미입력 1사 이상</td>
+                </tr>
+              )}
+              {result.breakdown.falseInput.applied && (
+                <tr style={{ color: 'var(--red)' }}>
+                  <td style={{ fontWeight: 600 }}>4-4. 허위 입력 의심</td>
+                  <td style={{ textAlign: 'right' }}>−{result.breakdown.falseInput.deduction}</td>
+                  <td>동일 날짜 3건+ 유사도 90%+ 탐지</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+            ※ 점수 산정 기준: 매월 말일 23:59 CRM 데이터 · {yearMonth} 기준 · 사양서 v1.0
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * v3.17 Phase D — 팀 점수 종합표 (관리자 + 전체 시점)
+ */
+function TeamScoreboard({ teamMembers, accounts, activityLogs, orders, businessPlans }) {
+  const yearMonth = new Date().toISOString().slice(0, 7);
+  const scores = useMemo(() => {
+    return (teamMembers || []).map(rep => ({
+      rep,
+      ...computeScore({ rep, accounts, activityLogs, orders, businessPlans, yearMonth }),
+    })).sort((a, b) => b.total - a.total);
+  }, [teamMembers, accounts, activityLogs, orders, businessPlans, yearMonth]);
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+        <span>📊 담당자 활동 점수 (이번 달, {yearMonth})</span>
+        <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+          — 100점 만점 (영업 성과 60 + CRM 품질 40 - 감점 max 20) · 사양서 v1.0
+        </span>
+      </div>
+      <div className="table-wrap">
+        <table className="data-table" style={{ fontSize: 11 }}>
+          <thead>
+            <tr>
+              <th>담당자</th>
+              <th style={{ textAlign: 'right' }}>총점</th>
+              <th style={{ textAlign: 'right' }}>영업성과 (60)</th>
+              <th style={{ textAlign: 'right' }}>CRM 품질 (40)</th>
+              <th style={{ textAlign: 'right' }}>감점</th>
+              <th style={{ textAlign: 'right' }}>당월 달성</th>
+              <th style={{ textAlign: 'right' }}>YTD 진도</th>
+              <th style={{ textAlign: 'right' }}>해결률</th>
+              <th style={{ textAlign: 'right' }}>14일+ 미해결</th>
+            </tr>
+          </thead>
+          <tbody>
+            {scores.map(s => {
+              const totalColor = s.total >= 90 ? '#16a34a' : s.total >= 75 ? '#16a34a' : s.total >= 60 ? '#d97706' : s.total >= 40 ? '#dc2626' : '#7f1d1d';
+              return (
+                <tr key={s.rep}>
+                  <td style={{ fontWeight: 600 }}>{s.rep}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 14, color: totalColor }}>{s.total}</td>
+                  <td style={{ textAlign: 'right' }}>{s.performance}</td>
+                  <td style={{ textAlign: 'right' }}>{s.quality}</td>
+                  <td style={{ textAlign: 'right', color: s.deduction > 0 ? 'var(--red)' : 'var(--text3)' }}>
+                    {s.deduction > 0 ? `−${s.deduction}` : '-'}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>{s.breakdown?.monthly?.pct ?? 0}%</td>
+                  <td style={{ textAlign: 'right' }}>{s.breakdown?.ytd?.pct ?? 0}%</td>
+                  <td style={{ textAlign: 'right' }}>{s.breakdown?.resolve?.rate ?? '-'}{s.breakdown?.resolve?.rate !== null ? '%' : ''}</td>
+                  <td style={{ textAlign: 'right', color: (s.breakdown?.overdue?.count ?? 0) > 0 ? 'var(--red)' : 'var(--text3)' }}>
+                    {s.breakdown?.overdue?.count ?? 0}건
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -115,7 +322,12 @@ function YtdProgressBadge({ ytdTarget, ytdActual, shortage, surplus, progressPct
 }
 
 export default function Dashboard() {
-  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, forecasts, contracts, currentUser, isAdmin, saveAccount, showToast, appSettings, teamMembers } = useAccount();
+  const accountCtx = useAccount();
+  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders, businessPlans, forecasts, contracts, saveAccount, showToast, appSettings, teamMembers } = accountCtx;
+  // v3.17 Phase D: 관리자가 viewAsRep 설정 시 그 담당자처럼 동작
+  const currentUser = accountCtx.effectiveCurrentUser ?? accountCtx.currentUser;
+  const isAdmin = accountCtx.effectiveIsAdmin ?? accountCtx.isAdmin;
+  const viewAsRep = accountCtx.viewAsRep;
 
   // 전년도 수주 Set + 유효 담당자 (신 분류 체계)
   const priorYearSet = useMemo(() => {
@@ -623,6 +835,19 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* v3.17 Phase D: 관리자 시점 변경 안내 배너 */}
+      {viewAsRep && (
+        <div style={{ marginBottom: 12, padding: '8px 14px', background: 'rgba(245,158,11,0.1)', borderRadius: 8, border: '2px solid #d97706', fontSize: 12, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 18 }}>👀</span>
+          <div style={{ flex: 1 }}>
+            <strong style={{ color: '#d97706' }}>관리자 시점 변경 중</strong>
+            <span style={{ marginLeft: 6 }}>
+              — <strong>{viewAsRep}</strong>님의 시점으로 화면이 표시됩니다 (편집 권한 유지)
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* 긴급 알람 */}
       {urgentAccounts.length > 0 && (
         <div className="alert-banner danger">
@@ -630,6 +855,37 @@ export default function Dashboard() {
           <strong>긴급 알람:</strong> Score 50% 미만 + 미접촉 30일 초과 고객 {urgentAccounts.length}개사
           <span style={{ marginLeft: 'auto', fontSize: 11, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setCurrentTab('accounts')}>목록 보기 →</span>
         </div>
+      )}
+
+      {/* v3.17 Phase D: 담당자별 점수 카드 (개별 담당자 또는 viewAsRep 시 표시) */}
+      {(currentUser && !isAdmin) && (
+        <ScoreCardSection
+          rep={currentUser}
+          accounts={accounts}
+          activityLogs={activityLogs}
+          orders={orders}
+          businessPlans={businessPlans}
+        />
+      )}
+      {/* 관리자 + viewAsRep: 그 담당자 점수 */}
+      {(isAdmin && viewAsRep) && (
+        <ScoreCardSection
+          rep={viewAsRep}
+          accounts={accounts}
+          activityLogs={activityLogs}
+          orders={orders}
+          businessPlans={businessPlans}
+        />
+      )}
+      {/* 관리자 (전체 시점): 전 담당자 점수 표 */}
+      {(isAdmin && !viewAsRep && teamMembers && teamMembers.length > 0) && (
+        <TeamScoreboard
+          teamMembers={teamMembers}
+          accounts={accounts}
+          activityLogs={activityLogs}
+          orders={orders}
+          businessPlans={businessPlans}
+        />
       )}
 
       {/* KPI Grid */}

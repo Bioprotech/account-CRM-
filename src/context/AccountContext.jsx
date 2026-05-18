@@ -9,30 +9,42 @@ export const useAccount = () => useContext(Ctx);
 
 export default function AccountProvider({ children }) {
   /* ── Auth ── */
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUserRaw] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  // v3.17 Phase D: 관리자가 특정 담당자 시점으로 화면을 볼 때 사용
+  //   viewAsRep이 설정되어 있으면 currentUser는 그 담당자처럼 동작 (필터링·KPI 등)
+  //   isAdmin는 그대로 true 유지 (편집 권한 보존)
+  const [viewAsRep, setViewAsRep] = useState(null);
 
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(AUTH_KEY));
       if (saved?.user) {
-        setCurrentUser(saved.user);
+        setCurrentUserRaw(saved.user);
         setIsAdmin(!!saved.isAdmin);
       }
     } catch {}
   }, []);
 
   const login = useCallback((name, admin = false) => {
-    setCurrentUser(name);
+    setCurrentUserRaw(name);
     setIsAdmin(admin);
     localStorage.setItem(AUTH_KEY, JSON.stringify({ user: name, isAdmin: admin }));
   }, []);
 
   const logout = useCallback(() => {
-    setCurrentUser(null);
+    setCurrentUserRaw(null);
     setIsAdmin(false);
+    setViewAsRep(null);
     localStorage.removeItem(AUTH_KEY);
   }, []);
+
+  // v3.17 Phase D: effective currentUser
+  //   관리자가 viewAsRep을 '전체'로 두면 isAdmin 그대로 (모두 보기)
+  //   특정 담당자 선택 시 그 담당자처럼 필터링
+  const effectiveCurrentUser = viewAsRep || currentUser;
+  // 화면 필터링 용도 — isAdmin이 true여도 viewAsRep 설정되어 있으면 그 담당자만 보기
+  const effectiveIsAdmin = isAdmin && !viewAsRep;
 
   /* ── Team Members (Firestore 동기화) ── */
   const [teamMembers, setTeamMembersState] = useState(() => {
@@ -581,9 +593,12 @@ export default function AccountProvider({ children }) {
   );
 
   const visibleAccounts = useMemo(() => {
-    if (isAdmin || !currentUser) return filteredAccounts;
-    return filteredAccounts.filter(a => !a.sales_rep || a.sales_rep === currentUser);
-  }, [filteredAccounts, currentUser, isAdmin]);
+    // v3.17 Phase D: 관리자 시점 변경 — viewAsRep이 있으면 그 담당자처럼 필터링
+    const effectiveAdmin = isAdmin && !viewAsRep;
+    const effectiveUser = viewAsRep || currentUser;
+    if (effectiveAdmin || !effectiveUser) return filteredAccounts;
+    return filteredAccounts.filter(a => !a.sales_rep || a.sales_rep === effectiveUser);
+  }, [filteredAccounts, currentUser, isAdmin, viewAsRep]);
 
   /* ── Tab & Modal ── */
   const [currentTab, setCurrentTab] = useState('dashboard');
@@ -890,6 +905,9 @@ export default function AccountProvider({ children }) {
 
   const value = {
     currentUser, isAdmin, login, logout,
+    // v3.17 Phase D: 관리자 시점 변경
+    viewAsRep, setViewAsRep,
+    effectiveCurrentUser, effectiveIsAdmin,
     accounts, filteredAccounts, visibleAccounts,
     activityLogs, openIssues,
     orders, sales, contracts, forecasts, businessPlans, teamTasks, pipelineCustomers, alarms,
