@@ -3306,6 +3306,33 @@ export default function Report() {
     }
   };
 
+  // v3.16: 월간 PPT 다운로드 (월간 리포트 탭에서만)
+  const [pptGenerating, setPptGenerating] = useState(false);
+  const handlePptDownload = async () => {
+    if (tab !== 'monthly') {
+      alert('PPT 다운로드는 월간 리포트에서만 가능합니다.');
+      return;
+    }
+    setPptGenerating(true);
+    try {
+      const { generateMonthlyPpt } = await import('../lib/pptExport');
+      const fileName = await generateMonthlyPpt({
+        monthlyReportData,
+        execSummary,
+        nextMonthPlan,
+        accounts,
+        activityLogs,
+        teamMembers,
+      });
+      console.log('PPT 생성 완료:', fileName);
+    } catch (err) {
+      console.error('PPT 다운로드 실패:', err);
+      alert('PPT 다운로드 실패: ' + (err.message || err));
+    } finally {
+      setPptGenerating(false);
+    }
+  };
+
   /* ══════════════════════════════
      RENDER
      ══════════════════════════════ */
@@ -3320,6 +3347,17 @@ export default function Report() {
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="btn btn-ghost" onClick={() => window.print()} style={{ fontSize: 11 }}>인쇄</button>
           <button className="btn btn-success" onClick={handleExcelDownload}>Excel 다운로드</button>
+          {tab === 'monthly' && (
+            <button
+              className="btn btn-primary"
+              onClick={handlePptDownload}
+              disabled={pptGenerating}
+              style={{ background: '#c43e1c', color: '#fff', borderColor: '#c43e1c' }}
+              title="월간 보고서를 PowerPoint 파일로 다운로드 (12 슬라이드)"
+            >
+              {pptGenerating ? 'PPT 생성 중...' : '📊 PPT 다운로드'}
+            </button>
+          )}
         </div>
       </div>
 
