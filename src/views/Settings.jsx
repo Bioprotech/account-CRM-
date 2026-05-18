@@ -1516,6 +1516,7 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
           monthlySource[m][bucket].amt += amt;
         }
         // v3.17.7: "기타"의 실제 source 값 추적
+        // v3.17.8: 전체 리스트 보존 + created_by/created_at 노출 (manual 판단 정확도 향상)
         if (bucket === 'other') {
           const srcKey = src || '(empty)';
           if (!otherSourceDetail[srcKey]) {
@@ -1523,14 +1524,21 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
           }
           otherSourceDetail[srcKey].n++;
           otherSourceDetail[srcKey].amt += amt;
-          if (otherSourceDetail[srcKey].samples.length < 5) {
+          // 전체 리스트 보존 (50건 초과 시만 sampling)
+          if (otherSourceDetail[srcKey].samples.length < 50) {
             otherSourceDetail[srcKey].samples.push({
               id: o.id,
               month: m,
               date: o.order_date,
               customer: o.customer_name || '',
+              account_id: o.account_id || '',
               product: o.product_name || '',
+              product_code: o.product_code || '',
               amount: amt,
+              created_by: o.created_by || '',
+              updated_by: o.updated_by || '',
+              created_at: o.created_at || '',
+              updated_at: o.updated_at || '',
             });
           }
         }
@@ -1861,40 +1869,59 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                 </div>
                 {Object.entries(analysis.otherSourceDetail)
                   .sort((a, b) => b[1].amt - a[1].amt)
-                  .map(([src, info]) => (
+                  .map(([src, info]) => {
+                    const isManual = src === 'manual' || src === '(empty)';
+                    return (
                     <div key={src} style={{ marginBottom: 8, padding: 8, background: 'var(--card)', borderRadius: 4 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
-                        <span style={{ fontFamily: 'monospace', background: 'rgba(245,158,11,0.15)', padding: '1px 6px', borderRadius: 3 }}>
+                        <span style={{ fontFamily: 'monospace', background: isManual ? 'rgba(37,99,235,0.15)' : 'rgba(245,158,11,0.15)', padding: '1px 6px', borderRadius: 3 }}>
                           source = "{src}"
                         </span>
                         <span style={{ marginLeft: 8 }}>
                           {info.n.toLocaleString()}건 · <strong style={{ color: 'var(--red)' }}>{fmt(info.amt)}</strong>
                         </span>
+                        {isManual && (
+                          <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--blue, #2563eb)' }}>
+                            ✋ 수동 입력 — 실제 수주일 수 있음, 삭제 신중
+                          </span>
+                        )}
                       </div>
                       <table style={{ fontSize: 10, width: '100%' }}>
                         <thead>
                           <tr style={{ background: 'var(--bg2)' }}>
-                            <th style={{ textAlign: 'left', padding: 3 }}>월/일자</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>일자</th>
                             <th style={{ textAlign: 'left', padding: 3 }}>거래처</th>
                             <th style={{ textAlign: 'left', padding: 3 }}>제품</th>
                             <th style={{ textAlign: 'right', padding: 3 }}>금액</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>입력자</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>입력일</th>
                             <th style={{ textAlign: 'left', padding: 3 }}>doc id</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {info.samples.map((s, i) => (
-                            <tr key={i}>
+                          {info.samples
+                            .sort((a, b) => (b.amount || 0) - (a.amount || 0))
+                            .map((s, i) => (
+                            <tr key={i} style={s.amount > 10000000 ? { background: 'rgba(220,38,38,0.04)' } : null}>
                               <td style={{ padding: 3 }}>{s.date}</td>
-                              <td style={{ padding: 3 }}>{s.customer}</td>
-                              <td style={{ padding: 3 }}>{s.product}</td>
-                              <td style={{ padding: 3, textAlign: 'right' }}>{fmt(s.amount)}</td>
+                              <td style={{ padding: 3 }}>{s.customer || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                              <td style={{ padding: 3 }}>{s.product || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                              <td style={{ padding: 3, textAlign: 'right', fontWeight: s.amount > 10000000 ? 700 : 400 }}>{fmt(s.amount)}</td>
+                              <td style={{ padding: 3 }}>{s.created_by || s.updated_by || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                              <td style={{ padding: 3, fontSize: 9 }}>{(s.created_at || s.updated_at || '').slice(0, 16)}</td>
                               <td style={{ padding: 3, fontFamily: 'monospace', fontSize: 9 }}>{s.id}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+                      {info.n > 50 && (
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                          ⚠ 총 {info.n}건 중 50건만 표시
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  );
+                  })}
                 <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text2)' }}>
                   💡 위 source가 잘못된 데이터라면 → 아래 <strong>🗑 "기타" source 일괄 삭제</strong> 버튼 사용
                 </div>
@@ -1903,10 +1930,29 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                   style={{ marginTop: 8, background: 'var(--red)', color: '#fff', fontSize: 12 }}
                   onClick={async () => {
                     const srcKeys = Object.keys(analysis.otherSourceDetail);
+                    const hasManual = srcKeys.includes('manual') || srcKeys.includes('(empty)');
                     const totalN = analysis.sourceCounts.other;
                     const totalAmt = analysis.sourceAmounts.other;
                     const srcList = srcKeys.map(k => `  • "${k}" (${analysis.otherSourceDetail[k].n}건, ${fmt(analysis.otherSourceDetail[k].amt)})`).join('\n');
-                    if (!confirm(`다음 source의 데이터를 일괄 삭제하시겠습니까?\n\n${srcList}\n\n총 ${totalN}건 / ${fmt(totalAmt)}\n\n⚠ 되돌릴 수 없습니다.`)) return;
+
+                    if (hasManual) {
+                      const ack = prompt(
+                        `⛔ 경고: "manual" source가 포함되어 있습니다!\n\n` +
+                        `"manual" = 사용자가 UI에서 직접 입력한 수주 데이터입니다.\n` +
+                        `ProMES에 안 잡힌 실제 수주를 수동 입력한 것일 수 있어,\n` +
+                        `삭제 시 실제 수주가 사라질 수 있습니다.\n\n` +
+                        `삭제 대상:\n${srcList}\n총 ${totalN}건 / ${fmt(totalAmt)}\n\n` +
+                        `정말 삭제하려면 아래에 정확히 입력하세요:\n` +
+                        `   삭제확정\n\n` +
+                        `(취소하려면 빈 칸 또는 다른 글자)`
+                      );
+                      if (ack !== '삭제확정') {
+                        alert('취소되었습니다.');
+                        return;
+                      }
+                    } else {
+                      if (!confirm(`다음 source의 데이터를 일괄 삭제하시겠습니까?\n\n${srcList}\n\n총 ${totalN}건 / ${fmt(totalAmt)}\n\n⚠ 되돌릴 수 없습니다.`)) return;
+                    }
                     try {
                       const yearStr = analysis.year;
                       const monthSet = new Set(analysis.months);
