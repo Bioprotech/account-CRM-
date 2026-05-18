@@ -902,6 +902,27 @@ export default function Report() {
       repActivity,
       overdueIssues,
       breakdown,
+      // v3.17.1: 담당자별 break down (헤드 KPI에 표시용)
+      activitiesByRep: (() => {
+        const byRep = {};
+        weekLogs.forEach(l => {
+          const rep = l.sales_rep || '미배정';
+          byRep[rep] = (byRep[rep] || 0) + 1;
+        });
+        return Object.entries(byRep)
+          .sort((a, b) => b[1] - a[1])
+          .map(([rep, count]) => ({ rep, count }));
+      })(),
+      openIssuesByRep: (() => {
+        const byRep = {};
+        openIssues.forEach(l => {
+          const rep = l.sales_rep || '미배정';
+          byRep[rep] = (byRep[rep] || 0) + 1;
+        });
+        return Object.entries(byRep)
+          .sort((a, b) => b[1] - a[1])
+          .map(([rep, count]) => ({ rep, count }));
+      })(),
     };
   }, [activityLogs, orders, accounts, openIssues, yearOrders, customerPlans, productPlans, planLookup, teamMembers, weekOffset]);
 
@@ -3889,14 +3910,44 @@ export default function Report() {
 
           {/* ── KPI 카드 (월간 MTD + YTD 진도) — v3.15.1: 주간 수주 제거 (ProMES는 월 단위 집계) ── */}
           <div className="kpi-grid" style={{ gridTemplateColumns: hasPlan ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)', marginBottom: 16 }}>
+            {/* v3.17.1: 금주 활동 — 담당자별 break down 헤드 표시 */}
             <div className="kpi">
               <div className="kpi-label">금주 활동</div>
               <div className="kpi-value">{weeklyData.weekActivityCount}</div>
-              <div style={{ fontSize: 10, color: 'var(--text3)' }}>컨택건수</div>
+              {(weeklyData.activitiesByRep || []).length > 0 ? (
+                <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {weeklyData.activitiesByRep.map(({ rep, count }) => (
+                    <span key={rep} style={{
+                      fontSize: 9, padding: '1px 6px', borderRadius: 10,
+                      background: 'rgba(46,125,50,0.08)', color: 'var(--text2)',
+                      fontWeight: 600,
+                    }}>
+                      {rep} <strong style={{ color: 'var(--accent)' }}>{count}</strong>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 10, color: 'var(--text3)' }}>컨택건수</div>
+              )}
             </div>
+            {/* v3.17.1: Open 이슈 — 담당자별 break down */}
             <div className={`kpi ${weeklyData.openIssueCount > 0 ? 'red' : 'green'}`}>
               <div className="kpi-label">Open 이슈</div>
               <div className="kpi-value">{weeklyData.openIssueCount}</div>
+              {(weeklyData.openIssuesByRep || []).length > 0 && (
+                <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {weeklyData.openIssuesByRep.map(({ rep, count }) => (
+                    <span key={rep} style={{
+                      fontSize: 9, padding: '1px 6px', borderRadius: 10,
+                      background: count >= 5 ? 'rgba(220,38,38,0.1)' : count >= 3 ? 'rgba(217,119,6,0.1)' : 'rgba(0,0,0,0.05)',
+                      color: count >= 5 ? 'var(--red)' : count >= 3 ? '#d97706' : 'var(--text2)',
+                      fontWeight: 600,
+                    }}>
+                      {rep} <strong>{count}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             {hasPlan && (
               <div className={`kpi ${pctColor(sectionAData.mtdPct)}`}>
