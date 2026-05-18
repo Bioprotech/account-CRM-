@@ -4,8 +4,9 @@ import { PRODUCTS } from '../../lib/constants';
 import { today, genId, fmtDate } from '../../lib/utils';
 
 export default function OrderHistory({ accountId }) {
-  const { getOrdersForAccount, saveOrder, removeOrder, currentUser } = useAccount();
+  const { getOrdersForAccount, saveOrder, removeOrder, currentUser, accounts } = useAccount();
   const allOrders = getOrdersForAccount(accountId);
+  const account = useMemo(() => (accounts || []).find(a => a.id === accountId), [accounts, accountId]);
 
   const [showForm, setShowForm] = useState(false);
   const [newOrder, setNewOrder] = useState({
@@ -17,15 +18,20 @@ export default function OrderHistory({ accountId }) {
 
   const handleAdd = () => {
     if (!newOrder.product_category || !newOrder.order_amount) return;
+    // v3.17.9: customer_name + product_name + created_by 필수 저장 (진단 가능성 + 정합성)
     saveOrder({
       id: genId('ord'),
       account_id: accountId,
+      customer_name: account?.company_name || '',
       order_date: newOrder.order_date,
       product_category: newOrder.product_category,
+      product_name: newOrder.product_category, // category를 이름으로도 사용 (UI에서 둘 분리 안 함)
       order_amount: parseFloat(newOrder.order_amount) || 0,
       currency: newOrder.currency,
-      sales_rep: currentUser,
+      sales_rep: account?.sales_rep || currentUser, // 그 고객의 담당자 우선 (v3.17.3 패턴)
       source: 'manual',
+      created_by: currentUser,
+      created_at: new Date().toISOString(),
       import_date: today(),
     });
     setNewOrder({ product_category: '', order_amount: '', currency: 'KRW', order_date: today() });

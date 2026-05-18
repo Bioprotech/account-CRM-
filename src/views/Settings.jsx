@@ -1517,6 +1517,7 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
         }
         // v3.17.7: "기타"의 실제 source 값 추적
         // v3.17.8: 전체 리스트 보존 + created_by/created_at 노출 (manual 판단 정확도 향상)
+        // v3.17.9: account_id → accounts lookup으로 거래처명 복원 (OrderHistory.jsx 버그 우회)
         if (bucket === 'other') {
           const srcKey = src || '(empty)';
           if (!otherSourceDetail[srcKey]) {
@@ -1526,19 +1527,28 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
           otherSourceDetail[srcKey].amt += amt;
           // 전체 리스트 보존 (50건 초과 시만 sampling)
           if (otherSourceDetail[srcKey].samples.length < 50) {
+            // account_id로 거래처명 복원
+            const acc = accounts.find(a => a.id === o.account_id);
+            const customerResolved = o.customer_name || (acc ? acc.company_name : '');
+            const productResolved = o.product_name || o.product_category || o.product_code || '';
             otherSourceDetail[srcKey].samples.push({
               id: o.id,
               month: m,
               date: o.order_date,
-              customer: o.customer_name || '',
+              customer: customerResolved,
               account_id: o.account_id || '',
-              product: o.product_name || '',
+              account_rep: acc ? (acc.sales_rep || '') : '',
+              product: productResolved,
+              product_category: o.product_category || '',
               product_code: o.product_code || '',
               amount: amt,
+              currency: o.currency || '',
+              sales_rep: o.sales_rep || '',
               created_by: o.created_by || '',
               updated_by: o.updated_by || '',
               created_at: o.created_at || '',
               updated_at: o.updated_at || '',
+              order_number: o.order_number || '',
             });
           }
         }
@@ -1890,9 +1900,12 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                         <thead>
                           <tr style={{ background: 'var(--bg2)' }}>
                             <th style={{ textAlign: 'left', padding: 3 }}>일자</th>
-                            <th style={{ textAlign: 'left', padding: 3 }}>거래처</th>
-                            <th style={{ textAlign: 'left', padding: 3 }}>제품</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>거래처 (lookup)</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>담당자</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>제품/카테고리</th>
                             <th style={{ textAlign: 'right', padding: 3 }}>금액</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>통화</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>주문번호</th>
                             <th style={{ textAlign: 'left', padding: 3 }}>입력자</th>
                             <th style={{ textAlign: 'left', padding: 3 }}>입력일</th>
                             <th style={{ textAlign: 'left', padding: 3 }}>doc id</th>
@@ -1904,11 +1917,14 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                             .map((s, i) => (
                             <tr key={i} style={s.amount > 10000000 ? { background: 'rgba(220,38,38,0.04)' } : null}>
                               <td style={{ padding: 3 }}>{s.date}</td>
-                              <td style={{ padding: 3 }}>{s.customer || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                              <td style={{ padding: 3 }}>{s.customer || <span style={{ color: 'var(--text3)' }}>(account: {s.account_id || '—'})</span>}</td>
+                              <td style={{ padding: 3 }}>{s.sales_rep || s.account_rep || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
                               <td style={{ padding: 3 }}>{s.product || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
                               <td style={{ padding: 3, textAlign: 'right', fontWeight: s.amount > 10000000 ? 700 : 400 }}>{fmt(s.amount)}</td>
-                              <td style={{ padding: 3 }}>{s.created_by || s.updated_by || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
-                              <td style={{ padding: 3, fontSize: 9 }}>{(s.created_at || s.updated_at || '').slice(0, 16)}</td>
+                              <td style={{ padding: 3 }}>{s.currency || '—'}</td>
+                              <td style={{ padding: 3, fontSize: 9 }}>{s.order_number || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                              <td style={{ padding: 3 }}>{s.created_by || s.updated_by || <span style={{ color: 'var(--text3)' }}>(미저장)</span>}</td>
+                              <td style={{ padding: 3, fontSize: 9 }}>{(s.created_at || s.updated_at || '').slice(0, 16) || '—'}</td>
                               <td style={{ padding: 3, fontFamily: 'monospace', fontSize: 9 }}>{s.id}</td>
                             </tr>
                           ))}
