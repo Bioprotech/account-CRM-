@@ -1481,6 +1481,21 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
       const months = []; for (let m = 1; m <= quarterEnd; m++) months.push(String(m).padStart(2, '0'));
       const monthSet = new Set(months);
 
+      // ── v3.17.5: source별 데이터 분포 진단 (이중 집계 점검) ──
+      const sourceCounts = { promes: 0, legacy: 0, manual: 0, other: 0 };
+      const sourceAmounts = { promes: 0, legacy: 0, manual: 0, other: 0 };
+      orders.forEach(o => {
+        if (!o.order_date || !o.order_date.startsWith(yearStr + '-')) return;
+        const m = o.order_date.slice(5, 7);
+        if (!monthSet.has(m)) return;
+        const src = o.source || '';
+        const amt = o.order_amount || 0;
+        if (src === 'excel_import_promes_O') { sourceCounts.promes++; sourceAmounts.promes += amt; }
+        else if (src === 'excel_import_영업현황') { sourceCounts.legacy++; sourceAmounts.legacy += amt; }
+        else if (!src) { sourceCounts.manual++; sourceAmounts.manual += amt; }
+        else { sourceCounts.other++; sourceAmounts.other += amt; }
+      });
+
       // ── 1. 사업계획 customer plans (YTD target 합계) ──
       const customerPlans = businessPlans.filter(p => (p.type === 'customer' || !p.type) && p.year === Number(yearStr));
       const planByName = {}; // customer_name 기준 그룹
@@ -1607,6 +1622,9 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
       setAnalysis({
         year: yearStr,
         quarterEnd,
+        // v3.17.5: source 분포 (이중 집계 점검)
+        sourceCounts,
+        sourceAmounts,
         // 사업계획 측면
         planList: planWithActual,
         planTotalTarget,
@@ -1620,7 +1638,7 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
         planBucketCount: planBuckets.length,
         planMatchedCount: planMatched.length,
         planUnmatchedCount: planUnmatched.length,
-        // 영업현황 측면
+        // 실적 측면 (ProMES + 영업현황 잔여 합산)
         ytdOrderTotal,
         // 분류
         shortFallList,
@@ -1644,12 +1662,12 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
   return (
     <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #dc2626' }}>
       <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span>🔬 사업계획 ↔ 영업현황 정합성 진단</span>
-        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[수주 통계 모순 분해 분석]</span>
+        <span>🔬 사업계획 ↔ 실적 정합성 진단</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[ProMES + 잔여 영업현황 통합 분석]</span>
       </div>
       <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
-        "수주 YTD <strong>104% 달성</strong> vs Gap <strong>-9.1억</strong>" 같은 표면적 모순의 정확한 분해를 보여줍니다.
-        사업계획 target / actual 매칭 / 신규-기타 버킷의 실제 분포 확인.
+        사업계획 target vs 실적(orders) 매칭 / 신규-기타 버킷의 실제 분포 / source별 분포 확인.<br />
+        <span style={{ color: 'var(--red)', fontWeight: 600 }}>※ ProMES + 영업현황 잔여 모든 source 합산 — 이중 집계 발생 시 source 분포 카드에서 확인.</span>
       </p>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
@@ -1677,8 +1695,52 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
       {analysis && (() => {
         const fmt = fmtKRW;
         const overallPct = analysis.planTotalTarget > 0 ? Math.round((analysis.ytdOrderTotal / analysis.planTotalTarget) * 100) : 0;
+        const hasDoubleCount = analysis.sourceCounts && analysis.sourceCounts.promes > 0 && analysis.sourceCounts.legacy > 0;
         return (
           <div>
+            {/* v3.17.5: 이중 집계 경고 */}
+            {hasDoubleCount && (
+              <div style={{ marginBottom: 12, padding: '10px 14px', background: 'rgba(220,38,38,0.08)', border: '2px solid var(--red)', borderRadius: 6 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)', marginBottom: 4 }}>
+                  🚨 이중 집계 감지 — 실적 수치가 부풀려져 있습니다!
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text)' }}>
+                  ProMES 데이터 <strong>{analysis.sourceCounts.promes.toLocaleString()}건 ({fmt(analysis.sourceAmounts.promes)})</strong> +
+                  영업현황 잔여 <strong>{analysis.sourceCounts.legacy.toLocaleString()}건 ({fmt(analysis.sourceAmounts.legacy)})</strong>
+                  → 동일 거래 중복 가능성<br />
+                  <strong style={{ color: 'var(--red)' }}>
+                    🔧 즉시 조치: 위쪽 "🗑 영업현황 데이터 일괄 삭제" 카드에서 영업현황 잔여 데이터 제거 권장
+                  </strong>
+                </div>
+              </div>
+            )}
+            {/* source 분포 (정상도) */}
+            {analysis.sourceCounts && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg2)', borderRadius: 6, fontSize: 11 }}>
+                <strong style={{ color: 'var(--text)' }}>📊 source 분포 ({analysis.year}년 1~{analysis.quarterEnd}월):</strong>
+                {analysis.sourceCounts.promes > 0 && (
+                  <span style={{ marginLeft: 8 }}>
+                    🆕 ProMES <strong>{analysis.sourceCounts.promes.toLocaleString()}건</strong> ({fmt(analysis.sourceAmounts.promes)})
+                  </span>
+                )}
+                {analysis.sourceCounts.legacy > 0 && (
+                  <span style={{ marginLeft: 8, color: 'var(--red)' }}>
+                    🗑 영업현황(잔여) <strong>{analysis.sourceCounts.legacy.toLocaleString()}건</strong> ({fmt(analysis.sourceAmounts.legacy)})
+                  </span>
+                )}
+                {analysis.sourceCounts.manual > 0 && (
+                  <span style={{ marginLeft: 8 }}>
+                    ✋ 수동 <strong>{analysis.sourceCounts.manual.toLocaleString()}건</strong> ({fmt(analysis.sourceAmounts.manual)})
+                  </span>
+                )}
+                {analysis.sourceCounts.other > 0 && (
+                  <span style={{ marginLeft: 8 }}>
+                    기타 <strong>{analysis.sourceCounts.other.toLocaleString()}건</strong> ({fmt(analysis.sourceAmounts.other)})
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* 핵심 KPI */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginBottom: 12 }}>
               <div className="kpi" style={{ padding: 10 }}>
@@ -1686,8 +1748,13 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                 <div className="kpi-value" style={{ fontSize: 18 }}>{fmt(analysis.planTotalTarget)}</div>
               </div>
               <div className="kpi accent" style={{ padding: 10 }}>
-                <div className="kpi-label">영업현황 YTD 총 실적</div>
+                <div className="kpi-label">YTD 총 실적 (모든 source 합산)</div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>{fmt(analysis.ytdOrderTotal)}</div>
+                {analysis.sourceCounts && (analysis.sourceCounts.promes > 0 || analysis.sourceCounts.legacy > 0) && (
+                  <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 2 }}>
+                    ProMES {analysis.sourceCounts.promes}건 · 영업현황(잔여) {analysis.sourceCounts.legacy}건
+                  </div>
+                )}
               </div>
               <div className={`kpi ${overallPct >= 100 ? 'green' : overallPct >= 80 ? '' : 'red'}`} style={{ padding: 10 }}>
                 <div className="kpi-label">총 달성률</div>

@@ -3101,9 +3101,42 @@ export default function Report() {
       return { items, totalPipeline, activeCount: items.length };
     })();
 
+    // v3.17.5: 이번 달 = 지난 달에 등록한 TASK 이행 점검
+    //   year_month=this월의 team_tasks가 = 지난 달에 다음달 계획으로 등록한 TASK들
+    //   이번 달 보고서에서 그 TASK들의 이행률 자동 계산
+    const thisMonthTasksFromPrev = (teamTasks || []).filter(t => t.year_month === selMonthStr);
+    const planExecutionByTeam = {};
+    ['해외영업', '영업지원', '국내영업'].forEach(team => {
+      const tasks = thisMonthTasksFromPrev.filter(t => t.team === team);
+      const total = tasks.length;
+      const done = tasks.filter(t => t.status === 'Done').length;
+      const inProgress = tasks.filter(t => t.status === 'In Progress').length;
+      const open = tasks.filter(t => t.status === 'Open').length;
+      planExecutionByTeam[team] = {
+        team,
+        tasks,
+        total,
+        done,
+        inProgress,
+        open,
+        rate: total > 0 ? Math.round((done / total) * 100) : null,
+      };
+    });
+    const totalPlanned = thisMonthTasksFromPrev.length;
+    const totalDone = thisMonthTasksFromPrev.filter(t => t.status === 'Done').length;
+    const overallExecutionRate = totalPlanned > 0 ? Math.round((totalDone / totalPlanned) * 100) : null;
+
     return {
       selYear, selMonth, selMonthStr, selMonthKey,
       monthLabel: `${selYear}년 ${selMonth}월`,
+      // v3.17.5: 다음달 계획 이행 추적
+      planExecution: {
+        byTeam: planExecutionByTeam,
+        totalPlanned,
+        totalDone,
+        overallExecutionRate,
+        tasks: thisMonthTasksFromPrev,
+      },
       monthlyTrend, trendTotal,
       salesMonthlyTrend, salesTrendTotal, hasSalesData, salesTargetSource: salesTargetSourceM,
       teamRows, teamTotal,
@@ -3133,7 +3166,7 @@ export default function Report() {
       pipelineHighlights,
       monthOrders, monthSales, // for Excel raw
     };
-  }, [monthOffset, orders, sales, customerPlans, businessPlans, activityLogs, accounts, contracts, forecasts, alarms, planLookup, teamMembers, priorYearSet, pipelineCustomers]);
+  }, [monthOffset, orders, sales, customerPlans, businessPlans, activityLogs, accounts, contracts, forecasts, alarms, planLookup, teamMembers, priorYearSet, pipelineCustomers, teamTasks]);
 
   /* ══════════════════════════════════════════════════════
      v3.4: Executive Summary / 다음 달 계획 — Firestore 이전
@@ -3974,6 +4007,35 @@ export default function Report() {
     }
   };
 
+  // v3.17.5: Open 이슈를 다음달 계획 (team_task)으로 등록하는 헬퍼
+  const registerAsNextMonthTask = (team, content, accountId, dueDate) => {
+    if (!saveTeamTask) {
+      showToast?.('TASK 저장 기능 사용 불가', 'error');
+      return;
+    }
+    const now = new Date();
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const nextYM = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
+    const nowIso = new Date().toISOString();
+    const task = {
+      id: `task_${nextYM}_${team}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      year_month: nextYM,
+      team,
+      task_type: 'open_issue_followup',
+      content: content || '(내용 미입력)',
+      assignee: '',
+      due_date: dueDate || '',
+      priority: 'P2',
+      status: 'Open',
+      source_account_id: accountId || '',
+      source: 'open_issue_register',
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    saveTeamTask(task);
+    showToast?.(`📌 ${nextYM} 계획에 등록됨: ${(content || '').slice(0, 30)}`, 'success');
+  };
+
   // v3.17.2: PPT 다운로드 기능 제거 (사용자 요청 — 추후 보완 예정)
   //   pptxgenjs 의존성 + src/lib/pptExport.js 모듈은 보존 (재활성화 가능)
 
@@ -4542,9 +4604,22 @@ export default function Report() {
                             {isOpen && (
                               <div style={{ padding: '4px 14px 8px', fontSize: 10, color: 'var(--text2)' }}>
                                 {cu.issues.map(iss => (
-                                  <div key={iss.id} style={{ padding: '2px 0' }}>
-                                    • [{iss.issueType}] {iss.content.length > 80 ? iss.content.slice(0, 80) + '…' : iss.content}
-                                    <span style={{ marginLeft: 4, color: 'var(--text3)' }}>({iss.status}, {iss.daysOpen}일, {iss.rep})</span>
+                                  <div key={iss.id} style={{ padding: '2px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ flex: 1 }}>
+                                      • [{iss.issueType}] {iss.content.length > 80 ? iss.content.slice(0, 80) + '…' : iss.content}
+                                      <span style={{ marginLeft: 4, color: 'var(--text3)' }}>({iss.status}, {iss.daysOpen}일, {iss.rep})</span>
+                                    </span>
+                                    {/* v3.17.5: 다음달 계획 등록 버튼 */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        registerAsNextMonthTask(teamKey, `[${cu.company}] ${iss.content}`, cu.accountId, '');
+                                      }}
+                                      style={{ fontSize: 9, padding: '2px 6px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                      title="다음달 계획 (team_task)에 자동 등록"
+                                    >
+                                      📌 다음달 계획
+                                    </button>
                                   </div>
                                 ))}
                               </div>
@@ -5726,13 +5801,67 @@ export default function Report() {
             color="#7c3aed"
           />
 
+          {/* v3.17.5: 이번 달 = 지난 달 입력 계획 이행 점검 */}
+          {monthlyReportData.planExecution && monthlyReportData.planExecution.totalPlanned > 0 && (
+            <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #2563eb' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                <span>■ 4-4. 이번 달 계획 이행 점검</span>
+                <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                  — 지난 달 보고서에서 입력한 "다음 달 계획 TASK" {monthlyReportData.planExecution.totalPlanned}건 중 {monthlyReportData.planExecution.totalDone}건 완료 ({monthlyReportData.planExecution.overallExecutionRate}%)
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+                {Object.values(monthlyReportData.planExecution.byTeam).map(p => {
+                  if (p.total === 0) return null;
+                  const rateColor = p.rate >= 80 ? 'var(--green, #16a34a)' : p.rate >= 50 ? '#d97706' : 'var(--red)';
+                  return (
+                    <div key={p.team} style={{ padding: '10px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{p.team}</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: rateColor }}>{p.rate}%</div>
+                      <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                        완료 {p.done} / 진행 {p.inProgress} / 미시작 {p.open} (총 {p.total})
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* 미이행 (Open) TASK 리스트 */}
+              {monthlyReportData.planExecution.tasks.filter(t => t.status !== 'Done').length > 0 && (
+                <details>
+                  <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>
+                    ⚠ 미이행 TASK {monthlyReportData.planExecution.tasks.filter(t => t.status !== 'Done').length}건 보기
+                  </summary>
+                  <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
+                    {monthlyReportData.planExecution.tasks.filter(t => t.status !== 'Done').map(t => {
+                      const statusColor = t.status === 'In Progress' ? '#d97706' : 'var(--red)';
+                      return (
+                        <div key={t.id} style={{ fontSize: 11, padding: '4px 8px', background: 'rgba(220,38,38,0.04)', borderLeft: `3px solid ${statusColor}`, borderRadius: 3 }}>
+                          <strong>[{t.team}]</strong>{' '}
+                          <span style={{ fontSize: 10, padding: '1px 5px', background: statusColor, color: '#fff', borderRadius: 3 }}>
+                            {t.status === 'In Progress' ? '진행중' : '미시작'}
+                          </span>
+                          {' '}{t.content}
+                          {t.assignee && <span style={{ fontSize: 10, color: 'var(--text3)' }}> — {t.assignee}</span>}
+                          {t.due_date && <span style={{ fontSize: 10, color: 'var(--text3)' }}> · 기한 {t.due_date}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
+                ※ TASK는 ■ 6. 팀별 월간 TASK 섹션에서 상태 변경 (Open → In Progress → Done)
+              </div>
+            </div>
+          )}
+
           {/* ══ 섹션 E — 다음 달 사업 계획 (반자동) ══ */}
           {/* v3.17 Phase C4: Open 이슈에서 다음달 계획에 등록하는 헬퍼 추가 */}
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
               <span>■ 5. 다음 달 주요 계획</span>
               <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                — 직접 입력 또는 아래 Open 이슈에서 "📌 다음달 계획에 등록" 클릭 시 자동 추가됨
+                — 직접 입력 (참고용 메모) 또는 ■ 6 팀별 월간 TASK에 다음달(year_month) 등록 / 주간 보고 Open 이슈에서 "📌 다음달 계획에 등록" 클릭
               </span>
             </div>
             <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
