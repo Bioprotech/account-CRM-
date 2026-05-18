@@ -1005,7 +1005,8 @@ export async function generateMonthlyPpt(ctx) {
     addHeader(s, '05', 'Pipeline & Deep Analysis', 'Pipeline CRM 신규 딜 + AM 활동 품질', monthLabel);
 
     // 신규 딜 (Pipeline CRM)
-    const highlights = (md.pipelineHighlights || []).slice(0, 8);
+    // v3.17 Phase C2: pipelineHighlights 구조 변경 ({items, totalPipeline, activeCount})
+    const highlights = ((md.pipelineHighlights && md.pipelineHighlights.items) || md.pipelineHighlights || []).slice(0, 8);
     s.addText(`💎 Pipeline CRM 신규 딜 Top ${highlights.length}`, {
       x: 0.4, y: 1.4, w: 6.3, h: 0.4,
       fontFace: FONT, fontSize: 13, color: COLORS.TEXT, bold: true,
