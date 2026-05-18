@@ -99,6 +99,31 @@ function achieveStyle(p) {
   return { color: 'var(--red)', fontWeight: 700 };
 }
 
+/* ──────────────────────────────────────────────────────────
+   v3.17.4 — sales_rep 집계 매핑 헬퍼
+   원칙: 보고서/대시보드 집계는 그 고객 담당자(account.sales_rep) 기준
+         (transaction의 sales_rep은 무시 — 본부장이 입력해도 그 고객 담당자로 카운팅)
+   적용 위치: weeklyData break down, scoring.js, 통합 점수표 등
+   사용: const rep = resolveActivityRep(activityOrTransaction, accountsArr);
+   ────────────────────────────────────────────────────────── */
+function resolveActivityRep(item, accounts) {
+  if (!item) return '미배정';
+  // account_id로 account 찾기 → 그 account의 sales_rep 우선 사용
+  if (item.account_id && accounts) {
+    const acc = accounts.find(a => a.id === item.account_id);
+    if (acc && acc.sales_rep) return acc.sales_rep;
+  }
+  // fallback: customer_name으로 매칭 시도
+  if (item.customer_name && accounts) {
+    const acc = accounts.find(a =>
+      (a.company_name || '').toLowerCase().trim() === (item.customer_name || '').toLowerCase().trim()
+    );
+    if (acc && acc.sales_rep) return acc.sales_rep;
+  }
+  // 그래도 없으면 transaction의 sales_rep (최후 fallback)
+  return item.sales_rep || '미배정';
+}
+
 /* ── date range helpers ── */
 /** 주차 범위 계산 (월~일 기준, offset=0 이번주, -1 지난주 등) */
 function getWeekRangeByOffset(offset = 0) {
@@ -867,7 +892,8 @@ export default function Report() {
       };
     });
     weekLogs.forEach(l => {
-      const rep = l.sales_rep;
+      // v3.17.4: account.sales_rep 우선 매핑
+      const rep = resolveActivityRep(l, accounts);
       if (!rep || !repActivity[rep]) return;
       repActivity[rep].contacts++;
       if (l.issue_type === '수주활동') repActivity[rep].orderActivity++;
@@ -904,10 +930,11 @@ export default function Report() {
       overdueIssues,
       breakdown,
       // v3.17.1: 담당자별 break down (헤드 KPI에 표시용)
+      // v3.17.4: account.sales_rep 우선 매핑 (본부장 입력 시에도 그 고객 담당자로 카운팅)
       activitiesByRep: (() => {
         const byRep = {};
         weekLogs.forEach(l => {
-          const rep = l.sales_rep || '미배정';
+          const rep = resolveActivityRep(l, accounts);
           byRep[rep] = (byRep[rep] || 0) + 1;
         });
         return Object.entries(byRep)
@@ -917,7 +944,7 @@ export default function Report() {
       openIssuesByRep: (() => {
         const byRep = {};
         openIssues.forEach(l => {
-          const rep = l.sales_rep || '미배정';
+          const rep = resolveActivityRep(l, accounts);
           byRep[rep] = (byRep[rep] || 0) + 1;
         });
         return Object.entries(byRep)
@@ -1385,7 +1412,7 @@ export default function Report() {
         status: l.status || 'Open',
         priority,
         date: l.date,
-        rep: l.sales_rep || '-',
+        rep: resolveActivityRep(l, accounts),
         crossDeptShare: !!l.cross_dept_share,
         recoveryPlanDate: l.recovery_plan_date || '',
         recoveryPlanAmount: l.recovery_plan_amount || 0,
@@ -1435,7 +1462,7 @@ export default function Report() {
         priority: l.priority ?? 1,
         date: l.date,
         daysOpen,
-        rep: l.sales_rep || '-',
+        rep: resolveActivityRep(l, accounts),
       });
       if (daysOpen > byTeamAndCustomer[key].maxDaysOpen) byTeamAndCustomer[key].maxDaysOpen = daysOpen;
       if (l.issue_type === '품질클레임') byTeamAndCustomer[key].hasQuality = true;
@@ -1481,7 +1508,7 @@ export default function Report() {
         accountId: l.account_id,
         action: l.next_action || `[${l.issue_type}] ${l.content || '-'}`,
         dueDate: l.due_date || '-',
-        rep: l.sales_rep || '-',
+        rep: resolveActivityRep(l, accounts),
         isCarryover: !inNextWeek,
         daysOpen: daysSince(l.date),
         status: l.status,
@@ -1510,7 +1537,7 @@ export default function Report() {
         accountId: l.account_id,
         action: l.next_action || `[${l.issue_type}] ${l.content || '-'}`,
         dueDate: l.due_date,
-        rep: l.sales_rep || '-',
+        rep: resolveActivityRep(l, accounts),
         status: l.status || 'Open',
         resolutionDate: l.resolution_date || l.closed_at || '',
         // 이행 = Closed 또는 처리완료 일자 있음
@@ -1594,7 +1621,7 @@ export default function Report() {
         planDate,
         recoveryAmount: l.recovery_plan_amount || 0,
         recoveryNote: l.recovery_plan_note || '',
-        rep: l.sales_rep || '-',
+        rep: resolveActivityRep(l, accounts),
       };
       if (planDate) {
         blocks[team].risks.managedWithPlan.push(entry);
@@ -1646,7 +1673,7 @@ export default function Report() {
           company: acc?.company_name || '?',
           action: l.next_action,
           dueDate: l.due_date,
-          rep: l.sales_rep || '-',
+          rep: resolveActivityRep(l, accounts),
           isCarryover: false,
           status: l.status || 'Open',
         });
@@ -1671,7 +1698,7 @@ export default function Report() {
           company: acc?.company_name || '?',
           action: l.next_action || `[${l.issue_type}] ${l.content || '-'}`,
           dueDate: l.due_date || '-',
-          rep: l.sales_rep || '-',
+          rep: resolveActivityRep(l, accounts),
           isCarryover: true,
           status: l.status || 'Open',
           daysOpen: daysSince(l.date),
@@ -2338,22 +2365,106 @@ export default function Report() {
           accounts.find(a => (a.company_name || '').toLowerCase().trim() === p.key);
 
         // FCST Catch-up: 고객의 향후 FCST 합계
+        // v3.17.4: 6개 데이터 소스 모두 통합 (Erbe 사례 근본 해소)
+        //   ① forecasts — FCST 탭
+        //   ② account.gap.opportunities — GAP 분석 탭 기회 파이프라인
+        //   ③ account.cross_selling — 크로스셀링 탭
+        //   ④ contracts.delivery_schedule — 가격·계약 탭 분할 발주
+        //   ⑤ activityLogs.recovery_plan — Activity Log 회복 계획
+        //   ⑥ businessPlans monthly targets — 차월 이후
+        // 사용자가 어느 탭에 입력하든 모두 GAP 회복 계산에 반영됨
         const acctForecasts = (forecasts || []).filter(f =>
           (f.account_id === account?.id || (f.customer_name || '').toLowerCase().trim() === p.key)
           && f.year === selYear
         );
         let fcstFutureTotal = 0;
         let fcstLastMonth = null;
+        const futureSources = []; // 추적용: 어디서 얼마 가져왔는지
+
+        // ① FCST 탭
         acctForecasts.forEach(f => {
           if (!f.order_month) return;
           const mNum = f.order_month.length === 7
             ? parseInt(f.order_month.slice(5, 7), 10)
             : parseInt(f.order_month, 10);
           if (mNum > selMonth && mNum <= 12) {
-            fcstFutureTotal += (f.amount || 0);
+            const amt = (f.forecast_amount || f.amount || 0);
+            fcstFutureTotal += amt;
             if (!fcstLastMonth || mNum > fcstLastMonth) fcstLastMonth = mNum;
+            if (amt > 0) futureSources.push({ source: 'FCST', month: mNum, amount: amt });
           }
         });
+
+        // ② GAP 기회 파이프라인 (account.gap.opportunities)
+        const gapOpps = account?.gap?.opportunities || [];
+        gapOpps.forEach(o => {
+          if (!o.expected_date) return;
+          const expY = parseInt(o.expected_date.slice(0, 4), 10);
+          const expM = parseInt(o.expected_date.slice(5, 7), 10);
+          if (expY !== selYear || expM <= selMonth) return;
+          const amt = parseFloat(o.amount) || 0;
+          const prob = parseFloat(o.probability) || 50;
+          const weighted = amt * (prob / 100);
+          fcstFutureTotal += weighted;
+          if (!fcstLastMonth || expM > fcstLastMonth) fcstLastMonth = expM;
+          if (weighted > 0) futureSources.push({ source: 'GAP 기회', month: expM, amount: weighted, probability: prob });
+        });
+
+        // ③ 크로스셀링 탭 (account.cross_selling)
+        const csList = account?.cross_selling || [];
+        csList.forEach(cs => {
+          if (cs.status === '수주완료' || cs.status === 'closed' || cs.status === '중단' || cs.status === 'lost') return;
+          const expDate = cs.expected_date || cs.target_date || '';
+          if (!expDate) return;
+          const expY = parseInt(expDate.slice(0, 4), 10);
+          const expM = parseInt(expDate.slice(5, 7), 10);
+          if (expY !== selYear || expM <= selMonth) return;
+          const amt = parseFloat(cs.expected_amount || cs.amount) || 0;
+          const prob = parseFloat(cs.probability) || 50;
+          const weighted = amt * (prob / 100);
+          fcstFutureTotal += weighted;
+          if (!fcstLastMonth || expM > fcstLastMonth) fcstLastMonth = expM;
+          if (weighted > 0) futureSources.push({ source: '크로스셀링', month: expM, amount: weighted, probability: prob });
+        });
+
+        // ④ 계약 분할 발주 (contracts.delivery_schedule)
+        const acctContracts = (contracts || []).filter(c => c.account_id === account?.id);
+        acctContracts.forEach(c => {
+          (c.delivery_schedule || []).forEach(d => {
+            if (!d.date) return;
+            const dY = parseInt(d.date.slice(0, 4), 10);
+            const dM = parseInt(d.date.slice(5, 7), 10);
+            if (dY !== selYear || dM <= selMonth) return;
+            const amt = (c.unit_price || 0) * (parseInt(d.qty) || 0);
+            if (amt <= 0) return;
+            // 계약 분할 신뢰도 90%
+            const weighted = amt * 0.9;
+            fcstFutureTotal += weighted;
+            if (!fcstLastMonth || dM > fcstLastMonth) fcstLastMonth = dM;
+            futureSources.push({ source: '계약 분할', month: dM, amount: weighted });
+          });
+        });
+
+        // ⑤ Activity Log recovery_plan
+        const recoveryLogs = (activityLogs || []).filter(l =>
+          l.account_id === account?.id &&
+          l.recovery_plan_date &&
+          l.status !== 'Closed'
+        );
+        recoveryLogs.forEach(l => {
+          const rY = parseInt(l.recovery_plan_date.slice(0, 4), 10);
+          const rM = parseInt(l.recovery_plan_date.slice(5, 7), 10);
+          if (rY !== selYear || rM <= selMonth) return;
+          const amt = parseFloat(l.recovery_plan_amount) || 0;
+          if (amt <= 0) return;
+          // 회복 계획 신뢰도 70%
+          const weighted = amt * 0.7;
+          fcstFutureTotal += weighted;
+          if (!fcstLastMonth || rM > fcstLastMonth) fcstLastMonth = rM;
+          futureSources.push({ source: 'GAP 회복', month: rM, amount: weighted });
+        });
+        // (⑥ businessPlans monthly targets는 catch-up에 직접 미포함 — 이미 ytdTarget에 반영)
+
         // Gap catch-up 여부 판단
         let catchUpComment = null;
         if (p.ytdGap > 0 && fcstFutureTotal > 0) {
@@ -2420,6 +2531,8 @@ export default function Report() {
           yoyGrowth,
           csOpportunities,
           fcstFutureTotal,
+          // v3.17.4: 6개 소스별 분해 (추적용)
+          futureSources,
         };
       };
 
@@ -2632,16 +2745,33 @@ export default function Report() {
           return s + (f.forecast_amount || f.amount || 0);
         }, 0);
 
-        // ③ 크로스셀링 — gap.opportunities (account.gap.opportunities) 중 expected_date가 그 월인 것
+        // ③ 크로스셀링 — v3.17.4: 두 데이터 소스 모두 사용 (Erbe 사례 근본 해소)
+        //    (a) account.gap.opportunities — GAP 분석 탭에서 입력
+        //    (b) account.cross_selling[] — 크로스셀링 탭에서 입력
+        // 사용자가 어느 탭에 입력하든 모두 반영됨
         let crossSum = 0;
         let crossProbWeighted = 0;
         (accounts || []).forEach(a => {
+          // (a) GAP 기회 파이프라인
           const opps = a.gap?.opportunities || [];
           opps.forEach(o => {
             if (!o.expected_date) return;
             if (o.expected_date.slice(0, 7) !== yearMonth) return;
             const amt = parseFloat(o.amount) || 0;
             const prob = parseFloat(o.probability) || 50;
+            crossSum += amt;
+            crossProbWeighted += amt * (prob / 100);
+          });
+          // (b) 크로스셀링 탭
+          const crossItems = a.cross_selling || [];
+          crossItems.forEach(c => {
+            // 진행상태 필터 — 수주완료 제외 (이미 완료된 건은 미래 예측에서 제외)
+            if (c.status === '수주완료' || c.status === 'closed' || c.status === 'won') return;
+            // 예상 일자 — c.expected_date 또는 c.target_date
+            const expDate = c.expected_date || c.target_date || '';
+            if (!expDate || expDate.slice(0, 7) !== yearMonth) return;
+            const amt = parseFloat(c.expected_amount || c.amount) || 0;
+            const prob = parseFloat(c.probability) || 50;
             crossSum += amt;
             crossProbWeighted += amt * (prob / 100);
           });
@@ -3344,17 +3474,36 @@ export default function Report() {
     });
 
     // 2. Gap 원인별 집계
+    // v3.17.4: customersWithGap 배열 추가 — 각 업체별 GAP 금액 (괄호 표시용)
     const causeAgg = {};
-    GAP_CAUSES.forEach(c => { causeAgg[c.key] = { ...c, count: 0, totalGap: 0, customers: [] }; });
+    GAP_CAUSES.forEach(c => {
+      causeAgg[c.key] = { ...c, count: 0, totalGap: 0, customers: [], customersWithGap: [] };
+    });
     customerGaps.forEach(cg => {
       const causes = cg.gapAnalysis?.causes || [];
       causes.forEach(causeKey => {
         if (causeAgg[causeKey]) {
+          const gapAbs = Math.abs(Math.min(0, cg.ytdGap));
           causeAgg[causeKey].count++;
-          causeAgg[causeKey].totalGap += Math.abs(Math.min(0, cg.ytdGap));
+          causeAgg[causeKey].totalGap += gapAbs;
           causeAgg[causeKey].customers.push(cg.name);
+          causeAgg[causeKey].customersWithGap.push({
+            name: cg.name,
+            gap: gapAbs,
+            rep: cg.rep,
+            accountId: cg.account?.id,
+            ytdActual: cg.ytdActual,
+            ytdTarget: cg.ytdTarget,
+            achieveRate: cg.achieveRate,
+            cause_detail: cg.gapAnalysis?.cause_detail || '',
+            allCauses: causes,
+          });
         }
       });
+    });
+    // 각 원인 내에서 GAP 큰 순 정렬
+    Object.values(causeAgg).forEach(c => {
+      c.customersWithGap.sort((a, b) => b.gap - a.gap);
     });
     const causeRanking = Object.values(causeAgg)
       .filter(c => c.count > 0)
@@ -6139,38 +6288,99 @@ export default function Report() {
             <>
               <div className="report-section-title" style={{ marginTop: 20 }}>심층 Gap 분석</div>
 
-              {/* GAP-1: Gap 원인 분석 */}
+              {/* v3.17.4: GAP-1+2 통합 — 원인별 카드 + 펼치면 고객 상세 (옵션 B) */}
               <div className="card" style={{ marginBottom: 16 }}>
-                <div className="card-title">Gap 원인 분석</div>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                  <span>Gap 원인 분석 + 고객별 상세 (통합)</span>
+                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                    — 각 원인별 영향금액 + 그 원인이 태깅된 고객 리스트 (괄호로 개별 GAP 표시)
+                  </span>
+                </div>
                 {gapAnalysisData.causeRanking.length === 0 ? (
                   <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
                     아직 원인 태깅된 고객이 없습니다. 각 고객의 'GAP분석' 탭에서 원인을 태깅하세요.
                   </div>
                 ) : (
-                  <>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8, marginBottom: 12 }}>
-                      {gapAnalysisData.causeRanking.map((cause, i) => (
-                        <div key={cause.key} style={{
-                          padding: '10px 12px', borderRadius: 8,
-                          border: i < 3 ? '1px solid var(--red)' : '1px solid var(--border)',
-                          background: i < 3 ? 'rgba(220,38,38,.04)' : 'var(--bg3)',
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>{cause.icon} {cause.label}</span>
-                            {i < 3 && <span style={{ fontSize: 9, color: 'var(--red)', fontWeight: 700 }}>TOP {i + 1}</span>}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text2)' }}>
-                            <span style={{ fontWeight: 600 }}>{cause.count}</span>건 |
-                            영향금액 <span style={{ color: 'var(--red)', fontWeight: 600 }}>{fmtKRW(cause.totalGap)}</span>
-                          </div>
-                          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
-                            {cause.customers.slice(0, 3).join(', ')}{cause.customers.length > 3 ? ` 외 ${cause.customers.length - 3}` : ''}
-                          </div>
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {gapAnalysisData.causeRanking.map((cause, i) => (
+                      <div key={cause.key} style={{
+                        borderRadius: 8,
+                        border: i < 3 ? '2px solid var(--red)' : '1px solid var(--border)',
+                        background: i < 3 ? 'rgba(220,38,38,.04)' : 'var(--bg3)',
+                        overflow: 'hidden',
+                      }}>
+                        {/* 헤더 */}
+                        <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: i < 3 ? 'rgba(220,38,38,.06)' : 'transparent' }}>
+                          <span style={{ fontSize: 14, fontWeight: 700 }}>{cause.icon} {cause.label}</span>
+                          {i < 3 && (
+                            <span style={{ fontSize: 10, padding: '2px 8px', background: 'var(--red)', color: '#fff', borderRadius: 12, fontWeight: 700 }}>
+                              TOP {i + 1}
+                            </span>
+                          )}
+                          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text2)' }}>
+                            <strong>{cause.count}</strong>건 · 영향금액 <strong style={{ color: 'var(--red)' }}>{fmtKRW(cause.totalGap)}</strong>
+                          </span>
                         </div>
-                      ))}
-                    </div>
-                  </>
+                        {/* 각 업체 — 괄호로 개별 GAP 금액 표시 */}
+                        <div style={{ padding: '8px 14px', background: 'var(--bg)' }}>
+                          <table className="data-table" style={{ fontSize: 11, width: '100%' }}>
+                            <thead>
+                              <tr>
+                                <th>고객</th>
+                                <th style={{ textAlign: 'right' }}>YTD 목표</th>
+                                <th style={{ textAlign: 'right' }}>YTD 실적</th>
+                                <th style={{ textAlign: 'right' }}>GAP</th>
+                                <th style={{ textAlign: 'right' }}>달성률</th>
+                                <th>다른 원인 (중복)</th>
+                                <th>담당</th>
+                                <th>상세입력</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {cause.customersWithGap.map((c, idx) => {
+                                const acc = c.accountId ? accounts.find(a => a.id === c.accountId) : null;
+                                const otherCauses = (c.allCauses || []).filter(k => k !== cause.key).map(k => {
+                                  const m = GAP_CAUSES.find(g => g.key === k);
+                                  return m?.label || k;
+                                });
+                                return (
+                                  <tr key={idx}>
+                                    <td style={{ fontWeight: 700 }}>
+                                      {acc ? (
+                                        <a href="#" onClick={(e) => { e.preventDefault(); setEditingAccount(acc); }}
+                                          style={{ color: 'var(--accent)', textDecoration: 'none' }}>{c.name}</a>
+                                      ) : c.name}
+                                      {' '}<span style={{ color: 'var(--red)', fontWeight: 600 }}>(▼ {fmtKRW(c.gap)})</span>
+                                    </td>
+                                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmtKRW(c.ytdTarget)}</td>
+                                    <td style={{ textAlign: 'right' }}>{fmtKRW(c.ytdActual)}</td>
+                                    <td style={{ textAlign: 'right', color: 'var(--red)', fontWeight: 700 }}>▼ {fmtKRW(c.gap)}</td>
+                                    <td style={{ textAlign: 'right' }}>
+                                      <span className={`score-badge ${pctColor(c.achieveRate)}`} style={{ fontSize: 10 }}>{c.achieveRate}%</span>
+                                    </td>
+                                    <td style={{ fontSize: 10, color: 'var(--text3)' }}>
+                                      {otherCauses.length > 0 ? otherCauses.join(', ') : '-'}
+                                    </td>
+                                    <td style={{ fontSize: 10 }}>{c.rep || '-'}</td>
+                                    <td>
+                                      {c.cause_detail
+                                        ? <span style={{ color: 'var(--green, #16a34a)' }} title={c.cause_detail}>✅</span>
+                                        : <span style={{ color: 'var(--red)', fontWeight: 600 }} title="cause_detail 미입력">⚠ 미입력</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
+                  ※ <strong>중복 인정</strong>: 한 고객이 여러 원인 선택 시 모든 원인에 등장 (다른 원인 컬럼에 표시).<br />
+                  ※ <strong>합계 GAP</strong>은 각 원인별로 그대로 표시되므로 전체 GAP 총합과 다를 수 있음 — 원인별 영업본부장 액션 결정용.
+                </div>
               </div>
 
               {/* GAP-2: 고객별 심층 분석 (Gap 상위) */}

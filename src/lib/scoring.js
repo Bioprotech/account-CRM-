@@ -57,6 +57,25 @@ const ymToDateRange = (yearMonth) => {
   return { start: `${yearMonth}-01`, end: `${yearMonth}-31` };
 };
 
+/**
+ * v3.17.4: 활동의 effective sales_rep — 그 고객의 담당자 우선
+ *   본부장이 활동 입력해도 그 고객 담당자(account.sales_rep)로 매핑
+ *   account 미발견 또는 sales_rep 빈 값이면 transaction의 sales_rep fallback
+ */
+function resolveActivityRep(item, accounts) {
+  if (!item || !accounts) return item?.sales_rep || '';
+  if (item.account_id) {
+    const acc = accounts.find(a => a.id === item.account_id);
+    if (acc && acc.sales_rep) return acc.sales_rep;
+  }
+  return item.sales_rep || '';
+}
+
+/** sales_rep 매칭 헬퍼 — account 기반 우선, fallback은 transaction sales_rep */
+function isActivityForRep(item, accounts, targetRep) {
+  return resolveActivityRep(item, accounts) === targetRep;
+}
+
 /* ══════════════════════════════════════════════════════
    2-1. 당월 수주 달성률 (30점)
    ══════════════════════════════════════════════════════ */
@@ -166,7 +185,7 @@ function calcContactFrequency({ rep, accounts, activityLogs, yearMonth }) {
   if (accountCount === 0) return { score: 0, max: 10, freq: 0, accountCount: 0, activityCount: 0, _note: '담당 고객 없음' };
 
   const activityCount = (activityLogs || [])
-    .filter(l => inMonth(l.date, yearMonth) && l.sales_rep === rep)
+    .filter(l => inMonth(l.date, yearMonth) && isActivityForRep(l, accounts, rep))
     .length;
 
   const freq = activityCount / accountCount;
@@ -183,10 +202,10 @@ function calcContactFrequency({ rep, accounts, activityLogs, yearMonth }) {
 /* ══════════════════════════════════════════════════════
    3-2. 이슈 해결률 (10점)
    ══════════════════════════════════════════════════════ */
-function calcIssueResolveRate({ rep, activityLogs, yearMonth }) {
+function calcIssueResolveRate({ rep, accounts, activityLogs, yearMonth }) {
   // 당월 중 Open된 전체 건 (date가 당월) — 모든 이슈
   const monthOpened = (activityLogs || []).filter(l =>
-    inMonth(l.date, yearMonth) && l.sales_rep === rep
+    inMonth(l.date, yearMonth) && isActivityForRep(l, accounts, rep)
   );
   if (monthOpened.length === 0) return { score: 10, max: 10, rate: null, _note: '당월 Open 건 0건 → 만점' };
 
@@ -209,7 +228,7 @@ function calcIssueResolveRate({ rep, activityLogs, yearMonth }) {
 /* ══════════════════════════════════════════════════════
    3-3. 14일+ 미해결 이슈 건수 (10점)
    ══════════════════════════════════════════════════════ */
-function calcOverdue14({ rep, activityLogs, yearMonth }) {
+function calcOverdue14({ rep, activityLogs, accounts, yearMonth }) {
   // 당월 말일 기준 Open 상태이며 14일 이상 경과 + 외부 사유 태깅 제외
   // (yearMonth가 과거인 경우 정확한 cutoff 계산 — 당월 말일 기준)
   const month = parseInt(yearMonth.slice(5, 7), 10);
@@ -217,7 +236,7 @@ function calcOverdue14({ rep, activityLogs, yearMonth }) {
   const eom = new Date(year, month, 0); // 당월 말일
 
   const overdue = (activityLogs || []).filter(l => {
-    if (l.sales_rep !== rep) return false;
+    if (!isActivityForRep(l, accounts, rep)) return false;
     if (l.status === 'Closed') return false;
     if (EXTERNAL_REASON_ISSUE_TYPES.includes(l.issue_type)) return false;
     if (!l.date) return false;
@@ -338,7 +357,7 @@ function calcATierContact({ rep, accounts, activityLogs, yearMonth }) {
 /* ══════════════════════════════════════════════════════
    4-1. 주간 활동 0건 감점 (-5/회, max -10)
    ══════════════════════════════════════════════════════ */
-function calcZeroWeekDeduction({ rep, activityLogs, yearMonth }) {
+function calcZeroWeekDeduction({ rep, accounts, activityLogs, yearMonth }) {
   const year = parseInt(yearMonth.slice(0, 4), 10);
   const month = parseInt(yearMonth.slice(5, 7), 10);
   const firstDay = new Date(year, month - 1, 1);
@@ -357,13 +376,13 @@ function calcZeroWeekDeduction({ rep, activityLogs, yearMonth }) {
     const we = new Date(cursor); we.setDate(we.getDate() + 6);
     const weekEnd = we.toISOString().slice(0, 10);
     const count = (activityLogs || []).filter(l =>
-      l.sales_rep === rep &&
+      isActivityForRep(l, accounts, rep) &&
       l.date >= weekStart &&
       l.date <= weekEnd
     ).length;
     // 출장/전시회 태그 예외 (issue_type 또는 content에 키워드)
     const hasException = (activityLogs || []).some(l =>
-      l.sales_rep === rep &&
+      isActivityForRep(l, accounts, rep) &&
       l.date >= weekStart &&
       l.date <= weekEnd &&
       (
@@ -433,9 +452,9 @@ function calcGapMissingDeduction({ rep, accounts, orders, businessPlans, yearMon
    동일 담당자의 동일 날짜 Activity 3건 이상 + content 유사도 90%+
    (간단 구현: 동일 날짜 + 같은 첫 30자 substring 3건 이상)
    ══════════════════════════════════════════════════════ */
-function calcFalseInputDeduction({ rep, activityLogs, yearMonth }) {
+function calcFalseInputDeduction({ rep, accounts, activityLogs, yearMonth }) {
   const monthLogs = (activityLogs || []).filter(l =>
-    inMonth(l.date, yearMonth) && l.sales_rep === rep
+    inMonth(l.date, yearMonth) && isActivityForRep(l, accounts, rep)
   );
   // 날짜별 그룹화
   const byDate = {};
@@ -477,17 +496,17 @@ export function computeScore({ rep, accounts, activityLogs, orders, businessPlan
 
   // CRM 활동 품질 (40점)
   const contact = calcContactFrequency({ rep, accounts, activityLogs, yearMonth });
-  const resolve = calcIssueResolveRate({ rep, activityLogs, yearMonth });
-  const overdue = calcOverdue14({ rep, activityLogs, yearMonth });
+  const resolve = calcIssueResolveRate({ rep, accounts, activityLogs, yearMonth });
+  const overdue = calcOverdue14({ rep, accounts, activityLogs, yearMonth });
   const gapDetail = calcGapDetailFill({ rep, accounts, orders, businessPlans, yearMonth });
   const aTier = calcATierContact({ rep, accounts, activityLogs, yearMonth });
   const quality = contact.score + resolve.score + overdue.score + gapDetail.score + aTier.score;
 
   // 감점 (-20점 max)
-  const zeroWeek = calcZeroWeekDeduction({ rep, activityLogs, yearMonth });
+  const zeroWeek = calcZeroWeekDeduction({ rep, accounts, activityLogs, yearMonth });
   const aTier45 = calcATier45Deduction({ rep, accounts, activityLogs, yearMonth });
   const gapMissing = calcGapMissingDeduction({ rep, accounts, orders, businessPlans, yearMonth });
-  const falseInput = calcFalseInputDeduction({ rep, activityLogs, yearMonth });
+  const falseInput = calcFalseInputDeduction({ rep, accounts, activityLogs, yearMonth });
   const deductionRaw = zeroWeek.deduction + aTier45.deduction + gapMissing.deduction + falseInput.deduction;
   const deduction = Math.min(deductionRaw, POINTS.DEDUCTION.MAX_TOTAL);
 
