@@ -4055,8 +4055,89 @@ export default function Report() {
   /* ══════════════════════════════
      RENDER
      ══════════════════════════════ */
+  // v3.17.11: 데이터 무결성 배너 데이터 (보고서/대시보드에 집계되는 데이터의 source 분포)
+  const integrityInfo = useMemo(() => {
+    const yearStr = String(new Date().getFullYear());
+    const monthStr = String(new Date().getMonth() + 1).padStart(2, '0');
+    const periodOrders = (ordersAll || []).filter(o => (o.order_date || '').startsWith(yearStr + '-'));
+    const periodSales = (salesAll || []).filter(s => (s.sale_date || '').startsWith(yearStr + '-'));
+    const cnt = { promes: 0, legacy: 0, manual: 0, other: 0 };
+    const amt = { promes: 0, legacy: 0, manual: 0, other: 0 };
+    let lastPromesImport = '';
+    periodOrders.forEach(o => {
+      const src = o.source || '';
+      const a = o.order_amount || 0;
+      let b;
+      if (src === 'excel_import_promes_O') b = 'promes';
+      else if (src === 'excel_import_영업현황') b = 'legacy';
+      else if (!src) b = 'manual';
+      else b = 'other';
+      cnt[b]++; amt[b] += a;
+      if (src === 'excel_import_promes_O' && o.import_date && o.import_date > lastPromesImport) {
+        lastPromesImport = o.import_date;
+      }
+    });
+    const ignoredCnt = cnt.manual + cnt.other;
+    const ignoredAmt = amt.manual + amt.other;
+    const ytdActual = orders
+      .filter(o => (o.order_date || '').startsWith(yearStr + '-'))
+      .reduce((s, o) => s + (o.order_amount || 0), 0);
+    return {
+      promesCnt: cnt.promes, promesAmt: amt.promes,
+      legacyCnt: cnt.legacy, legacyAmt: amt.legacy,
+      ignoredCnt, ignoredAmt,
+      lastPromesImport,
+      ytdActual,
+      yearStr, monthStr,
+    };
+  }, [ordersAll, salesAll, orders]);
+
+  const fmtKRWShort = (n) => {
+    if (!n) return '0';
+    const abs = Math.abs(n);
+    if (abs >= 100000000) return (abs / 100000000).toFixed(1) + '억';
+    if (abs >= 10000) return Math.round(abs / 10000).toLocaleString() + '만';
+    return Math.round(abs).toLocaleString();
+  };
+
   return (
     <div>
+      {/* v3.17.11: 데이터 무결성 배너 — 보고서 수치가 어떤 source로 집계되었는지 항상 표시 */}
+      <div style={{
+        padding: '8px 12px',
+        marginBottom: 12,
+        background: integrityInfo.ignoredCnt > 0 ? 'rgba(245,158,11,0.06)' : 'rgba(34,197,94,0.04)',
+        border: `1px solid ${integrityInfo.ignoredCnt > 0 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.2)'}`,
+        borderRadius: 6,
+        fontSize: 11,
+        display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      }}>
+        <span style={{ fontWeight: 700, color: integrityInfo.ignoredCnt > 0 ? '#b45309' : '#16a34a' }}>
+          {integrityInfo.ignoredCnt > 0 ? '⚠' : '✅'} 데이터 무결성
+        </span>
+        <span>
+          🆕 ProMES <strong>{integrityInfo.promesCnt.toLocaleString()}건</strong> ({fmtKRWShort(integrityInfo.promesAmt)})
+        </span>
+        {integrityInfo.legacyCnt > 0 && (
+          <span style={{ color: '#d97706' }}>
+            📂 영업현황 잔여 <strong>{integrityInfo.legacyCnt.toLocaleString()}건</strong> ({fmtKRWShort(integrityInfo.legacyAmt)})
+          </span>
+        )}
+        <span style={{ color: 'var(--text2)' }}>
+          → 보고서 집계: <strong>{fmtKRWShort(integrityInfo.ytdActual)}</strong> ({integrityInfo.yearStr}년 YTD)
+        </span>
+        {integrityInfo.ignoredCnt > 0 && (
+          <span style={{ color: '#b45309', fontWeight: 600 }}>
+            🚫 집계 제외 <strong>{integrityInfo.ignoredCnt.toLocaleString()}건</strong> ({fmtKRWShort(integrityInfo.ignoredAmt)}) — manual/기타 source
+          </span>
+        )}
+        {integrityInfo.lastPromesImport && (
+          <span style={{ color: 'var(--text3)', marginLeft: 'auto', fontSize: 10 }}>
+            마지막 ProMES import: {integrityInfo.lastPromesImport}
+          </span>
+        )}
+      </div>
+
       {/* Tab bar + download */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 4 }}>
@@ -5870,28 +5951,52 @@ export default function Report() {
 
           {/* ══ 섹션 E — 다음 달 사업 계획 (반자동) ══ */}
           {/* v3.17 Phase C4: Open 이슈에서 다음달 계획에 등록하는 헬퍼 추가 */}
+          {/* v3.17.11: textarea의 줄 단위 plan을 team_task로 일괄 변환하는 버튼 추가 */}
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
               <span>■ 5. 다음 달 주요 계획</span>
               <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                — 직접 입력 (참고용 메모) 또는 ■ 6 팀별 월간 TASK에 다음달(year_month) 등록 / 주간 보고 Open 이슈에서 "📌 다음달 계획에 등록" 클릭
+                — 자유 메모 입력 후 <strong style={{ color: '#2563eb' }}>[+ TASK로 등록]</strong> 클릭하면 줄별로 team_task 자동 생성 → 다음달 보고서 ■ 4-4에서 자동 이행 점검
               </span>
             </div>
             <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
               {[
-                { key: 'overseas', label: '해외영업팀' },
-                { key: 'domestic', label: '국내영업팀' },
-                { key: 'support', label: '영업지원팀' },
+                { key: 'overseas', label: '해외영업팀', team: '해외영업' },
+                { key: 'domestic', label: '국내영업팀', team: '국내영업' },
+                { key: 'support', label: '영업지원팀', team: '영업지원' },
               ].map(t => (
                 <div key={t.key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                   <label style={{ fontSize: 12, fontWeight: 600, minWidth: 90, color: 'var(--text2)', marginTop: 4 }}>[{t.label}]</label>
                   <textarea
                     value={nextMonthPlan[t.key] || ''}
                     onChange={e => saveNextMonthPlan({ [t.key]: e.target.value })}
-                    placeholder={`${t.label} 다음 달 주요 계획`}
-                    rows={2}
+                    placeholder={`${t.label} 다음 달 주요 계획 — 한 줄에 한 항목씩 입력 후 [+ TASK로 등록]`}
+                    rows={3}
                     style={{ flex: 1, padding: '6px 10px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, resize: 'vertical' }}
                   />
+                  <button
+                    onClick={() => {
+                      const txt = (nextMonthPlan[t.key] || '').trim();
+                      if (!txt) {
+                        showToast?.('계획 내용이 비어있습니다', 'warning');
+                        return;
+                      }
+                      const lines = txt.split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('//'));
+                      if (lines.length === 0) {
+                        showToast?.('등록할 줄이 없습니다', 'warning');
+                        return;
+                      }
+                      if (!confirm(`${t.label}: ${lines.length}개 항목을 다음달 TASK로 등록합니다.\n\n${lines.slice(0, 5).map(l => '• ' + l.slice(0, 50)).join('\n')}${lines.length > 5 ? `\n... 외 ${lines.length - 5}개` : ''}\n\n계속할까요?`)) return;
+                      lines.forEach(line => {
+                        registerAsNextMonthTask(t.team, line, '', '');
+                      });
+                      showToast?.(`📌 ${t.label}: ${lines.length}개 TASK 등록 완료`, 'success');
+                    }}
+                    style={{ fontSize: 10, padding: '6px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap', alignSelf: 'flex-start', marginTop: 4 }}
+                    title="textarea의 각 줄을 별도 team_task로 등록"
+                  >
+                    + TASK로 등록
+                  </button>
                 </div>
               ))}
             </div>

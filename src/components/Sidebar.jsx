@@ -3,6 +3,7 @@ import { CURRENT_VERSION } from '../lib/changelog';
 
 const NAV_ITEMS = [
   { key: 'dashboard', icon: '📊', label: '대시보드' },
+  { key: 'myTasks', icon: '🗒️', label: '내 업무' },
   { key: 'accounts', icon: '🏢', label: '고객 목록' },
   { key: 'orderReport', icon: '📈', label: '수주목표관리' },
   { key: 'report', icon: '📋', label: '종합 리포트' },
