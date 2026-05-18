@@ -1154,6 +1154,112 @@ function LegacyDataCleanupTool({ orders, sales, importOrders, importSales, showT
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   v3.17.3 — Activity Log sales_rep 일괄 정정 도구
+   ──────────────────────────────────────────────────────────────────
+   본부장(관리자)이 입력/수정한 활동의 sales_rep이 본부장 이름으로 잘못 저장된
+   경우를 정정. 각 활동의 sales_rep을 해당 account의 sales_rep으로 일괄 변경.
+
+   대상: activityLogs 중 그 account의 sales_rep과 일치하지 않는 모든 활동
+   정정: 해당 account의 sales_rep으로 덮어쓰기 + created_by에 원래 입력자 보존
+   ══════════════════════════════════════════════════════════════════ */
+function ActivityRepFixTool({ accounts, activityLogs, saveLog, showToast }) {
+  const [running, setRunning] = useState(false);
+
+  // 정정 대상 분석
+  const accountMap = useMemo(() => {
+    const m = {};
+    (accounts || []).forEach(a => { m[a.id] = a; });
+    return m;
+  }, [accounts]);
+
+  const targets = useMemo(() => {
+    return (activityLogs || []).filter(l => {
+      const acc = accountMap[l.account_id];
+      if (!acc || !acc.sales_rep) return false;
+      // sales_rep이 빈 값이거나 account의 sales_rep과 다른 경우
+      return !l.sales_rep || l.sales_rep !== acc.sales_rep;
+    });
+  }, [activityLogs, accountMap]);
+
+  // 입력자별 분포 (몇 명이 본부장 이름으로 잘못 저장됐는지)
+  const byInputter = useMemo(() => {
+    const m = {};
+    targets.forEach(l => {
+      const inputter = l.sales_rep || '(빈값)';
+      m[inputter] = (m[inputter] || 0) + 1;
+    });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [targets]);
+
+  if (targets.length === 0) return null;
+
+  const handleFix = async () => {
+    if (!confirm(
+      `Activity Log의 sales_rep을 각 고객의 담당자로 일괄 정정합니다.\n\n` +
+      `▸ 정정 대상: ${targets.length.toLocaleString()}건\n\n` +
+      `각 활동의 원래 입력자는 created_by 필드에 보존됩니다.\n` +
+      `정정 후 모든 리포트의 담당자 집계가 그 고객의 담당자 기준으로 표시됩니다.\n\n` +
+      `※ 되돌릴 수 없습니다. 계속할까요?`
+    )) return;
+    setRunning(true);
+    try {
+      let success = 0;
+      for (const l of targets) {
+        const acc = accountMap[l.account_id];
+        if (!acc || !acc.sales_rep) continue;
+        try {
+          await saveLog({
+            ...l,
+            sales_rep: acc.sales_rep,
+            // 원래 입력자 보존 (created_by가 없으면 기존 sales_rep을 입력자로 간주)
+            created_by: l.created_by || l.sales_rep || '',
+          });
+          success++;
+        } catch (e) {
+          console.error('정정 실패:', l.id, e);
+        }
+      }
+      showToast(`정정 완료: ${success}/${targets.length}건`, 'success');
+    } catch (e) {
+      showToast('정정 실패: ' + e.message, 'error');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #d97706' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>👤 Activity Log 담당자 일괄 정정</span>
+        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)', padding: '2px 8px', background: 'var(--bg2)', borderRadius: 12 }}>
+          (v3.17.3)
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.5 }}>
+        <strong>본부장이 입력/수정한 활동의 sales_rep이 본부장 이름으로 잘못 저장된 경우</strong>를 정정합니다.<br />
+        각 활동의 sales_rep을 해당 <strong>고객의 담당자</strong>로 통일 (원래 입력자는 created_by에 보존).
+      </p>
+      <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(217,119,6,0.06)', borderColor: 'rgba(217,119,6,0.3)' }}>
+        <span>👤</span> 정정 대상: <strong>{targets.length.toLocaleString()}건</strong>
+        {byInputter.length > 0 && (
+          <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)' }}>
+            (현재 잘못 저장된 입력자별: {byInputter.slice(0, 5).map(([k, n]) => `${k}=${n}`).join(', ')}{byInputter.length > 5 ? '...' : ''})
+          </span>
+        )}
+      </div>
+      <button
+        className="btn btn-primary"
+        onClick={handleFix}
+        disabled={running}
+        style={{ background: '#d97706', color: '#fff' }}
+      >
+        {running ? '정정 중...' : `👤 ${targets.length}건 sales_rep 일괄 정정`}
+      </button>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
    v3.10 — Account 합병 도구 (중복 account 통합)
    ══════════════════════════════════════════════════════════════════ */
 function AccountMergeTool({ accounts, orders, sales, businessPlans, mergeAccounts }) {
@@ -2271,7 +2377,7 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans, applyFuzzy
 }
 
 export default function Settings() {
-  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches, mergeAccounts, appSettings } = useAccount();
+  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches, mergeAccounts, appSettings, activityLogs, saveLog } = useAccount();
 
   /* ══════════════════════════════════════
      팀 멤버 관리
@@ -3874,6 +3980,14 @@ export default function Settings() {
         sales={sales}
         importOrders={importOrders}
         importSales={importSales}
+        showToast={showToast}
+      />
+
+      {/* ── v3.17.3: Activity Log sales_rep 일괄 정정 (정정 대상 있을 때만 표시) ── */}
+      <ActivityRepFixTool
+        accounts={accounts}
+        activityLogs={activityLogs}
+        saveLog={saveLog}
         showToast={showToast}
       />
 

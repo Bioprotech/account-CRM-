@@ -226,13 +226,17 @@ export default function ActivityLog({ accountId, draft }) {
     if (!newLog.content.trim()) return;
 
     const nowIso = new Date().toISOString();
+    // v3.17.3: sales_rep은 그 고객의 담당자로 자동 설정 (본부장이 입력해도 담당자 이름으로 집계)
+    //   draft.sales_rep이 있으면 그 값 사용, 없으면 currentUser fallback
+    //   입력자 추적은 updated_by/created_by에 별도 보존
+    const repForActivity = draft?.sales_rep || currentUser;
     const logEntry = {
       id: genId('log'),
       account_id: accountId,
       date: newLog.date || today(),       // v3.5: 사용자 입력 활동 발생일
       issue_type: newLog.issue_type,
       priority: Number(newLog.priority) || DEFAULT_PRIORITY,
-      sales_rep: currentUser,
+      sales_rep: repForActivity,
       content: newLog.content.trim(),
       status: 'Open',
       next_action: newLog.next_action.trim(),
@@ -245,6 +249,7 @@ export default function ActivityLog({ accountId, draft }) {
       resolution_date: '',
       created_at: today(),
       created_at_iso: nowIso,
+      created_by: currentUser,  // v3.17.3: 실제 입력자 (sales_rep과 다를 수 있음 — 본부장 입력 시)
       updated_at: nowIso,
       updated_by: currentUser,
       edit_history: [],

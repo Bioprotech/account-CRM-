@@ -1,5 +1,28 @@
 export const CHANGELOG = [
   {
+    version: 'v3.17.3',
+    date: '2026-05-18',
+    title: '👤 Activity Log 담당자 자동 정정 (본부장 입력 시에도 고객 담당자로 집계)',
+    items: [
+      '🐛 **문제**: 본부장(관리자)이 활동 입력 시 sales_rep이 본부장 이름으로 저장됨',
+      '  ↳ 결과: 리포트 담당자별 집계에서 본부장(haksu) 활동이 잘못 카운트',
+      '',
+      '✅ **신규 입력 로직 수정** — ActivityLog.handleAdd',
+      '  ↳ sales_rep = draft?.sales_rep (그 고객의 담당자) || currentUser (fallback)',
+      '  ↳ 본부장이 입력해도 그 고객 담당자 이름으로 저장',
+      '  ↳ created_by 필드 신규 — 실제 입력자(본부장) 별도 보존',
+      '',
+      '🔧 **Settings → 👤 Activity Log 담당자 일괄 정정 도구**',
+      '  ↳ 기존 잘못 저장된 활동 일괄 정정 (account.sales_rep으로 통일)',
+      '  ↳ created_by에 원래 입력자 자동 백업',
+      '  ↳ 정정 대상 0건이면 카드 자동 숨김',
+      '',
+      '📊 **결과**',
+      '  ↳ 점수 시스템·리포트 담당자별 집계가 그 고객 담당자 기준으로 정확',
+      '  ↳ 본부장 활동이 다른 담당자에 영향 안 미침',
+    ],
+  },
+  {
     version: 'v3.17.2',
     date: '2026-05-18',
     title: '🧬 활동 점수 통합 (사양서 v1.0 기반) + PPT 일시 제거',
