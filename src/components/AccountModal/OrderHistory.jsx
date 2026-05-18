@@ -1,42 +1,14 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useAccount } from '../../context/AccountContext';
-import { PRODUCTS } from '../../lib/constants';
-import { today, genId, fmtDate } from '../../lib/utils';
+import { fmtDate } from '../../lib/utils';
 
 export default function OrderHistory({ accountId }) {
-  const { getOrdersForAccount, saveOrder, removeOrder, currentUser, accounts } = useAccount();
+  const { getOrdersForAccount, removeOrder, accounts } = useAccount();
   const allOrders = getOrdersForAccount(accountId);
   const account = useMemo(() => (accounts || []).find(a => a.id === accountId), [accounts, accountId]);
 
-  const [showForm, setShowForm] = useState(false);
-  const [newOrder, setNewOrder] = useState({
-    product_category: '',
-    order_amount: '',
-    currency: 'KRW',
-    order_date: today(),
-  });
-
-  const handleAdd = () => {
-    if (!newOrder.product_category || !newOrder.order_amount) return;
-    // v3.17.9: customer_name + product_name + created_by 필수 저장 (진단 가능성 + 정합성)
-    saveOrder({
-      id: genId('ord'),
-      account_id: accountId,
-      customer_name: account?.company_name || '',
-      order_date: newOrder.order_date,
-      product_category: newOrder.product_category,
-      product_name: newOrder.product_category, // category를 이름으로도 사용 (UI에서 둘 분리 안 함)
-      order_amount: parseFloat(newOrder.order_amount) || 0,
-      currency: newOrder.currency,
-      sales_rep: account?.sales_rep || currentUser, // 그 고객의 담당자 우선 (v3.17.3 패턴)
-      source: 'manual',
-      created_by: currentUser,
-      created_at: new Date().toISOString(),
-      import_date: today(),
-    });
-    setNewOrder({ product_category: '', order_amount: '', currency: 'KRW', order_date: today() });
-    setShowForm(false);
-  };
+  // v3.17.10: 수동 입력 영구 비활성화 — 수주는 ProMES Excel import만이 정답.
+  // handleAdd / showForm / newOrder state 제거 (재발 방지).
 
   // 연도별 집계
   const yearlyData = useMemo(() => {
@@ -155,58 +127,17 @@ export default function OrderHistory({ accountId }) {
         </div>
       )}
 
-      {/* 액션 바 */}
+      {/* 액션 바 (v3.17.10: 수동 입력 버튼 영구 제거 — ProMES만이 정답) */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>수주 이력 ({allOrders.length}건)</span>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
-          {showForm ? '취소' : '+ 수동 입력'}
-        </button>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>📥 수주 데이터는 ProMES 엑셀 import만 사용 (수동 입력 비활성화)</span>
       </div>
-
-      {/* 수동 입력 폼 */}
-      {showForm && (
-        <div className="activity-form">
-          <div className="form-row">
-            <div className="form-group">
-              <label>제품군 *</label>
-              <select value={newOrder.product_category} onChange={e => setNewOrder(p => ({ ...p, product_category: e.target.value }))}>
-                <option value="">선택</option>
-                {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>수주일 *</label>
-              <input type="date" value={newOrder.order_date} onChange={e => setNewOrder(p => ({ ...p, order_date: e.target.value }))} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label>수주금액 *</label>
-              <input type="number" value={newOrder.order_amount} onChange={e => setNewOrder(p => ({ ...p, order_amount: e.target.value }))} placeholder="금액" />
-            </div>
-            <div className="form-group">
-              <label>통화</label>
-              <select value={newOrder.currency} onChange={e => setNewOrder(p => ({ ...p, currency: e.target.value }))}>
-                <option value="KRW">KRW (₩)</option>
-                <option value="USD">USD ($)</option>
-                <option value="EUR">EUR (€)</option>
-                <option value="GBP">GBP (£)</option>
-                <option value="JPY">JPY (¥)</option>
-                <option value="CNY">CNY (¥)</option>
-              </select>
-            </div>
-          </div>
-          <div style={{ textAlign: 'right', marginTop: 8 }}>
-            <button className="btn btn-primary" onClick={handleAdd} disabled={!newOrder.product_category || !newOrder.order_amount}>추가</button>
-          </div>
-        </div>
-      )}
 
       {/* 수주 목록 */}
       {allOrders.length === 0 ? (
         <div className="empty-state">
           <div className="icon">📦</div>
-          <p>수주 이력이 없습니다.<br />수동 입력 또는 엑셀 import로 추가하세요.</p>
+          <p>수주 이력이 없습니다.<br />ProMES 엑셀 import 후 표시됩니다.</p>
         </div>
       ) : (
         <div className="table-wrap" style={{ maxHeight: 300 }}>

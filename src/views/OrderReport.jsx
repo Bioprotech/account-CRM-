@@ -25,7 +25,13 @@ function pct(a, b) {
 }
 
 export default function OrderReport() {
-  const { accounts, orders, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts } = useAccount();
+  const { accounts, orders: ordersAll, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts } = useAccount();
+
+  // v3.17.10: 수주 source filter (ProMES + 영업현황만 — manual 영구 제외)
+  const orders = useMemo(() => {
+    const VALID = new Set(['excel_import_promes_O', 'excel_import_영업현황']);
+    return (ordersAll || []).filter(o => VALID.has(o.source || ''));
+  }, [ordersAll]);
 
   const [viewYear] = useState(CURRENT_YEAR);
   const [viewMode, setViewMode] = useState('customer'); // 'customer' | 'team' | 'product'

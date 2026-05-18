@@ -558,7 +558,20 @@ function MonthlyBreakdownTable({ title, rows }) {
    REPORT COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function Report() {
-  const { accounts, activityLogs, orders, sales, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, showToast } = useAccount();
+  const { accounts, activityLogs, orders: ordersAll, sales: salesAll, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, showToast } = useAccount();
+
+  // v3.17.10: 수주/매출 source filter — ProMES Excel import만 정답
+  // 영업현황(legacy)도 같이 허용 (전환 과도기) — manual 등은 보고서에서 영구 제외
+  const VALID_ORDER_SOURCES = useMemo(() => new Set(['excel_import_promes_O', 'excel_import_영업현황']), []);
+  const VALID_SALES_SOURCES = useMemo(() => new Set(['excel_import_promes_S', 'excel_import_영업현황_S']), []);
+  const orders = useMemo(
+    () => (ordersAll || []).filter(o => VALID_ORDER_SOURCES.has(o.source || '')),
+    [ordersAll, VALID_ORDER_SOURCES]
+  );
+  const sales = useMemo(
+    () => (salesAll || []).filter(s => VALID_SALES_SOURCES.has(s.source || '')),
+    [salesAll, VALID_SALES_SOURCES]
+  );
 
   // 전년도 수주 고객 Set (신규 vs 기타 판별용) — appSettings 우선, localStorage fallback
   const priorYearSet = useMemo(() => {

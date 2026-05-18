@@ -1097,6 +1097,82 @@ function PromesBackfillTool({ orders, sales, importOrders, importSales, showToas
    ProMES source (excel_import_promes_O / _S) 데이터는 영향 없음.
    삭제할 데이터가 없으면 카드 자동으로 숨김.
    ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   v3.17.10 — Manual 수주 데이터 일괄 정리 도구
+   ──────────────────────────────────────────────────────────────────
+   OrderHistory의 [수주 추가] 버튼이 v3.17.10에서 영구 제거되었으나,
+   이전에 입력된 source='manual' 데이터가 DB에 남아 있을 수 있음.
+   보고서/대시보드는 source filter로 이미 무시하지만, 데이터 자체도
+   깨끗하게 정리.
+   ══════════════════════════════════════════════════════════════════ */
+function ManualOrderCleanupTool({ orders, showToast }) {
+  const [cleaning, setCleaning] = useState(false);
+  const manualOrders = (orders || []).filter(o => (o.source || '') === 'manual');
+  if (manualOrders.length === 0) return null;
+  const totalAmt = manualOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
+  const fmt = (n) => {
+    if (!n) return '0';
+    const abs = Math.abs(n);
+    if (abs >= 100000000) return (abs / 100000000).toFixed(1) + '억';
+    if (abs >= 10000) return Math.round(abs / 10000).toLocaleString() + '만';
+    return Math.round(abs).toLocaleString();
+  };
+  const handleCleanup = async () => {
+    if (!confirm(
+      `Manual 입력 수주 데이터를 일괄 삭제합니다.\n\n` +
+      `▸ ${manualOrders.length.toLocaleString()}건 / ${fmt(totalAmt)}\n\n` +
+      `※ ProMES import 데이터는 영향 없음\n` +
+      `※ 이 작업은 되돌릴 수 없습니다\n\n` +
+      `계속할까요?`
+    )) return;
+    setCleaning(true);
+    try {
+      let ok = 0, fail = 0;
+      for (const o of manualOrders) {
+        try {
+          await deleteOrder(o.id);
+          ok++;
+        } catch (e) {
+          console.error('삭제 실패', o.id, e);
+          fail++;
+        }
+      }
+      showToast(`정리 완료: 삭제 ${ok}건${fail > 0 ? ` / 실패 ${fail}건` : ''}`, fail > 0 ? 'warning' : 'success');
+    } catch (e) {
+      console.error('Manual cleanup 실패:', e);
+      showToast('정리 실패: ' + e.message, 'error');
+    } finally {
+      setCleaning(false);
+    }
+  };
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--red)' }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>🗑 수동 입력 수주 데이터 정리</span>
+        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)', padding: '2px 8px', background: 'var(--bg2)', borderRadius: 12 }}>
+          v3.17.10
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.5 }}>
+        AccountModal에서 직접 입력된 <strong>source='manual'</strong> 수주 데이터.<br />
+        보고서·대시보드는 이미 source filter로 이런 데이터를 집계에서 제외하지만,<br />
+        DB도 정리하려면 아래 버튼 사용. 향후 OrderHistory에서 직접 입력은 불가능 (v3.17.10에서 비활성화).
+      </p>
+      <div className="alert-banner" style={{ marginBottom: 12, background: 'rgba(220,38,38,0.06)', borderColor: 'rgba(220,38,38,0.3)' }}>
+        <span>⚠</span> Manual 수주 <strong>{manualOrders.length.toLocaleString()}건</strong> / <strong>{fmt(totalAmt)}</strong> 삭제 예정
+      </div>
+      <button
+        className="btn btn-primary"
+        onClick={handleCleanup}
+        disabled={cleaning}
+        style={{ background: 'var(--red)', color: '#fff' }}
+      >
+        {cleaning ? '삭제 중...' : `🗑 Manual 수주 일괄 삭제 (${manualOrders.length}건)`}
+      </button>
+    </div>
+  );
+}
+
 function LegacyDataCleanupTool({ orders, sales, importOrders, importSales, showToast }) {
   const [cleaning, setCleaning] = useState(false);
 
@@ -4348,6 +4424,12 @@ export default function Settings() {
         sales={sales}
         importOrders={importOrders}
         importSales={importSales}
+        showToast={showToast}
+      />
+
+      {/* ── v3.17.10: Manual 수주 데이터 일괄 정리 (데이터 있을 때만 표시) ── */}
+      <ManualOrderCleanupTool
+        orders={orders}
         showToast={showToast}
       />
 
