@@ -5,6 +5,7 @@ import { saveSnapshot, listSnapshots, deleteSnapshot as removeSnapshot } from '.
 import { savePriorYearCustomers, loadPriorYearCustomers, suggestCustomerCategory } from '../lib/customerClassification';
 import { combinedSimilarity, normalizeCompanyName, confidenceLabel } from '../lib/fuzzyMatch';
 import { CUSTOMER_CATEGORIES } from '../lib/constants';
+import { deleteOrder } from '../lib/firebase';
 
 // v3.4: 엑셀 날짜 시리얼/문자열 → YYYY-MM-DD 변환 (강화)
 // 이전 버전은 문자열 그대로 반환 → "4/23/2026" 등 비표준이 주간 범위 비교에서 실패
@@ -1484,6 +1485,8 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
       // ── v3.17.5: source별 데이터 분포 진단 (이중 집계 점검) ──
       const sourceCounts = { promes: 0, legacy: 0, manual: 0, other: 0 };
       const sourceAmounts = { promes: 0, legacy: 0, manual: 0, other: 0 };
+      // v3.17.7: "기타" 카테고리 정체 식별 — 실제 source 값별 집계
+      const otherSourceDetail = {}; // { 'source_name': { n, amt, samples: [{month, customer, product, amount, id}] } }
       // v3.17.6: 월별 source 분포 + ProMES 내부 중복 점검
       const monthlySource = {}; // { '05': { promes: {n,amt}, legacy: {n,amt}, manual: {n,amt}, other: {n,amt} } }
       const dupKeyMap = {}; // dedupe key 별 건수 — 같은 key 2건 이상이면 ProMES 중복 가능
@@ -1511,6 +1514,25 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
         if (monthlySource[m]) {
           monthlySource[m][bucket].n++;
           monthlySource[m][bucket].amt += amt;
+        }
+        // v3.17.7: "기타"의 실제 source 값 추적
+        if (bucket === 'other') {
+          const srcKey = src || '(empty)';
+          if (!otherSourceDetail[srcKey]) {
+            otherSourceDetail[srcKey] = { n: 0, amt: 0, samples: [] };
+          }
+          otherSourceDetail[srcKey].n++;
+          otherSourceDetail[srcKey].amt += amt;
+          if (otherSourceDetail[srcKey].samples.length < 5) {
+            otherSourceDetail[srcKey].samples.push({
+              id: o.id,
+              month: m,
+              date: o.order_date,
+              customer: o.customer_name || '',
+              product: o.product_name || '',
+              amount: amt,
+            });
+          }
         }
         // ProMES 내부 중복 점검 (같은 month+account+product 2번 이상)
         if (bucket === 'promes') {
@@ -1667,6 +1689,8 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
         dupEntries,
         dupTotalAmount,
         dupTotalCount,
+        // v3.17.7: "기타" 정체 식별
+        otherSourceDetail,
         // 사업계획 측면
         planList: planWithActual,
         planTotalTarget,
@@ -1823,6 +1847,97 @@ function ReconciliationDiagnostic({ accounts, orders, sales, businessPlans }) {
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* v3.17.7: "기타" 카테고리의 실제 source 정체 식별 */}
+            {analysis.otherSourceDetail && Object.keys(analysis.otherSourceDetail).length > 0 && (
+              <div style={{ marginBottom: 12, padding: '10px 14px', background: 'rgba(245,158,11,0.08)', border: '2px solid #f59e0b', borderRadius: 6 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#b45309', marginBottom: 6 }}>
+                  ⚠ "기타" 카테고리 정체 — {Object.keys(analysis.otherSourceDetail).length}개 source · {analysis.sourceCounts.other}건 · {fmt(analysis.sourceAmounts.other)}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text)', marginBottom: 6 }}>
+                  ProMES / 영업현황 / 수동 외의 source. 정체를 확인 후 잘못된 데이터면 삭제 필요.
+                </div>
+                {Object.entries(analysis.otherSourceDetail)
+                  .sort((a, b) => b[1].amt - a[1].amt)
+                  .map(([src, info]) => (
+                    <div key={src} style={{ marginBottom: 8, padding: 8, background: 'var(--card)', borderRadius: 4 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+                        <span style={{ fontFamily: 'monospace', background: 'rgba(245,158,11,0.15)', padding: '1px 6px', borderRadius: 3 }}>
+                          source = "{src}"
+                        </span>
+                        <span style={{ marginLeft: 8 }}>
+                          {info.n.toLocaleString()}건 · <strong style={{ color: 'var(--red)' }}>{fmt(info.amt)}</strong>
+                        </span>
+                      </div>
+                      <table style={{ fontSize: 10, width: '100%' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--bg2)' }}>
+                            <th style={{ textAlign: 'left', padding: 3 }}>월/일자</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>거래처</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>제품</th>
+                            <th style={{ textAlign: 'right', padding: 3 }}>금액</th>
+                            <th style={{ textAlign: 'left', padding: 3 }}>doc id</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {info.samples.map((s, i) => (
+                            <tr key={i}>
+                              <td style={{ padding: 3 }}>{s.date}</td>
+                              <td style={{ padding: 3 }}>{s.customer}</td>
+                              <td style={{ padding: 3 }}>{s.product}</td>
+                              <td style={{ padding: 3, textAlign: 'right' }}>{fmt(s.amount)}</td>
+                              <td style={{ padding: 3, fontFamily: 'monospace', fontSize: 9 }}>{s.id}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text2)' }}>
+                  💡 위 source가 잘못된 데이터라면 → 아래 <strong>🗑 "기타" source 일괄 삭제</strong> 버튼 사용
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  style={{ marginTop: 8, background: 'var(--red)', color: '#fff', fontSize: 12 }}
+                  onClick={async () => {
+                    const srcKeys = Object.keys(analysis.otherSourceDetail);
+                    const totalN = analysis.sourceCounts.other;
+                    const totalAmt = analysis.sourceAmounts.other;
+                    const srcList = srcKeys.map(k => `  • "${k}" (${analysis.otherSourceDetail[k].n}건, ${fmt(analysis.otherSourceDetail[k].amt)})`).join('\n');
+                    if (!confirm(`다음 source의 데이터를 일괄 삭제하시겠습니까?\n\n${srcList}\n\n총 ${totalN}건 / ${fmt(totalAmt)}\n\n⚠ 되돌릴 수 없습니다.`)) return;
+                    try {
+                      const yearStr = analysis.year;
+                      const monthSet = new Set(analysis.months);
+                      const toDelete = orders.filter(o => {
+                        if (!o.order_date || !o.order_date.startsWith(yearStr + '-')) return false;
+                        const m = o.order_date.slice(5, 7);
+                        if (!monthSet.has(m)) return false;
+                        const src = o.source || '';
+                        if (src === 'excel_import_promes_O') return false;
+                        if (src === 'excel_import_영업현황') return false;
+                        if (!src) return false;
+                        return true;
+                      });
+                      let ok = 0, fail = 0;
+                      for (const o of toDelete) {
+                        try {
+                          await deleteOrder(o.id);
+                          ok++;
+                        } catch (e) {
+                          console.error('삭제 실패', o.id, e);
+                          fail++;
+                        }
+                      }
+                      alert(`완료: 삭제 ${ok}건 / 실패 ${fail}건. 페이지 새로고침 후 다시 진단해주세요.`);
+                    } catch (err) {
+                      alert('삭제 실패: ' + err.message);
+                    }
+                  }}
+                >
+                  🗑 "기타" source 일괄 삭제 ({analysis.sourceCounts.other}건 / {fmt(analysis.sourceAmounts.other)})
+                </button>
               </div>
             )}
 
