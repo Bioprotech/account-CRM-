@@ -39,6 +39,12 @@ const INITIAL_LOG = {
   related_order_no: '',
   product_category: '',
   target_product: '',
+  // v3.17 Phase A1: 타부서 공유 필요 여부 (issue_type과 별개)
+  cross_dept_share: false,
+  // v3.17 Phase A2: 회복 계획 (GAP·지연을 메울 영업활동이 있는 경우)
+  recovery_plan_date: '',
+  recovery_plan_amount: '',
+  recovery_plan_note: '',
 };
 
 /* ══════════════════════════════════════════════════════
@@ -256,6 +262,14 @@ export default function ActivityLog({ accountId, draft }) {
     if (newLog.issue_type === '크로스셀링') {
       logEntry.target_product = newLog.target_product?.trim() || '';
       logEntry.expected_amount = Number(newLog.expected_amount) || 0;
+    }
+
+    // v3.17 Phase A1/A2: 타부서 공유 + 회복 계획
+    logEntry.cross_dept_share = !!newLog.cross_dept_share;
+    if (newLog.recovery_plan_date || newLog.recovery_plan_amount || newLog.recovery_plan_note) {
+      logEntry.recovery_plan_date = newLog.recovery_plan_date || '';
+      logEntry.recovery_plan_amount = Number(newLog.recovery_plan_amount) || 0;
+      logEntry.recovery_plan_note = newLog.recovery_plan_note?.trim() || '';
     }
 
     saveLog(logEntry);
@@ -575,6 +589,62 @@ export default function ActivityLog({ accountId, draft }) {
               <input type="date" value={newLog.due_date} onChange={e => setNewLog(p => ({ ...p, due_date: e.target.value }))} />
             </div>
           </div>
+
+          {/* v3.17 Phase A1: 타부서 공유 체크박스 */}
+          <div className="form-row full" style={{ background: 'rgba(37, 99, 235, 0.04)', padding: '8px 12px', borderRadius: 6, border: '1px solid rgba(37, 99, 235, 0.2)' }}>
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="cross_dept_share_new"
+                checked={!!newLog.cross_dept_share}
+                onChange={e => setNewLog(p => ({ ...p, cross_dept_share: e.target.checked }))}
+                style={{ width: 16, height: 16, cursor: 'pointer' }}
+              />
+              <label htmlFor="cross_dept_share_new" style={{ cursor: 'pointer', margin: 0, fontSize: 12, fontWeight: 600 }}>
+                🤝 <span style={{ color: '#2563eb' }}>타부서 공유 / 협조 필요</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+                  (체크 시 주간/월간 회의 안건에 별도 표시됨)
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {/* v3.17 Phase A2: 회복 계획 (GAP/지연 메우는 영업활동이 있는 경우) */}
+          <details style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(245, 158, 11, 0.04)', borderRadius: 6, border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#d97706' }}>
+              🎯 회복 계획 (선택) — 미해결 이슈·지연 수주가 언제 회복될 예정인지 입력 시 그 일자까지 리스크 알람 일시 정지
+            </summary>
+            <div className="form-row" style={{ marginTop: 8 }}>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label>예상 회복일</label>
+                <input
+                  type="date"
+                  value={newLog.recovery_plan_date}
+                  onChange={e => setNewLog(p => ({ ...p, recovery_plan_date: e.target.value }))}
+                />
+              </div>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label>예상 회복 금액 (원)</label>
+                <input
+                  type="number"
+                  value={newLog.recovery_plan_amount}
+                  onChange={e => setNewLog(p => ({ ...p, recovery_plan_amount: e.target.value }))}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+            <div className="form-row full">
+              <div className="form-group">
+                <label>회복 계획 메모</label>
+                <input
+                  type="text"
+                  value={newLog.recovery_plan_note}
+                  onChange={e => setNewLog(p => ({ ...p, recovery_plan_note: e.target.value }))}
+                  placeholder="예: 6월 10일 1.5억 수주 예상 — PO 발행 단계"
+                />
+              </div>
+            </div>
+          </details>
 
           <div style={{ textAlign: 'right', marginTop: 8 }}>
             <button className="btn btn-primary" onClick={handleAdd} disabled={!newLog.content.trim()}>로그 추가</button>

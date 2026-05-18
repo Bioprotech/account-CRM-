@@ -71,6 +71,13 @@ export default function GapAnalysis({ draft, update }) {
     updateGap({ causes: next });
   };
 
+  /* ── v3.17 Phase A3: GAP 원인 입력 완성도 검증
+       원인 선택했는데 cause_detail이 비어있으면 GAP 분석 미완성으로 간주
+       (점수 시스템의 3-4 항목 입력 성실도에 반영됨) ── */
+  const hasCauseButNoDetail =
+    (gap.causes || []).length > 0 &&
+    !(gap.cause_detail || '').trim();
+
   /* ── 기회 파이프라인 ── */
   const opportunities = gap.opportunities || [];
 
@@ -197,8 +204,9 @@ export default function GapAnalysis({ draft, update }) {
           })}
         </div>
         <div style={{ marginTop: 8 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: hasCauseButNoDetail ? 'var(--red)' : 'var(--text2)', display: 'block', marginBottom: 4 }}>
             상세 설명 — {planGap?.ytdGap >= 0 ? '초과 달성 원인' : 'Gap 원인 분석'}
+            {(gap.causes || []).length > 0 && <span style={{ color: 'var(--red)', marginLeft: 4 }}>* 필수</span>}
           </label>
           <textarea
             value={gap.cause_detail || ''}
@@ -206,8 +214,18 @@ export default function GapAnalysis({ draft, update }) {
             placeholder={planGap?.ytdGap >= 0
               ? "초과 달성 원인을 구체적으로 기록하세요 (예: 예상외 대량 수주, 경쟁사 이탈 고객 유입 등)"
               : "Gap 원인에 대한 구체적 상황을 기록하세요..."}
-            style={{ minHeight: 60 }}
+            style={{
+              minHeight: 60,
+              borderColor: hasCauseButNoDetail ? 'var(--red)' : undefined,
+              boxShadow: hasCauseButNoDetail ? '0 0 0 2px rgba(220,38,38,0.1)' : undefined,
+            }}
           />
+          {/* v3.17 Phase A3: 원인 선택했는데 상세 미입력 시 경고 */}
+          {hasCauseButNoDetail && (
+            <div style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600, marginTop: 4, padding: '6px 8px', background: 'rgba(220,38,38,0.06)', borderRadius: 4 }}>
+              ⚠ 원인이 선택되었지만 <strong>상세 설명이 비어 있습니다</strong>. 상세 설명 미입력 시 GAP 분석 미실시로 간주되어 담당자 점수에 반영됩니다.
+            </div>
+          )}
         </div>
         {/* 부족분: 대책 / 초과분: 추가 요소 */}
         <div style={{ marginTop: 8 }}>

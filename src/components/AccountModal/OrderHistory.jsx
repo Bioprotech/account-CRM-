@@ -11,7 +11,7 @@ export default function OrderHistory({ accountId }) {
   const [newOrder, setNewOrder] = useState({
     product_category: '',
     order_amount: '',
-    currency: 'USD',
+    currency: 'KRW',
     order_date: today(),
   });
 
@@ -28,7 +28,7 @@ export default function OrderHistory({ accountId }) {
       source: 'manual',
       import_date: today(),
     });
-    setNewOrder({ product_category: '', order_amount: '', currency: 'USD', order_date: today() });
+    setNewOrder({ product_category: '', order_amount: '', currency: 'KRW', order_date: today() });
     setShowForm(false);
   };
 
@@ -69,6 +69,28 @@ export default function OrderHistory({ accountId }) {
 
   const totalAmount = allOrders.reduce((s, o) => s + (o.order_amount || 0), 0);
 
+  // v3.17 Phase A5: 통화별 합계 (혼합 통화 정확하게 표시)
+  //   ProMES import 데이터는 모두 KRW, 수동 입력은 다양함
+  //   기존 하드코딩 $ 표시 버그 수정
+  const totalsByCurrency = {};
+  allOrders.forEach(o => {
+    const cur = o.currency || 'KRW';
+    totalsByCurrency[cur] = (totalsByCurrency[cur] || 0) + (o.order_amount || 0);
+  });
+  const currencySymbol = (cur) => {
+    if (cur === 'KRW') return '₩';
+    if (cur === 'EUR') return '€';
+    if (cur === 'GBP') return '£';
+    if (cur === 'JPY') return '¥';
+    if (cur === 'CNY') return '¥';
+    return '$';
+  };
+  // 가장 비중 큰 통화 1개만 KPI에 표시 (혼합인 경우 별도 표기)
+  const sortedCurrencies = Object.entries(totalsByCurrency).sort((a, b) => b[1] - a[1]);
+  const primaryCurrency = sortedCurrencies[0]?.[0] || 'KRW';
+  const primaryTotal = sortedCurrencies[0]?.[1] || 0;
+  const hasMixedCurrency = sortedCurrencies.length > 1;
+
   return (
     <div>
       {/* 요약 카드 */}
@@ -78,8 +100,15 @@ export default function OrderHistory({ accountId }) {
           <div className="kpi-value" style={{ fontSize: 22 }}>{allOrders.length}</div>
         </div>
         <div className="kpi accent" style={{ padding: 12 }}>
-          <div className="kpi-label">총 수주금액</div>
-          <div className="kpi-value" style={{ fontSize: 22 }}>${totalAmount.toLocaleString()}</div>
+          <div className="kpi-label">총 수주금액 {hasMixedCurrency && <span style={{ fontSize: 9, color: 'var(--text3)' }}>(혼합)</span>}</div>
+          <div className="kpi-value" style={{ fontSize: 22 }}>
+            {currencySymbol(primaryCurrency)}{primaryTotal.toLocaleString()}
+          </div>
+          {hasMixedCurrency && (
+            <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 2 }}>
+              {sortedCurrencies.slice(1).map(([c, v]) => `${currencySymbol(c)}${v.toLocaleString()}`).join(' / ')}
+            </div>
+          )}
         </div>
         <div className="kpi" style={{ padding: 12 }}>
           <div className="kpi-label">마지막 발주일</div>
@@ -113,7 +142,7 @@ export default function OrderHistory({ accountId }) {
                 <div className="dist-bar-wrap" style={{ height: 12 }}>
                   <div className="dist-bar" style={{ width: `${(amt / maxYearly) * 100}%`, background: 'var(--accent)' }} />
                 </div>
-                <span className="dist-count" style={{ width: 'auto', minWidth: 80 }}>${amt.toLocaleString()}</span>
+                <span className="dist-count" style={{ width: 'auto', minWidth: 80 }}>{currencySymbol(primaryCurrency)}{amt.toLocaleString()}</span>
               </div>
             ))}
           </div>
@@ -152,10 +181,12 @@ export default function OrderHistory({ accountId }) {
             <div className="form-group">
               <label>통화</label>
               <select value={newOrder.currency} onChange={e => setNewOrder(p => ({ ...p, currency: e.target.value }))}>
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-                <option value="GBP">GBP</option>
-                <option value="KRW">KRW</option>
+                <option value="KRW">KRW (₩)</option>
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+                <option value="JPY">JPY (¥)</option>
+                <option value="CNY">CNY (¥)</option>
               </select>
             </div>
           </div>

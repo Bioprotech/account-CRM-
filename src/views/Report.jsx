@@ -255,7 +255,9 @@ function TeamTasksSection({ yearMonth, teamTasks, saveTeamTask, removeTeamTask, 
     <div className="card" style={{ marginBottom: 16 }}>
       <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span>■ 6. 팀별 월간 TASK</span>
-        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[{yearMonth} · 고정 5유형 + 자유 입력]</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+          [{yearMonth} · 고정 5유형 + 자유 입력 · <strong style={{ color: '#d97706' }}>⭐ Priority는 영업본부장이 부여하는 지시 우선순위</strong> (Open 이슈의 자동 P1/P2/P3와 별개)]
+        </span>
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>
           전체 {tasksForMonth.length}건 · Open {tasksForMonth.filter(t => t.status === 'Open').length} · 진행중 {tasksForMonth.filter(t => t.status === 'In Progress').length} · 완료 {tasksForMonth.filter(t => t.status === 'Done').length}
         </span>
@@ -5043,14 +5045,7 @@ export default function Report() {
                 <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
                   [Proposal/Evaluation/Closing 단계, 상위 {monthlyReportData.pipelineHighlights.length}건]
                 </span>
-                <a
-                  href="https://bioprotech-crm.web.app"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: '#2563eb', color: '#fff', borderRadius: 4, textDecoration: 'none', fontWeight: 600 }}
-                >
-                  Pipeline CRM 열기 ↗
-                </a>
+                {/* v3.17 Phase A6: "Pipeline CRM 열기" 버튼 제거 — 회의는 PPT로 진행 (사용자 결정) */}
               </div>
               <div className="table-wrap" style={{ maxHeight: 280 }}>
                 <table className="data-table" style={{ fontSize: 11 }}>
