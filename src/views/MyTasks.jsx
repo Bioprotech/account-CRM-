@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
+import { filterValidOrders } from '../lib/aggregation';
 
 /* ══════════════════════════════════════════════════════════════════
    v3.17.11 — MyTasks 페이지
@@ -158,8 +159,7 @@ export default function MyTasks() {
     const myAccs = myAccountIds
       ? (accounts || []).filter(a => myAccountIds.has(a.id))
       : (accounts || []);
-    const VALID = new Set(['excel_import_promes_O', 'excel_import_영업현황']);
-    const validOrders = (ordersAll || []).filter(o => VALID.has(o.source || ''));
+    const validOrders = filterValidOrders(ordersAll);
     const result = [];
     myAccs.forEach(acc => {
       const plan = customerPlans.find(p =>

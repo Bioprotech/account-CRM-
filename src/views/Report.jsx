@@ -6,6 +6,7 @@ import { HBarChart, DonutChart, ProgressBars } from '../components/Charts';
 import { aggregateByRep, classifyForRepView, loadPriorYearCustomers, isDomestic } from '../lib/customerClassification';
 import { getValidSalesReps, getSortedValidReps } from '../lib/salesReps';
 import { computeScore } from '../lib/scoring';
+import { filterValidOrders, filterValidSales } from '../lib/aggregation';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -560,18 +561,9 @@ function MonthlyBreakdownTable({ title, rows }) {
 export default function Report() {
   const { accounts, activityLogs, orders: ordersAll, sales: salesAll, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, showToast } = useAccount();
 
-  // v3.17.10: 수주/매출 source filter — ProMES Excel import만 정답
-  // 영업현황(legacy)도 같이 허용 (전환 과도기) — manual 등은 보고서에서 영구 제외
-  const VALID_ORDER_SOURCES = useMemo(() => new Set(['excel_import_promes_O', 'excel_import_영업현황']), []);
-  const VALID_SALES_SOURCES = useMemo(() => new Set(['excel_import_promes_S', 'excel_import_영업현황_S']), []);
-  const orders = useMemo(
-    () => (ordersAll || []).filter(o => VALID_ORDER_SOURCES.has(o.source || '')),
-    [ordersAll, VALID_ORDER_SOURCES]
-  );
-  const sales = useMemo(
-    () => (salesAll || []).filter(s => VALID_SALES_SOURCES.has(s.source || '')),
-    [salesAll, VALID_SALES_SOURCES]
-  );
+  // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용 — 모든 화면 일관성 보장
+  const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
+  const sales = useMemo(() => filterValidSales(salesAll), [salesAll]);
 
   // 전년도 수주 고객 Set (신규 vs 기타 판별용) — appSettings 우선, localStorage fallback
   const priorYearSet = useMemo(() => {
@@ -4055,89 +4047,10 @@ export default function Report() {
   /* ══════════════════════════════
      RENDER
      ══════════════════════════════ */
-  // v3.17.11: 데이터 무결성 배너 데이터 (보고서/대시보드에 집계되는 데이터의 source 분포)
-  const integrityInfo = useMemo(() => {
-    const yearStr = String(new Date().getFullYear());
-    const monthStr = String(new Date().getMonth() + 1).padStart(2, '0');
-    const periodOrders = (ordersAll || []).filter(o => (o.order_date || '').startsWith(yearStr + '-'));
-    const periodSales = (salesAll || []).filter(s => (s.sale_date || '').startsWith(yearStr + '-'));
-    const cnt = { promes: 0, legacy: 0, manual: 0, other: 0 };
-    const amt = { promes: 0, legacy: 0, manual: 0, other: 0 };
-    let lastPromesImport = '';
-    periodOrders.forEach(o => {
-      const src = o.source || '';
-      const a = o.order_amount || 0;
-      let b;
-      if (src === 'excel_import_promes_O') b = 'promes';
-      else if (src === 'excel_import_영업현황') b = 'legacy';
-      else if (!src) b = 'manual';
-      else b = 'other';
-      cnt[b]++; amt[b] += a;
-      if (src === 'excel_import_promes_O' && o.import_date && o.import_date > lastPromesImport) {
-        lastPromesImport = o.import_date;
-      }
-    });
-    const ignoredCnt = cnt.manual + cnt.other;
-    const ignoredAmt = amt.manual + amt.other;
-    const ytdActual = orders
-      .filter(o => (o.order_date || '').startsWith(yearStr + '-'))
-      .reduce((s, o) => s + (o.order_amount || 0), 0);
-    return {
-      promesCnt: cnt.promes, promesAmt: amt.promes,
-      legacyCnt: cnt.legacy, legacyAmt: amt.legacy,
-      ignoredCnt, ignoredAmt,
-      lastPromesImport,
-      ytdActual,
-      yearStr, monthStr,
-    };
-  }, [ordersAll, salesAll, orders]);
-
-  const fmtKRWShort = (n) => {
-    if (!n) return '0';
-    const abs = Math.abs(n);
-    if (abs >= 100000000) return (abs / 100000000).toFixed(1) + '억';
-    if (abs >= 10000) return Math.round(abs / 10000).toLocaleString() + '만';
-    return Math.round(abs).toLocaleString();
-  };
+  // v3.18: 데이터 무결성 배너는 Settings로 이동 (사용자 요청)
 
   return (
     <div>
-      {/* v3.17.11: 데이터 무결성 배너 — 보고서 수치가 어떤 source로 집계되었는지 항상 표시 */}
-      <div style={{
-        padding: '8px 12px',
-        marginBottom: 12,
-        background: integrityInfo.ignoredCnt > 0 ? 'rgba(245,158,11,0.06)' : 'rgba(34,197,94,0.04)',
-        border: `1px solid ${integrityInfo.ignoredCnt > 0 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.2)'}`,
-        borderRadius: 6,
-        fontSize: 11,
-        display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-      }}>
-        <span style={{ fontWeight: 700, color: integrityInfo.ignoredCnt > 0 ? '#b45309' : '#16a34a' }}>
-          {integrityInfo.ignoredCnt > 0 ? '⚠' : '✅'} 데이터 무결성
-        </span>
-        <span>
-          🆕 ProMES <strong>{integrityInfo.promesCnt.toLocaleString()}건</strong> ({fmtKRWShort(integrityInfo.promesAmt)})
-        </span>
-        {integrityInfo.legacyCnt > 0 && (
-          <span style={{ color: '#d97706' }}>
-            📂 영업현황 잔여 <strong>{integrityInfo.legacyCnt.toLocaleString()}건</strong> ({fmtKRWShort(integrityInfo.legacyAmt)})
-          </span>
-        )}
-        <span style={{ color: 'var(--text2)' }}>
-          → 보고서 집계: <strong>{fmtKRWShort(integrityInfo.ytdActual)}</strong> ({integrityInfo.yearStr}년 YTD)
-        </span>
-        {integrityInfo.ignoredCnt > 0 && (
-          <span style={{ color: '#b45309', fontWeight: 600 }}>
-            🚫 집계 제외 <strong>{integrityInfo.ignoredCnt.toLocaleString()}건</strong> ({fmtKRWShort(integrityInfo.ignoredAmt)}) — manual/기타 source
-          </span>
-        )}
-        {integrityInfo.lastPromesImport && (
-          <span style={{ color: 'var(--text3)', marginLeft: 'auto', fontSize: 10 }}>
-            마지막 ProMES import: {integrityInfo.lastPromesImport}
-          </span>
-        )}
-      </div>
-
       {/* Tab bar + download */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 4 }}>

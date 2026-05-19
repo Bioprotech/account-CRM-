@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource } from '../lib/firebase';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource, subscribeImportAuditLogs, saveImportAuditLog as fbSaveAuditLog, deleteImportAuditLog as fbDeleteAuditLog } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -92,6 +92,7 @@ export default function AccountProvider({ children }) {
   const [forecasts, setForecasts] = useState([]);
   const [businessPlans, setBusinessPlans] = useState([]);
   const [teamTasks, setTeamTasks] = useState([]);              // Phase C v3.2
+  const [importAuditLogs, setImportAuditLogs] = useState([]);  // v3.18 — Import 시점 raw 합계 원장
   const [pipelineCustomers, setPipelineCustomers] = useState([]);  // Phase C v3.2 (read-only)
   const [fbStatus, setFbStatus] = useState(FIREBASE_ENABLED ? 'connecting' : 'disabled');
 
@@ -122,8 +123,9 @@ export default function AccountProvider({ children }) {
     const unsub7 = subscribeSales((data) => setSales(data));
     const unsub8 = subscribeTeamTasks((data) => setTeamTasks(data));
     const unsub9 = subscribePipelineCustomers((data) => setPipelineCustomers(data));
+    const unsub10 = subscribeImportAuditLogs((data) => setImportAuditLogs(data));
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); };
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); };
   }, []);
 
   // v3.4: 대용량 localStorage 백업 완전 제거 — Firebase가 원본 소스로 충분
@@ -582,6 +584,23 @@ export default function AccountProvider({ children }) {
     if (FIREBASE_ENABLED) { try { await fbDeleteTask(id); } catch {} }
   }, []);
 
+  /* ── Import Audit Logs (v3.18) ── */
+  const saveImportAuditLog = useCallback(async (log) => {
+    setImportAuditLogs(prev => {
+      const idx = prev.findIndex(l => l.id === log.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = log; return next; }
+      return [log, ...prev];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveAuditLog(log); } catch (e) { console.error('Audit log 저장 실패:', e); }
+    }
+  }, []);
+
+  const removeImportAuditLog = useCallback(async (id) => {
+    setImportAuditLogs(prev => prev.filter(l => l.id !== id));
+    if (FIREBASE_ENABLED) { try { await fbDeleteAuditLog(id); } catch {} }
+  }, []);
+
   /* ── Filters ── */
   const [filters, setFilters] = useState({
     searchQ: '', region: '', salesRep: '', businessType: '', product: '', scoreRange: '',
@@ -910,7 +929,7 @@ export default function AccountProvider({ children }) {
     effectiveCurrentUser, effectiveIsAdmin,
     accounts, filteredAccounts, visibleAccounts,
     activityLogs, openIssues,
-    orders, sales, contracts, forecasts, businessPlans, teamTasks, pipelineCustomers, alarms,
+    orders, sales, contracts, forecasts, businessPlans, teamTasks, pipelineCustomers, alarms, importAuditLogs,
     filters, setFilters,
     currentTab, setCurrentTab,
     editingAccount, setEditingAccount,
@@ -924,6 +943,7 @@ export default function AccountProvider({ children }) {
     importBusinessPlans, clearBusinessPlans, getPlansForAccount,
     applyFuzzyMatches,
     saveTeamTask, removeTeamTask,
+    saveImportAuditLog, removeImportAuditLog,
     toast, showToast,
     fbStatus,
     teamMembers, saveTeamMembers,

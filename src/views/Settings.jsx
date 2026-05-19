@@ -6,6 +6,7 @@ import { savePriorYearCustomers, loadPriorYearCustomers, suggestCustomerCategory
 import { combinedSimilarity, normalizeCompanyName, confidenceLabel } from '../lib/fuzzyMatch';
 import { CUSTOMER_CATEGORIES } from '../lib/constants';
 import { deleteOrder } from '../lib/firebase';
+import { validateDataIntegrity, analyzeOrdersSourceDistribution, analyzeSalesSourceDistribution, filterValidOrders, filterValidSales, sumOrderAmountByPeriod, sumSalesAmountByPeriod, SOURCE_LABELS } from '../lib/aggregation';
 
 // v3.4: 엑셀 날짜 시리얼/문자열 → YYYY-MM-DD 변환 (강화)
 // 이전 버전은 문자열 그대로 반환 → "4/23/2026" 등 비표준이 주간 범위 비교에서 실패
@@ -336,7 +337,7 @@ function BulkClassificationTool({ accounts, businessPlans, appSettings, saveAcco
      - ⚠ 주간 리포트 일자 정밀도: 월 첫째 날(YYYY-MM-01)로 정규화
        → "월목표 대비 누적실적" 표시는 정상
    ══════════════════════════════════════════════════════════════════ */
-function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, importSales, showToast }) {
+function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, importSales, showToast, saveImportAuditLog }) {
   const orderFileRef = useRef();
   const salesFileRef = useRef();
   const [orderPreview, setOrderPreview] = useState(null);
@@ -714,6 +715,51 @@ function PromesImportTool({ accounts, saveAccount, orders, sales, importOrders, 
       }
       if (newSales.length > 0) {
         await importSales(newSales, 'excel_import_promes_S');
+      }
+
+      // v3.18: Import Audit Log — 불변 원장에 raw 합계 자동 기록 (검증 기준)
+      if (saveImportAuditLog) {
+        const nowIso = new Date().toISOString();
+        for (const yearStr of importYears) {
+          const yearOrders = newOrders.filter(o => (o.order_date || '').startsWith(yearStr + '-'));
+          const yearSales = newSales.filter(s => (s.sale_date || '').startsWith(yearStr + '-'));
+          if (yearOrders.length > 0) {
+            const monthlyMap = {};
+            yearOrders.forEach(o => {
+              const m = (o.order_date || '').slice(5, 7);
+              monthlyMap[m] = (monthlyMap[m] || 0) + (o.order_amount || 0);
+            });
+            await saveImportAuditLog({
+              id: `audit_orders_${yearStr}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'orders',
+              source: 'excel_import_promes_O',
+              year: yearStr,
+              count: yearOrders.length,
+              total_amount: yearOrders.reduce((s, o) => s + (o.order_amount || 0), 0),
+              monthly_amounts: monthlyMap,
+              created_at: nowIso,
+              import_date: importDate,
+            });
+          }
+          if (yearSales.length > 0) {
+            const monthlyMap = {};
+            yearSales.forEach(s => {
+              const m = (s.sale_date || '').slice(5, 7);
+              monthlyMap[m] = (monthlyMap[m] || 0) + (s.sale_amount || 0);
+            });
+            await saveImportAuditLog({
+              id: `audit_sales_${yearStr}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'sales',
+              source: 'excel_import_promes_S',
+              year: yearStr,
+              count: yearSales.length,
+              total_amount: yearSales.reduce((s, x) => s + (x.sale_amount || 0), 0),
+              monthly_amounts: monthlyMap,
+              created_at: nowIso,
+              import_date: importDate,
+            });
+          }
+        }
       }
 
       // ── 전년도 고객 목록 갱신 (수주 데이터로 — 분류 자동 추천에 사용) ──
@@ -1097,6 +1143,204 @@ function PromesBackfillTool({ orders, sales, importOrders, importSales, showToas
    ProMES source (excel_import_promes_O / _S) 데이터는 영향 없음.
    삭제할 데이터가 없으면 카드 자동으로 숨김.
    ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   v3.18 — 데이터 무결성 종합 진단 카드
+   ──────────────────────────────────────────────────────────────────
+   ① source 분포 (whitelist 위반 자동 감지)
+   ② Import Audit Log vs DB 현재 합계 자동 비교
+   ③ 검사 항목별 OK/WARN/ERROR 상태
+   ④ Import 이력 표 (timestamp + 합계, 월별)
+   ══════════════════════════════════════════════════════════════════ */
+function IntegrityDashboard({ ordersAll, salesAll, businessPlans, importAuditLogs, removeImportAuditLog, showToast }) {
+  const yearStr = String(new Date().getFullYear());
+
+  const issues = useMemo(
+    () => validateDataIntegrity({ ordersAll, salesAll, businessPlans, importAuditLogs, year: yearStr }),
+    [ordersAll, salesAll, businessPlans, importAuditLogs, yearStr]
+  );
+  const oDist = useMemo(() => analyzeOrdersSourceDistribution(ordersAll, { year: yearStr }), [ordersAll, yearStr]);
+  const sDist = useMemo(() => analyzeSalesSourceDistribution(salesAll, { year: yearStr }), [salesAll, yearStr]);
+
+  const dbOrdersYTD = useMemo(() => sumOrderAmountByPeriod(filterValidOrders(ordersAll), { year: yearStr }), [ordersAll, yearStr]);
+  const dbSalesYTD = useMemo(() => sumSalesAmountByPeriod(filterValidSales(salesAll), { year: yearStr }), [salesAll, yearStr]);
+
+  const fmt = (n) => {
+    if (!n) return '0';
+    const abs = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (abs >= 100000000) return sign + (abs / 100000000).toFixed(2) + '억';
+    if (abs >= 10000) return sign + Math.round(abs / 10000).toLocaleString() + '만';
+    return sign + Math.round(abs).toLocaleString();
+  };
+
+  const errorCount = issues.filter(i => i.level === 'error').length;
+  const warnCount = issues.filter(i => i.level === 'warn').length;
+  const okCount = issues.filter(i => i.level === 'ok').length;
+  const overallStatus = errorCount > 0 ? 'error' : warnCount > 0 ? 'warn' : 'ok';
+  const overallColor = overallStatus === 'error' ? 'var(--red)' : overallStatus === 'warn' ? '#d97706' : '#16a34a';
+  const overallLabel = overallStatus === 'error' ? '🚫 무결성 오류' : overallStatus === 'warn' ? '⚠ 주의' : '✅ 정상';
+
+  const recentAuditLogs = useMemo(() => {
+    return [...(importAuditLogs || [])]
+      .filter(l => l.year === yearStr)
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+      .slice(0, 8);
+  }, [importAuditLogs, yearStr]);
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: `4px solid ${overallColor}` }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>🛡 데이터 무결성 대시보드</span>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: overallColor, color: '#fff' }}>
+          {overallLabel}
+        </span>
+        <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+          [v3.18 단일 정답 원칙 + Import Audit + 자동 검증]
+        </span>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.5 }}>
+        모든 화면(보고서·대시보드·진도관리·MyTasks)이 단일 집계 함수(<code>lib/aggregation.js</code>)를 사용 →
+        whitelist(<code>excel_import_promes_O/S</code> + <code>excel_import_영업현황_O/S</code>) 외 데이터는 자동 제외.<br />
+        Import 시점에 raw 합계가 자동 기록(불변 원장)되어 DB 현재 합계와 1:1 비교 → 코드 수정 후 차이 발생 즉시 식별.
+      </p>
+
+      {/* 한눈에 상태 — KPI 4개 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 12 }}>
+        <div className="kpi" style={{ padding: 10 }}>
+          <div className="kpi-label">검사 항목</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>
+            <span style={{ color: '#16a34a' }}>{okCount}</span>
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}> / </span>
+            <span style={{ color: '#d97706' }}>{warnCount}</span>
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}> / </span>
+            <span style={{ color: 'var(--red)' }}>{errorCount}</span>
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--text3)' }}>OK / WARN / ERROR</div>
+        </div>
+        <div className="kpi accent" style={{ padding: 10 }}>
+          <div className="kpi-label">수주 YTD (보고서 집계)</div>
+          <div className="kpi-value" style={{ fontSize: 18 }}>{fmt(dbOrdersYTD)}</div>
+          <div style={{ fontSize: 9, color: 'var(--text3)' }}>
+            ProMES {oDist.counts.promes}건 + 영업현황 {oDist.counts.legacy}건
+          </div>
+        </div>
+        <div className="kpi" style={{ padding: 10 }}>
+          <div className="kpi-label">매출 YTD (보고서 집계)</div>
+          <div className="kpi-value" style={{ fontSize: 18 }}>{fmt(dbSalesYTD)}</div>
+          <div style={{ fontSize: 9, color: 'var(--text3)' }}>
+            ProMES {sDist.counts.promes}건 + 영업현황 {sDist.counts.legacy}건
+          </div>
+        </div>
+        <div className="kpi" style={{ padding: 10 }}>
+          <div className="kpi-label">집계 제외 (manual/기타)</div>
+          <div className="kpi-value" style={{ fontSize: 16, color: (oDist.ignoredCount + sDist.ignoredCount) > 0 ? 'var(--red)' : '#16a34a' }}>
+            수주 {oDist.ignoredCount}건<br />매출 {sDist.ignoredCount}건
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--text3)' }}>
+            {(oDist.ignoredCount + sDist.ignoredCount) > 0 ? '⚠ 정리 권장' : '✅ 깨끗'}
+          </div>
+        </div>
+      </div>
+
+      {/* 검사 항목 상세 */}
+      <details open style={{ marginBottom: 12 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+          🔬 검사 항목 ({issues.length})
+        </summary>
+        <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+          {issues.map((iss, i) => {
+            const color = iss.level === 'error' ? 'var(--red)' : iss.level === 'warn' ? '#d97706' : '#16a34a';
+            const bg = iss.level === 'error' ? 'rgba(220,38,38,0.06)' : iss.level === 'warn' ? 'rgba(245,158,11,0.06)' : 'rgba(34,197,94,0.04)';
+            return (
+              <div key={i} style={{ padding: '6px 10px', background: bg, borderLeft: `3px solid ${color}`, borderRadius: 3, fontSize: 11 }}>
+                <div style={{ fontWeight: 600 }}>{iss.message}</div>
+                {iss.detail && (
+                  <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 2 }}>↳ {iss.detail}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </details>
+
+      {/* Import Audit Log 이력 */}
+      <details>
+        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+          📜 Import 이력 (최근 {recentAuditLogs.length}건 / {yearStr}년)
+        </summary>
+        {recentAuditLogs.length === 0 ? (
+          <div style={{ fontSize: 11, color: 'var(--text3)', padding: 8 }}>
+            아직 기록된 Import이 없습니다. 다음 ProMES Import부터 자동으로 기록되어 추후 검증 기준이 됩니다.
+          </div>
+        ) : (
+          <table style={{ fontSize: 10, width: '100%', marginTop: 6 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg2)' }}>
+                <th style={{ textAlign: 'left', padding: 4 }}>시각</th>
+                <th style={{ textAlign: 'left', padding: 4 }}>유형</th>
+                <th style={{ textAlign: 'right', padding: 4 }}>건수</th>
+                <th style={{ textAlign: 'right', padding: 4 }}>합계</th>
+                <th style={{ textAlign: 'right', padding: 4 }}>DB 현재</th>
+                <th style={{ textAlign: 'right', padding: 4 }}>차이</th>
+                <th style={{ textAlign: 'center', padding: 4 }}>월별</th>
+                <th style={{ width: 30 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentAuditLogs.map(log => {
+                const dbTotal = log.type === 'orders'
+                  ? sumOrderAmountByPeriod(filterValidOrders(ordersAll), { year: log.year })
+                  : sumSalesAmountByPeriod(filterValidSales(salesAll), { year: log.year });
+                const diff = dbTotal - (log.total_amount || 0);
+                const diffPct = log.total_amount > 0 ? (diff / log.total_amount) * 100 : 0;
+                const diffColor = Math.abs(diffPct) > 0.5 ? 'var(--red)' : '#16a34a';
+                const monthly = log.monthly_amounts || {};
+                const months = Object.keys(monthly).sort();
+                return (
+                  <tr key={log.id}>
+                    <td style={{ padding: 4, fontFamily: 'monospace', fontSize: 9 }}>
+                      {(log.created_at || '').slice(0, 16).replace('T', ' ')}
+                    </td>
+                    <td style={{ padding: 4 }}>
+                      {log.type === 'orders' ? '🆕 수주' : '💰 매출'}
+                    </td>
+                    <td style={{ padding: 4, textAlign: 'right' }}>{(log.count || 0).toLocaleString()}</td>
+                    <td style={{ padding: 4, textAlign: 'right', fontWeight: 600 }}>{fmt(log.total_amount)}</td>
+                    <td style={{ padding: 4, textAlign: 'right' }}>{fmt(dbTotal)}</td>
+                    <td style={{ padding: 4, textAlign: 'right', color: diffColor, fontWeight: 700 }}>
+                      {Math.abs(diffPct) > 0.5 ? `${fmt(diff)} (${diffPct.toFixed(1)}%)` : '일치 ✓'}
+                    </td>
+                    <td style={{ padding: 4, fontSize: 9 }}>
+                      {months.map(m => `${parseInt(m, 10)}월:${fmt(monthly[m])}`).join(' ')}
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => {
+                          if (confirm('이 Audit Log 항목을 삭제하시겠습니까?')) {
+                            removeImportAuditLog?.(log.id);
+                            showToast?.('Audit Log 삭제됨', 'success');
+                          }
+                        }}
+                        style={{ fontSize: 9, padding: '1px 4px', background: 'transparent', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 2, cursor: 'pointer' }}
+                        title="삭제"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text3)' }}>
+          💡 Import Audit Log는 ProMES Import 시 자동 기록됩니다 (raw 합계 + 월별 분포). 추후 코드 수정 후 DB 합계와 비교 → 차이 발생 즉시 알림.
+        </div>
+      </details>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════════
    v3.17.10 — Manual 수주 데이터 일괄 정리 도구
    ──────────────────────────────────────────────────────────────────
@@ -2821,7 +3065,7 @@ function FuzzyMatchAnalyzer({ accounts, orders, sales, businessPlans, applyFuzzy
 }
 
 export default function Settings() {
-  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches, mergeAccounts, appSettings, activityLogs, saveLog } = useAccount();
+  const { accounts, saveAccount, importOrders, importSales, importBusinessPlans, businessPlans, clearBusinessPlans, orders, sales, forecasts, saveForecast, removeForecast, showToast, isAdmin, teamMembers, saveTeamMembers, applyFuzzyMatches, mergeAccounts, appSettings, activityLogs, saveLog, importAuditLogs, saveImportAuditLog, removeImportAuditLog } = useAccount();
 
   /* ══════════════════════════════════════
      팀 멤버 관리
@@ -4405,6 +4649,16 @@ export default function Settings() {
         )}
       </div>
 
+      {/* ── v3.18: 데이터 무결성 대시보드 (보고서 배너에서 이동) ── */}
+      <IntegrityDashboard
+        ordersAll={orders}
+        salesAll={sales}
+        businessPlans={businessPlans}
+        importAuditLogs={importAuditLogs}
+        removeImportAuditLog={removeImportAuditLog}
+        showToast={showToast}
+      />
+
       {/* ── v3.13: ProMES 영업통계 Import (현재 권장) ── */}
       <PromesImportTool
         accounts={accounts}
@@ -4414,6 +4668,7 @@ export default function Settings() {
         importOrders={importOrders}
         importSales={importSales}
         showToast={showToast}
+        saveImportAuditLog={saveImportAuditLog}
       />
 
       {/* v3.15.2: PromesBackfillTool 제거됨 — 옵션 B 선택 (월 단위 운영) */}

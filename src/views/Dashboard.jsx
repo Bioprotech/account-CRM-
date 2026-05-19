@@ -5,6 +5,7 @@ import { daysSince, scoreColorClass } from '../lib/utils';
 import { classifyCustomers, classifyForRepView, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
 import { getSortedValidReps } from '../lib/salesReps';
 import { computeScore } from '../lib/scoring';
+import { filterValidOrders } from '../lib/aggregation';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -325,12 +326,8 @@ export default function Dashboard() {
   const accountCtx = useAccount();
   const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders: ordersAll, businessPlans, forecasts, contracts, saveAccount, showToast, appSettings, teamMembers } = accountCtx;
 
-  // v3.17.10: 수주 source filter — 보고서/대시보드는 ProMES Excel import만 정답 (manual 영구 제외)
-  const VALID_ORDER_SOURCES = useMemo(() => new Set(['excel_import_promes_O', 'excel_import_영업현황']), []);
-  const orders = useMemo(
-    () => (ordersAll || []).filter(o => VALID_ORDER_SOURCES.has(o.source || '')),
-    [ordersAll, VALID_ORDER_SOURCES]
-  );
+  // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
+  const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
   // v3.17 Phase D: 관리자가 viewAsRep 설정 시 그 담당자처럼 동작
   const currentUser = accountCtx.effectiveCurrentUser ?? accountCtx.currentUser;
   const isAdmin = accountCtx.effectiveIsAdmin ?? accountCtx.isAdmin;

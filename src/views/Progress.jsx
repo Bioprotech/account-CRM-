@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
+import { filterValidOrders } from '../lib/aggregation';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -27,11 +28,8 @@ function fmtKRW(n) {
 export default function Progress() {
   const { businessPlans, orders: ordersAll, accounts, setEditingAccount } = useAccount();
 
-  // v3.17.10: 수주 source filter (ProMES + 영업현황만 — manual 영구 제외)
-  const orders = useMemo(() => {
-    const VALID = new Set(['excel_import_promes_O', 'excel_import_영업현황']);
-    return (ordersAll || []).filter(o => VALID.has(o.source || ''));
-  }, [ordersAll]);
+  // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
+  const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
 
   // 고객별 사업계획 (product plans 제외)
   const customerPlans = useMemo(() =>

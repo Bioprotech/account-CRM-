@@ -31,6 +31,7 @@ const FORECASTS_COL = 'forecasts';
 const PLANS_COL = 'business_plans';
 const TASKS_COL = 'team_tasks';           // Phase C v3.2 — 팀별 TASK
 const PIPELINE_COL = 'customers';          // Phase C v3.2 — Pipeline CRM 하이브리드 (read-only)
+const AUDIT_LOG_COL = 'import_audit_logs'; // v3.18 — Import 시점 raw 합계 불변 원장
 
 let db = null;
 export let FIREBASE_ENABLED = false;
@@ -272,6 +273,35 @@ export async function saveTeamTask(task) {
 export async function deleteTeamTask(id) {
   if (!FIREBASE_ENABLED) return;
   await deleteDoc(doc(db, TASKS_COL, id));
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v3.18 — Import Audit Logs (불변 원장)
+   ──────────────────────────────────────────────────────────────────
+   ProMES Excel import 시점에 raw 합계를 자동 기록.
+   추후 DB 상태가 변해도 import 당시 정답 합계를 보존 → 검증 가능.
+   ══════════════════════════════════════════════════════════════════ */
+export function subscribeImportAuditLogs(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  const col = collection(db, AUDIT_LOG_COL);
+  return onSnapshot(col,
+    (snap) => {
+      const list = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+      list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      callback(list);
+    },
+    (err) => console.error('[Firebase] import_audit_logs onSnapshot 오류:', err)
+  );
+}
+
+export async function saveImportAuditLog(log) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, AUDIT_LOG_COL, log.id), log);
+}
+
+export async function deleteImportAuditLog(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, AUDIT_LOG_COL, id));
 }
 
 /* ── Pipeline CRM Customers (read-only 구독, Phase C v3.2) ── */
