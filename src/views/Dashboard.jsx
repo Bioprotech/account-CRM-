@@ -34,8 +34,8 @@ function pctColor(p) {
  * v3.17 Phase D — 점수 카드 (담당자 1명)
  *   100점 만점 시각화 + 영업성과/품질/감점 분해
  */
-function ScoreCardSection({ rep, accounts, activityLogs, orders, businessPlans }) {
-  const yearMonth = new Date().toISOString().slice(0, 7);
+function ScoreCardSection({ rep, accounts, activityLogs, orders, businessPlans, yearMonth: yearMonthProp }) {
+  const yearMonth = yearMonthProp || new Date().toISOString().slice(0, 7);
   const result = useMemo(
     () => computeScore({ rep, accounts, activityLogs, orders, businessPlans, yearMonth }),
     [rep, accounts, activityLogs, orders, businessPlans, yearMonth]
@@ -176,8 +176,8 @@ function ScoreCardSection({ rep, accounts, activityLogs, orders, businessPlans }
 /**
  * v3.17 Phase D — 팀 점수 종합표 (관리자 + 전체 시점)
  */
-function TeamScoreboard({ teamMembers, accounts, activityLogs, orders, businessPlans }) {
-  const yearMonth = new Date().toISOString().slice(0, 7);
+function TeamScoreboard({ teamMembers, accounts, activityLogs, orders, businessPlans, yearMonth: yearMonthProp }) {
+  const yearMonth = yearMonthProp || new Date().toISOString().slice(0, 7);
   const scores = useMemo(() => {
     return (teamMembers || []).map(rep => ({
       rep,
@@ -332,6 +332,19 @@ export default function Dashboard() {
   const currentUser = accountCtx.effectiveCurrentUser ?? accountCtx.currentUser;
   const isAdmin = accountCtx.effectiveIsAdmin ?? accountCtx.isAdmin;
   const viewAsRep = accountCtx.viewAsRep;
+
+  // v3.21: 담당자 활동 점수 비교 월 (이번 달 ~ 5달 전 선택 가능)
+  const [scoreYearMonth, setScoreYearMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      opts.push({ value: ym, label: i === 0 ? `${ym} (이번 달)` : `${ym}` });
+    }
+    return opts;
+  }, []);
 
   // 전년도 수주 Set + 유효 담당자 (신 분류 체계)
   const priorYearSet = useMemo(() => {
@@ -861,6 +874,25 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* v3.21: 담당자 활동 점수 — 월 선택 드롭다운 (월단위 비교 가능) */}
+      {((currentUser && !isAdmin) || (isAdmin && viewAsRep) || (isAdmin && !viewAsRep && teamMembers && teamMembers.length > 0)) && (
+        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--text2)' }}>📅 활동 점수 기준 월:</span>
+          <select
+            value={scoreYearMonth}
+            onChange={(e) => setScoreYearMonth(e.target.value)}
+            style={{ fontSize: 11, padding: '3px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg)', color: 'var(--text)' }}
+          >
+            {monthOptions.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+            ※ 최근 6개월 중 선택 · 월별 활동·실적·CRM 품질 비교 가능
+          </span>
+        </div>
+      )}
+
       {/* v3.17 Phase D: 담당자별 점수 카드 (개별 담당자 또는 viewAsRep 시 표시) */}
       {(currentUser && !isAdmin) && (
         <ScoreCardSection
@@ -869,6 +901,7 @@ export default function Dashboard() {
           activityLogs={activityLogs}
           orders={orders}
           businessPlans={businessPlans}
+          yearMonth={scoreYearMonth}
         />
       )}
       {/* 관리자 + viewAsRep: 그 담당자 점수 */}
@@ -879,6 +912,7 @@ export default function Dashboard() {
           activityLogs={activityLogs}
           orders={orders}
           businessPlans={businessPlans}
+          yearMonth={scoreYearMonth}
         />
       )}
       {/* 관리자 (전체 시점): 전 담당자 점수 표 */}
@@ -889,6 +923,7 @@ export default function Dashboard() {
           activityLogs={activityLogs}
           orders={orders}
           businessPlans={businessPlans}
+          yearMonth={scoreYearMonth}
         />
       )}
 

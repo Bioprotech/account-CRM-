@@ -228,6 +228,100 @@ function ChapterHeader({ page, total, title, subtitle, color = 'var(--accent)' }
    Phase C v3.3 — 팀별 TASK 섹션 (#14)
    team_tasks Firestore collection 활용
    ══════════════════════════════════════════════════════════════════ */
+/* v3.21: ■ 5 안에 인라인 TASK 추가 폼 (다음달 계획 textarea 옆에서 바로 등록) */
+function InlineTaskAddForm({ team, yearMonth, saveTeamTask, showToast }) {
+  const [open, setOpen] = useState(false);
+  const [content, setContent] = useState('');
+  const [assignee, setAssignee] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [priority, setPriority] = useState('P2');
+  const [taskType, setTaskType] = useState('quota_recovery');
+
+  const handleAdd = () => {
+    if (!content.trim()) {
+      showToast?.('TASK 내용을 입력하세요', 'warning');
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const id = `task_${yearMonth}_${team}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    saveTeamTask({
+      id, year_month: yearMonth, team,
+      task_type: taskType,
+      content: content.trim(),
+      assignee, due_date: dueDate,
+      priority, status: 'Open',
+      created_at: nowIso, updated_at: nowIso,
+    });
+    showToast?.(`📌 TASK 등록: ${content.slice(0, 30)}`, 'success');
+    setContent(''); setAssignee(''); setDueDate(''); setPriority('P2');
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        style={{ fontSize: 10, padding: '4px 10px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}
+      >
+        + TASK 추가
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ padding: 8, background: 'var(--bg)', border: '1px dashed var(--accent)', borderRadius: 4 }}>
+      <div style={{ display: 'grid', gap: 4 }}>
+        <input
+          type="text"
+          value={content}
+          onChange={e => setContent(e.target.value)}
+          placeholder="TASK 내용 (예: 5월 신규 기회 발굴)"
+          style={{ fontSize: 11, padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 3, width: '100%', boxSizing: 'border-box' }}
+          autoFocus
+        />
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input
+            type="text"
+            value={assignee}
+            onChange={e => setAssignee(e.target.value)}
+            placeholder="담당자"
+            style={{ flex: 1, fontSize: 11, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 3 }}
+          />
+          <input
+            type="date"
+            value={dueDate}
+            onChange={e => setDueDate(e.target.value)}
+            style={{ fontSize: 11, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 3 }}
+          />
+          <select
+            value={priority}
+            onChange={e => setPriority(e.target.value)}
+            style={{ fontSize: 11, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 3 }}
+          >
+            <option value="P1">P1 (긴급)</option>
+            <option value="P2">P2 (주요)</option>
+            <option value="P3">P3 (일반)</option>
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { setOpen(false); setContent(''); setAssignee(''); setDueDate(''); }}
+            style={{ fontSize: 10, padding: '3px 8px', background: 'var(--bg2)', color: 'var(--text2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}
+          >
+            취소
+          </button>
+          <button
+            onClick={handleAdd}
+            style={{ fontSize: 10, padding: '3px 8px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}
+          >
+            등록
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TeamTasksSection({ yearMonth, teamTasks, saveTeamTask, removeTeamTask, showToast }) {
   const [addingTeam, setAddingTeam] = useState(null); // '해외영업' | '국내영업' | '영업지원'
   const [editingId, setEditingId] = useState(null);
@@ -618,6 +712,8 @@ export default function Report() {
   const [nextMonthPlan, setNextMonthPlan] = useState({ overseas: '', domestic: '', support: '' });
   // v3.20: 주간 보고 — 수주/매출 예측액 (담당자 직접 입력, 주차별 Firestore 저장)
   const [weeklyForecast, setWeeklyForecast] = useState({ orders: {}, sales: {} });
+  // v3.21: Auto Executive Summary 사용자 override (월별 Firestore 저장)
+  const [autoSummaryOverride, setAutoSummaryOverride] = useState({ lines: ['', '', '', ''], enabled: false });
   // 담당자별 실적 드릴다운 토글 (신규/기타 고객 리스트 펼침)
   const [repDrillOpen, setRepDrillOpen] = useState({}); // { [repKey]: boolean }
   const toggleRepDrill = (key) => setRepDrillOpen(prev => ({ ...prev, [key]: !prev[key] }));
@@ -3338,6 +3434,82 @@ export default function Report() {
     const totalDone = thisMonthTasksFromPrev.filter(t => t.status === 'Done').length;
     const overallExecutionRate = totalPlanned > 0 ? Math.round((totalDone / totalPlanned) * 100) : null;
 
+    // v3.21: 기회 파이프라인 (모든 미래) — 사용자 요청: ERBE 등 모든 cross_selling 표시
+    // 차월 한정 monthlyPipeline과 별개로, 오늘 이후 모든 미래 cross_selling/gap.opportunities/recovery_plan 수집
+    const allOpportunities = (() => {
+      const today = new Date();
+      today.setDate(today.getDate() - 1);
+      const todayStr = today.toISOString().slice(0, 10);
+      const items = [];
+      (accounts || []).forEach(a => {
+        // ① 크로스셀링 탭 (account.cross_selling[])
+        (a.cross_selling || []).forEach(c => {
+          if (c.status === '수주완료' || c.status === 'closed' || c.status === 'won' || c.status === '중단') return;
+          const expDate = c.expected_date || c.target_date || '';
+          if (expDate && expDate < todayStr) return; // 과거 제외
+          const amount = parseFloat(c.expected_amount || c.amount) || 0;
+          if (amount <= 0) return;
+          const prob = parseFloat(c.probability) || 50;
+          items.push({
+            source: 'cross',
+            account: a,
+            accountId: a.id,
+            customer: a.company_name,
+            rep: a.sales_rep || '',
+            product: c.product || c.product_category || c.product_name || '',
+            amount,
+            probability: prob,
+            weighted: Math.round(amount * prob / 100),
+            expectedDate: expDate || '미정',
+            status: c.status || 'open',
+            msg: `🤝 ${c.product || c.product_category || c.product_name || ''} · 확률 ${prob}%${expDate ? ` · 예정 ${expDate}` : ''}`,
+          });
+        });
+        // ② GAP 기회 (account.gap.opportunities[])
+        (a.gap?.opportunities || []).forEach(o => {
+          if (o.expected_date && o.expected_date < todayStr) return;
+          const amount = parseFloat(o.amount) || 0;
+          if (amount <= 0) return;
+          const prob = parseFloat(o.probability) || 50;
+          items.push({
+            source: 'gap',
+            account: a,
+            accountId: a.id,
+            customer: a.company_name,
+            rep: a.sales_rep || '',
+            product: o.product || o.description || '',
+            amount,
+            probability: prob,
+            weighted: Math.round(amount * prob / 100),
+            expectedDate: o.expected_date || '미정',
+            msg: `📉 ${o.product || o.description || 'GAP 기회'} · 확률 ${prob}%${o.expected_date ? ` · 예정 ${o.expected_date}` : ''}`,
+          });
+        });
+      });
+      // ③ 회복계획 (activity_logs.recovery_plan_*)
+      (activityLogs || []).forEach(l => {
+        if (!l.recovery_plan_date || l.recovery_plan_date < todayStr) return;
+        if (l.status === 'Closed') return;
+        const amount = parseFloat(l.recovery_plan_amount) || 0;
+        if (amount <= 0) return;
+        const acc = (accounts || []).find(a => a.id === l.account_id);
+        items.push({
+          source: 'recovery',
+          account: acc || { id: l.account_id, company_name: l.customer_name || '' },
+          accountId: l.account_id,
+          customer: acc?.company_name || l.customer_name || '',
+          rep: acc?.sales_rep || l.sales_rep || '',
+          product: '',
+          amount,
+          probability: 70,
+          weighted: Math.round(amount * 0.7),
+          expectedDate: l.recovery_plan_date,
+          msg: `🛟 회복계획 · 예정 ${l.recovery_plan_date}`,
+        });
+      });
+      return items.sort((a, b) => b.weighted - a.weighted);
+    })();
+
     return {
       selYear, selMonth, selMonthStr, selMonthKey,
       monthLabel: `${selYear}년 ${selMonth}월`,
@@ -3376,6 +3548,8 @@ export default function Report() {
       teamGapCauses,
       autoExecSummary,
       pipelineHighlights,
+      // v3.21: 모든 미래 cross_selling/gap.opportunities/recovery 기회 (ERBE 등 반영)
+      allOpportunities,
       monthOrders, monthSales, // for Excel raw
     };
   }, [monthOffset, orders, sales, customerPlans, businessPlans, activityLogs, accounts, contracts, forecasts, alarms, planLookup, teamMembers, priorYearSet, pipelineCustomers, teamTasks]);
@@ -3461,6 +3635,30 @@ export default function Report() {
       : { orders: {}, sales: {} });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weeklyData.weekStart, appSettings[weeklyForecastKey]]);
+
+  // v3.21: Auto Summary override 로드/저장
+  const autoSummaryOverrideKey = `auto_summary_override_${monthlyReportData.selMonthStr}`;
+  useEffect(() => {
+    const saved = appSettings?.[autoSummaryOverrideKey];
+    if (saved && typeof saved === 'object') {
+      setAutoSummaryOverride({
+        lines: Array.isArray(saved.lines) ? saved.lines : ['', '', '', ''],
+        enabled: !!saved.enabled,
+      });
+    } else {
+      setAutoSummaryOverride({ lines: ['', '', '', ''], enabled: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthlyReportData.selMonthStr, appSettings[autoSummaryOverrideKey]]);
+
+  const asoSaveTimer = useRef(null);
+  const updateAutoSummaryOverride = (next) => {
+    setAutoSummaryOverride(next);
+    if (asoSaveTimer.current) clearTimeout(asoSaveTimer.current);
+    asoSaveTimer.current = setTimeout(() => {
+      if (saveAppSetting) saveAppSetting(autoSummaryOverrideKey, next);
+    }, 500);
+  };
 
   const wfSaveTimer = useRef(null);
   const updateWeeklyForecast = (type, team, value) => {
@@ -5180,23 +5378,73 @@ export default function Report() {
             </div>
           </div>
 
-          {/* ══ 섹션 A-0 — 자동 생성 요약 (Phase B #1) ══ */}
+          {/* ══ 섹션 A-0 — 자동 생성 요약 (v3.21: 사용자 수정 가능) ══ */}
           <div className="card" style={{ marginBottom: 16, background: 'linear-gradient(135deg, rgba(46,125,50,0.04), rgba(59,130,246,0.04))', border: '1px dashed var(--accent)' }}>
-            <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>🤖 자동 생성 Executive Summary</span>
-              <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>[KPI/GAP/파이프라인 기반 자동 집계]</span>
-              <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 700 }}>{monthlyReportData.autoExecSummary.autoStatus}</span>
+              <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                [KPI/GAP/파이프라인 기반 자동 집계 · <strong style={{ color: 'var(--accent)' }}>본부장 직접 수정 가능</strong>]
+              </span>
+              <label style={{ marginLeft: 'auto', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={autoSummaryOverride.enabled}
+                  onChange={(e) => updateAutoSummaryOverride({ ...autoSummaryOverride, enabled: e.target.checked })}
+                />
+                <span style={{ fontWeight: 600, color: autoSummaryOverride.enabled ? 'var(--accent)' : 'var(--text3)' }}>
+                  수동 수정 모드
+                </span>
+              </label>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{monthlyReportData.autoExecSummary.autoStatus}</span>
             </div>
             <div style={{ display: 'grid', gap: 6, fontSize: 12, lineHeight: 1.5 }}>
-              {monthlyReportData.autoExecSummary.lines.map((line, i) => (
-                <div key={i} style={{ padding: '4px 10px', background: 'var(--bg)', borderRadius: 4, borderLeft: '3px solid var(--accent)' }}>
-                  <strong style={{ color: 'var(--text2)', fontSize: 10, marginRight: 6 }}>{i === 0 ? '📊' : i === 1 ? '📈' : i === 2 ? '⚠️' : '🎯'}</strong>
-                  {line}
-                </div>
-              ))}
+              {monthlyReportData.autoExecSummary.lines.map((line, i) => {
+                const icon = i === 0 ? '📊' : i === 1 ? '📈' : i === 2 ? '⚠️' : '🎯';
+                const overrideLine = autoSummaryOverride.lines?.[i] || '';
+                if (autoSummaryOverride.enabled) {
+                  return (
+                    <div key={i} style={{ padding: '6px 10px', background: 'var(--bg)', borderRadius: 4, borderLeft: '3px solid var(--accent)', display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                      <strong style={{ color: 'var(--text2)', fontSize: 12, marginTop: 4 }}>{icon}</strong>
+                      <textarea
+                        value={overrideLine || line}
+                        onChange={(e) => {
+                          const nextLines = [...(autoSummaryOverride.lines || ['','','',''])];
+                          nextLines[i] = e.target.value;
+                          updateAutoSummaryOverride({ ...autoSummaryOverride, lines: nextLines });
+                        }}
+                        rows={Math.max(1, Math.ceil((overrideLine || line).length / 80))}
+                        placeholder={`자동 생성: ${line}`}
+                        style={{ flex: 1, fontSize: 12, padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 3, resize: 'vertical', background: 'var(--bg)', color: 'var(--text)', lineHeight: 1.5 }}
+                      />
+                      {overrideLine && (
+                        <button
+                          onClick={() => {
+                            const nextLines = [...(autoSummaryOverride.lines || ['','','',''])];
+                            nextLines[i] = '';
+                            updateAutoSummaryOverride({ ...autoSummaryOverride, lines: nextLines });
+                          }}
+                          title="자동 생성값으로 초기화"
+                          style={{ fontSize: 10, padding: '2px 6px', background: 'var(--bg2)', color: 'var(--text2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', whiteSpace: 'nowrap', marginTop: 2 }}
+                        >
+                          ↺ 자동
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={i} style={{ padding: '4px 10px', background: 'var(--bg)', borderRadius: 4, borderLeft: '3px solid var(--accent)' }}>
+                    <strong style={{ color: 'var(--text2)', fontSize: 10, marginRight: 6 }}>{icon}</strong>
+                    {overrideLine || line}
+                    {overrideLine && (
+                      <span style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', background: 'var(--accent)', color: '#fff', borderRadius: 2, fontWeight: 600 }}>수정됨</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8 }}>
-              ※ 수치 기반 자동 요약 · 하단 "0. 이번 달 핵심 요약"에서 수동 보완/편집
+              ※ 자동 수치 요약 · 수동 수정 모드 켜면 본부장이 직접 수정 가능 (월별 Firestore 저장) · 빈 칸으로 두면 자동 생성값 사용
             </div>
           </div>
 
@@ -5934,136 +6182,72 @@ export default function Report() {
             color="#d97706"
           />
 
-          {/* ══ 섹션 C — 팀별 월간 활동 분석 (v3.20: 각 수치 클릭 시 상세 펼침) ══ */}
+          {/* ══ 섹션 C — 팀별 월간 활동 분석 (v3.21: 항상 표시 + 의미있는 항목만) ══ */}
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
               <span>■ 3. 팀별 월간 활동 분석</span>
               <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                — 각 항목 행 클릭 시 상세 내용 펼침 (어느 고객의 어떤 건인지)
+                — 신규 계약 / 크로스셀링 / 미해결 이슈 상세 (어느 고객의 어떤 건인지 항상 표시)
               </span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
               {TEAM_ORDER.map(team => {
                 const t = monthlyReportData.teamActivity[team];
-                const tg = monthlyReportData.teamGapCauses[team] || { shortCount: 0, shortGap: 0, topCauses: [] };
-                const rows = [
-                  { key: 'newContract',  label: '신규 계약 체결',  count: t.newContract,  list: t.newContractList },
-                  { key: 'crossSelling', label: 'Cross-selling',     count: t.crossSelling, list: t.crossSellingList },
-                  { key: 'openIssues',   label: '미해결 이슈',      count: t.openIssues,   list: t.openIssuesList, isOpen: true },
-                  { key: 'contacted',    label: '주요 고객 컨택',   count: t.contactedCount, list: t.contactedList, unit: '사', isContact: true },
+                // v3.21: 의미있는 3개 항목만 (주요고객컨택·하단 GAP원인·주요이슈 TOP 제거)
+                const sections = [
+                  { key: 'newContract',  label: '🆕 신규 계약 체결',  count: t.newContract,  list: t.newContractList,  emptyHint: '이번 달 신규 계약 없음' },
+                  { key: 'crossSelling', label: '🤝 크로스셀링',       count: t.crossSelling, list: t.crossSellingList, emptyHint: '이번 달 크로스셀링 활동 없음' },
+                  { key: 'openIssues',   label: '🔴 미해결 이슈',      count: t.openIssues,   list: t.openIssuesList,   emptyHint: '미해결 이슈 없음', isRed: true },
                 ];
                 return (
-                  <div key={team} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg2)' }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>[{t.display}]</div>
-                    <table style={{ width: '100%', fontSize: 11 }}>
-                      <tbody>
-                        <tr>
-                          <td style={{ color: 'var(--text2)', padding: '2px 0' }}>총 Activity</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{t.total}건</td>
-                        </tr>
-                        {rows.map(r => {
-                          const drillKey = `team-${team}-${r.key}`;
-                          const open = repDrillOpen[drillKey];
-                          const canDrill = r.count > 0 && r.list && r.list.length > 0;
-                          return (
-                            <Fragment key={r.key}>
-                              <tr
-                                onClick={canDrill ? () => toggleRepDrill(drillKey) : undefined}
-                                style={canDrill ? { cursor: 'pointer' } : null}
-                              >
-                                <td style={{ color: 'var(--text2)', padding: '2px 0' }}>
-                                  {canDrill && (open ? '▾ ' : '▸ ')}{r.label}
-                                </td>
-                                <td style={{ textAlign: 'right', fontWeight: 600, color: r.isOpen && r.count > 0 ? 'var(--red)' : undefined }}>
-                                  {r.count}{r.unit || '건'}
-                                </td>
-                              </tr>
-                              {open && canDrill && (
-                                <tr>
-                                  <td colSpan={2} style={{ padding: 0 }}>
-                                    <div style={{ padding: '4px 8px', background: 'var(--bg)', borderRadius: 4, marginTop: 2, marginBottom: 4 }}>
-                                      {r.isContact ? (
-                                        // 컨택 회사 목록 (회사명만)
-                                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                          {r.list.map((c, i) => (
-                                            <a
-                                              key={i}
-                                              href="#"
-                                              onClick={(e) => {
-                                                e.preventDefault();
-                                                const acc = accounts.find(a => a.id === c.accountId);
-                                                if (acc) setEditingAccount(acc);
-                                              }}
-                                              style={{ fontSize: 10, padding: '1px 6px', background: 'var(--bg2)', color: 'var(--accent)', textDecoration: 'none', borderRadius: 3 }}
-                                            >
-                                              {c.company}
-                                            </a>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        // 활동 상세 리스트 (회사 / 타입 / 내용)
-                                        <div style={{ display: 'grid', gap: 3 }}>
-                                          {r.list.slice(0, 15).map((it, i) => {
-                                            const acc = accounts.find(a => a.id === it.accountId);
-                                            return (
-                                              <div key={i} style={{ fontSize: 10, padding: '2px 0', borderBottom: i < Math.min(r.list.length, 15) - 1 ? '1px dashed var(--border)' : 'none' }}>
-                                                <a
-                                                  href="#"
-                                                  onClick={(e) => { e.preventDefault(); if (acc) setEditingAccount(acc); }}
-                                                  style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', marginRight: 4 }}
-                                                >
-                                                  {it.company}
-                                                </a>
-                                                {it.type && <span style={{ fontSize: 9, padding: '0 4px', background: 'var(--bg2)', borderRadius: 2, color: 'var(--text3)', marginRight: 4 }}>{it.type}</span>}
-                                                {it.date && <span style={{ fontSize: 9, color: 'var(--text3)', marginRight: 4 }}>{it.date.slice(0, 10)}</span>}
-                                                {it.rep && <span style={{ fontSize: 9, color: 'var(--text3)', marginRight: 4 }}>· {it.rep}</span>}
-                                                <span style={{ color: 'var(--text2)' }}>{(it.content || '').slice(0, 60)}{(it.content || '').length > 60 ? '…' : ''}</span>
-                                              </div>
-                                            );
-                                          })}
-                                          {r.list.length > 15 && (
-                                            <div style={{ fontSize: 9, color: 'var(--text3)', textAlign: 'center', padding: 2 }}>
-                                              ... 외 {r.list.length - 15}건
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    {/* Phase B #4: 팀별 GAP 원인 */}
-                    {tg.shortCount > 0 && (
-                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--red)', marginBottom: 4 }}>
-                          🔴 미달 고객 {tg.shortCount}사 · Gap {fmtKRW(tg.shortGap)}
+                  <div key={team} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, background: 'var(--bg2)' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--accent)', display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <span>[{t.display}]</span>
+                      <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>총 Activity {t.total}건</span>
+                    </div>
+                    {sections.map(s => (
+                      <div key={s.key} style={{ marginBottom: 10, paddingBottom: 8, borderBottom: '1px dashed var(--border)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: s.isRed && s.count > 0 ? 'var(--red)' : 'var(--text2)' }}>
+                          {s.label}
+                          <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700 }}>{s.count}건</span>
                         </div>
-                        {tg.topCauses.length > 0 && (
-                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {tg.topCauses.map(c => (
-                              <span key={c.key} style={{ fontSize: 9, padding: '1px 6px', background: 'rgba(220,38,38,0.08)', color: 'var(--red)', borderRadius: 3, fontWeight: 600 }}>
-                                {c.icon}{c.label}({c.count})
-                              </span>
-                            ))}
+                        {s.count === 0 ? (
+                          <div style={{ fontSize: 10, color: 'var(--text3)', padding: '2px 4px' }}>{s.emptyHint}</div>
+                        ) : (
+                          <div style={{ display: 'grid', gap: 3 }}>
+                            {s.list.slice(0, 12).map((it, i) => {
+                              const acc = accounts.find(a => a.id === it.accountId);
+                              return (
+                                <div key={i} style={{ fontSize: 10, padding: '3px 6px', background: 'var(--bg)', borderRadius: 3, borderLeft: `2px solid ${s.isRed ? 'var(--red)' : 'var(--accent)'}` }}>
+                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
+                                    <a
+                                      href="#"
+                                      onClick={(e) => { e.preventDefault(); if (acc) setEditingAccount(acc); }}
+                                      style={{ fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}
+                                    >
+                                      {it.company}
+                                    </a>
+                                    {it.type && <span style={{ fontSize: 9, padding: '0 4px', background: 'var(--bg2)', borderRadius: 2, color: 'var(--text3)' }}>{it.type}</span>}
+                                    {it.date && <span style={{ fontSize: 9, color: 'var(--text3)' }}>{it.date.slice(0, 10)}</span>}
+                                    {it.rep && <span style={{ fontSize: 9, color: 'var(--text3)' }}>· {it.rep}</span>}
+                                  </div>
+                                  {it.content && (
+                                    <div style={{ marginTop: 2, color: 'var(--text2)', fontSize: 10 }}>
+                                      {it.content.length > 80 ? it.content.slice(0, 80) + '…' : it.content}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {s.list.length > 12 && (
+                              <div style={{ fontSize: 9, color: 'var(--text3)', textAlign: 'center', padding: 2 }}>
+                                ... 외 {s.list.length - 12}건
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
-                    )}
-                    {t.majorIssues.length > 0 && (
-                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)', marginBottom: 4 }}>주요 이슈 TOP {t.majorIssues.length}</div>
-                        {t.majorIssues.map((iss, i) => (
-                          <div key={i} style={{ fontSize: 10, padding: '2px 0', color: 'var(--text2)' }}>
-                            • <strong>{iss.company}</strong> [{iss.type}] {iss.content.length > 30 ? iss.content.slice(0, 30) + '...' : iss.content}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    ))}
                   </div>
                 );
               })}
@@ -6421,102 +6605,101 @@ export default function Report() {
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 10, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>
                 ※ 고객명 클릭 시 상세 카드 열림 · FCST catch-up 코멘트는 향후 FCST 합계가 Gap을 만회할 수 있을 때 자동 생성 · 전년 동기 대비 증감률 포함
               </div>
-            </div>
-          )}
 
-          {/* v3.19: ■ 4-3b. GAP 원인별 분석 — 4-3의 고객 관점과 나란히 (원인 관점) */}
-          {/* 사용자 요청: 4-3 고객별 심층 분석과 원인별 분석을 통합 위치로 */}
-          {monthlyReportData.gapByCause && monthlyReportData.gapByCause.causes.length > 0 && (
-            <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--red)' }}>
-              <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-                <span>■ 4-3b. GAP 원인별 분석</span>
-                <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                  — 위 4-3 고객별 미달 분석의 원인 관점 재분류 (한 고객 다수 원인 = 모든 원인에 등장, 중복 인정)
-                  · 미달 {monthlyReportData.gapByCause.shortfallTotal}사 분석
-                </span>
-              </div>
+              {/* v3.21: 4-3b GAP 원인별 분석 — 같은 카드 안에 sub-section으로 통합 (사용자 요청) */}
+              {monthlyReportData.gapByCause && monthlyReportData.gapByCause.causes.length > 0 && (
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '2px dashed rgba(220,38,38,0.4)' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: 'var(--red)' }}>
+                    ▼ 4-3b. 위 미달 고객들을 원인별로 재분류
+                    <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)', marginLeft: 6 }}>
+                      (미달 {monthlyReportData.gapByCause.shortfallTotal}사 · 한 고객이 다수 원인에 동시 등장 가능)
+                    </span>
+                  </div>
 
-              {/* cause_detail 누락 경고 */}
-              {monthlyReportData.gapByCause.missingDetailCount > 0 && (
-                <div style={{ padding: '8px 12px', background: 'rgba(220,38,38,0.06)', borderRadius: 4, marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
-                  ⚠ <strong>GAP 분석 미실시 (cause_detail 미입력)</strong>: {monthlyReportData.gapByCause.missingDetailCount}사
-                  <span style={{ marginLeft: 8, color: 'var(--text3)' }}>
-                    — 원인은 선택했으나 상세 설명을 입력하지 않은 고객. 담당자 점수 시스템 3-4에 감점 반영
-                  </span>
-                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text2)' }}>
-                    대상: {monthlyReportData.gapByCause.missingDetail.slice(0, 10).map(m => m.name).join(', ')}
-                    {monthlyReportData.gapByCause.missingDetail.length > 10 && ` 외 ${monthlyReportData.gapByCause.missingDetail.length - 10}사`}
+                  {/* cause_detail 누락 경고 */}
+                  {monthlyReportData.gapByCause.missingDetailCount > 0 && (
+                    <div style={{ padding: '8px 12px', background: 'rgba(220,38,38,0.06)', borderRadius: 4, marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
+                      ⚠ <strong>GAP 분석 미실시 (cause_detail 미입력)</strong>: {monthlyReportData.gapByCause.missingDetailCount}사
+                      <span style={{ marginLeft: 8, color: 'var(--text3)' }}>
+                        — 원인은 선택했으나 상세 설명을 입력하지 않은 고객. 담당자 점수 시스템 3-4에 감점 반영
+                      </span>
+                      <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text2)' }}>
+                        대상: {monthlyReportData.gapByCause.missingDetail.slice(0, 10).map(m => m.name).join(', ')}
+                        {monthlyReportData.gapByCause.missingDetail.length > 10 && ` 외 ${monthlyReportData.gapByCause.missingDetail.length - 10}사`}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="table-wrap" style={{ maxHeight: 600 }}>
+                    {monthlyReportData.gapByCause.causes.map(cause => (
+                      <div key={cause.key} style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+                        <div style={{ padding: '8px 12px', background: 'var(--bg2)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 14 }}>{cause.icon}</span>
+                          <strong style={{ fontSize: 12 }}>{cause.label}</strong>
+                          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text2)' }}>
+                            {cause.customerCount}사 · 합계 GAP <strong style={{ color: 'var(--red)' }}>{fmtKRW(Math.abs(cause.totalGap))}</strong>
+                          </span>
+                        </div>
+                        <table className="data-table" style={{ fontSize: 11 }}>
+                          <thead>
+                            <tr>
+                              <th>고객</th>
+                              <th style={{ textAlign: 'right' }}>YTD 목표</th>
+                              <th style={{ textAlign: 'right' }}>YTD 실적</th>
+                              <th style={{ textAlign: 'right' }}>GAP</th>
+                              <th style={{ textAlign: 'left' }}>다른 원인 (중복)</th>
+                              <th>담당자</th>
+                              <th>상세입력</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cause.customers.slice(0, 5).map((c, i) => (
+                              <tr key={i}>
+                                <td style={{ fontWeight: 600 }}>
+                                  {c.accountId ? (
+                                    <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === c.accountId); if (acc) setEditingAccount(acc); }}
+                                      style={{ color: 'var(--accent)', textDecoration: 'none' }}>{c.name}</a>
+                                  ) : c.name}
+                                </td>
+                                <td style={{ textAlign: 'right' }}>{fmtKRW(c.ytdTarget)}</td>
+                                <td style={{ textAlign: 'right' }}>{fmtKRW(c.ytdActual)}</td>
+                                <td style={{ textAlign: 'right', color: 'var(--red)', fontWeight: 600 }}>▼ {fmtKRW(Math.abs(c.ytdGap))}</td>
+                                <td style={{ fontSize: 10, color: 'var(--text3)' }}>
+                                  {(c.allCauses || []).filter(k => k !== cause.key).map(k => {
+                                    const m = GAP_CAUSES.find(g => g.key === k);
+                                    return m?.label || k;
+                                  }).join(', ') || '-'}
+                                </td>
+                                <td style={{ fontSize: 10 }}>{c.sales_rep || '-'}</td>
+                                <td>
+                                  {c.cause_detail
+                                    ? <span style={{ color: 'var(--green, #16a34a)' }}>✅</span>
+                                    : <span style={{ color: 'var(--red)', fontWeight: 600 }} title="cause_detail 미입력">⚠ 미입력</span>}
+                                </td>
+                              </tr>
+                            ))}
+                            {cause.customers.length > 5 && (
+                              <tr>
+                                <td colSpan={7} style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', padding: 4 }}>
+                                  ... 외 {cause.customers.length - 5}사 (합계 GAP에 반영됨)
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
+                    ※ "다른 원인 (중복)" 컬럼: 같은 고객이 다른 원인 카테고리에도 등장한다는 의미.
+                    <strong>합계 GAP은 각 원인별 그대로 표시되므로 전체 GAP 총합과 일치하지 않을 수 있음.</strong>
                   </div>
                 </div>
               )}
-
-              <div className="table-wrap" style={{ maxHeight: 600 }}>
-                {monthlyReportData.gapByCause.causes.map(cause => (
-                  <div key={cause.key} style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-                    <div style={{ padding: '8px 12px', background: 'var(--bg2)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 14 }}>{cause.icon}</span>
-                      <strong style={{ fontSize: 12 }}>{cause.label}</strong>
-                      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text2)' }}>
-                        {cause.customerCount}사 · 합계 GAP <strong style={{ color: 'var(--red)' }}>{fmtKRW(Math.abs(cause.totalGap))}</strong>
-                      </span>
-                    </div>
-                    <table className="data-table" style={{ fontSize: 11 }}>
-                      <thead>
-                        <tr>
-                          <th>고객</th>
-                          <th style={{ textAlign: 'right' }}>YTD 목표</th>
-                          <th style={{ textAlign: 'right' }}>YTD 실적</th>
-                          <th style={{ textAlign: 'right' }}>GAP</th>
-                          <th style={{ textAlign: 'left' }}>다른 원인 (중복)</th>
-                          <th>담당자</th>
-                          <th>상세입력</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {cause.customers.slice(0, 5).map((c, i) => (
-                          <tr key={i}>
-                            <td style={{ fontWeight: 600 }}>
-                              {c.accountId ? (
-                                <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === c.accountId); if (acc) setEditingAccount(acc); }}
-                                  style={{ color: 'var(--accent)', textDecoration: 'none' }}>{c.name}</a>
-                              ) : c.name}
-                            </td>
-                            <td style={{ textAlign: 'right' }}>{fmtKRW(c.ytdTarget)}</td>
-                            <td style={{ textAlign: 'right' }}>{fmtKRW(c.ytdActual)}</td>
-                            <td style={{ textAlign: 'right', color: 'var(--red)', fontWeight: 600 }}>▼ {fmtKRW(Math.abs(c.ytdGap))}</td>
-                            <td style={{ fontSize: 10, color: 'var(--text3)' }}>
-                              {(c.allCauses || []).filter(k => k !== cause.key).map(k => {
-                                const m = GAP_CAUSES.find(g => g.key === k);
-                                return m?.label || k;
-                              }).join(', ') || '-'}
-                            </td>
-                            <td style={{ fontSize: 10 }}>{c.sales_rep || '-'}</td>
-                            <td>
-                              {c.cause_detail
-                                ? <span style={{ color: 'var(--green, #16a34a)' }}>✅</span>
-                                : <span style={{ color: 'var(--red)', fontWeight: 600 }} title="cause_detail 미입력">⚠ 미입력</span>}
-                            </td>
-                          </tr>
-                        ))}
-                        {cause.customers.length > 5 && (
-                          <tr>
-                            <td colSpan={7} style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', padding: 4 }}>
-                              ... 외 {cause.customers.length - 5}사 (합계 GAP에 반영됨)
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
-                ※ "다른 원인 (중복)" 컬럼: 같은 고객이 다른 원인 카테고리에도 등장한다는 의미.
-                <strong>합계 GAP은 각 원인별 그대로 표시되므로 전체 GAP 총합과 일치하지 않을 수 있음.</strong>
-                근본 원인별 영업본부장 액션 결정용.
-              </div>
             </div>
           )}
+
+          {/* v3.21: 별도 4-3b 카드 제거 — 위 4-3 카드 안 sub-section으로 통합 */}
 
           {/* ══ Page 4 — Next Month Actions ══ */}
           <ChapterHeader
@@ -6581,25 +6764,112 @@ export default function Report() {
             </div>
           )}
 
-          {/* v3.20: ■ 5 카드는 단순 안내 + 계약만료 알림만, 차월 파이프라인은 별도 카드 (g)로 분리 */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-              <span>■ 5. 다음 달 주요 계획 (f)</span>
-              <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                — 다음달 계획·TASK는 아래 <strong>■ 6. 팀별 월간 TASK</strong>에서 등록하세요. 차월 수주 파이프라인은 별도 카드 (g)에서 표시.
-              </span>
-            </div>
-            {monthlyReportData.contractExpiringSoon.length > 0 && (
-              <div style={{ padding: '8px 0' }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#d97706', marginBottom: 6 }}>🟡 계약 만료 임박 (D-60 이내)</div>
-                {monthlyReportData.contractExpiringSoon.map((c, i) => (
-                  <div key={i} style={{ fontSize: 11, padding: '2px 0', color: 'var(--text2)' }}>
-                    • <strong>{c.company}</strong> — {c.product} / D-{c.daysLeft} ({c.expiry})
+          {/* v3.21: ■ 5 다음달 주요 계획 + TASK 인라인 통합 (사용자 요청: 계획→TASK 자연 흐름) */}
+          {(() => {
+            // 다음 달 yearMonth
+            const nextMonthDate = new Date(monthlyReportData.selYear, monthlyReportData.selMonth, 1);
+            const nextYM = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`;
+            const teamsPlan = [
+              { key: 'overseas', label: '해외영업팀', taskTeam: '해외영업' },
+              { key: 'support',  label: 'BPU',         taskTeam: '영업지원' },
+              { key: 'domestic', label: '국내영업팀', taskTeam: '국내영업' },
+            ];
+            return (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                  <span>■ 5. 다음 달 주요 계획 & TASK</span>
+                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                    — {nextYM} 기준 · 팀별 계획 메모 + 그에 따른 TASK 등록 (계획→TASK 자연 흐름)
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {teamsPlan.map(t => {
+                    const teamNextTasks = (teamTasks || []).filter(tk => tk.year_month === nextYM && tk.team === t.taskTeam);
+                    return (
+                      <div key={t.key} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg2)' }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>
+                          [{t.label}]
+                          <span style={{ fontSize: 9, fontWeight: 400, color: 'var(--text3)', marginLeft: 6 }}>
+                            다음달 TASK {teamNextTasks.length}건
+                            {teamNextTasks.length > 0 && ` (완료 ${teamNextTasks.filter(x => x.status === 'Done').length} · 진행 ${teamNextTasks.filter(x => x.status === 'In Progress').length} · 미시작 ${teamNextTasks.filter(x => x.status === 'Open').length})`}
+                          </span>
+                        </div>
+                        {/* 1) 다음달 계획 textarea */}
+                        <textarea
+                          value={nextMonthPlan[t.key] || ''}
+                          onChange={e => saveNextMonthPlan({ [t.key]: e.target.value })}
+                          placeholder={`${t.label} 다음 달 주요 계획 (자유 메모)`}
+                          rows={2}
+                          style={{ width: '100%', padding: '6px 10px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, resize: 'vertical', marginBottom: 6, boxSizing: 'border-box' }}
+                        />
+                        {/* 2) 그 팀의 다음달 TASK 리스트 */}
+                        {teamNextTasks.length > 0 && (
+                          <div style={{ marginBottom: 6 }}>
+                            {teamNextTasks
+                              .sort((a, b) => {
+                                const sa = a.status === 'Done' ? 2 : a.status === 'In Progress' ? 1 : 0;
+                                const sb = b.status === 'Done' ? 2 : b.status === 'In Progress' ? 1 : 0;
+                                if (sa !== sb) return sa - sb;
+                                return (a.priority || 'P3').localeCompare(b.priority || 'P3');
+                              })
+                              .map(tk => {
+                                const statusColor = tk.status === 'Done' ? '#16a34a' : tk.status === 'In Progress' ? '#d97706' : 'var(--red)';
+                                const statusIcon = tk.status === 'Done' ? '✅' : tk.status === 'In Progress' ? '🟡' : '🔴';
+                                const prio = tk.priority || 'P3';
+                                const prioColor = prio === 'P1' ? 'var(--red)' : prio === 'P2' ? '#d97706' : '#6b7280';
+                                return (
+                                  <div key={tk.id} style={{ fontSize: 11, padding: '4px 6px', background: 'var(--bg)', borderRadius: 3, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ fontSize: 9, padding: '0 4px', borderRadius: 2, background: prioColor, color: '#fff', fontWeight: 700 }}>{prio}</span>
+                                    <span style={{ fontSize: 10 }}>{statusIcon}</span>
+                                    <span style={{ flex: 1 }}>{tk.content}</span>
+                                    {tk.assignee && <span style={{ fontSize: 9, color: 'var(--text3)' }}>· {tk.assignee}</span>}
+                                    {tk.due_date && <span style={{ fontSize: 9, color: 'var(--text3)' }}>· 기한 {tk.due_date}</span>}
+                                    <button
+                                      onClick={() => {
+                                        const next = tk.status === 'Open' ? 'In Progress' : tk.status === 'In Progress' ? 'Done' : 'Open';
+                                        saveTeamTask({ ...tk, status: next, updated_at: new Date().toISOString() });
+                                      }}
+                                      style={{ fontSize: 9, padding: '1px 6px', background: statusColor, color: '#fff', border: 'none', borderRadius: 2, cursor: 'pointer' }}
+                                      title="상태 변경 (Open → 진행 → 완료 → 다시 Open)"
+                                    >
+                                      {tk.status === 'Open' ? '▶' : tk.status === 'In Progress' ? '✓' : '↺'}
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (confirm('이 TASK를 삭제하시겠습니까?')) {
+                                          removeTeamTask(tk.id);
+                                          showToast?.('TASK 삭제됨', 'success');
+                                        }
+                                      }}
+                                      style={{ fontSize: 9, padding: '1px 5px', background: 'transparent', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 2, cursor: 'pointer' }}
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        )}
+                        {/* 3) + TASK 추가 인라인 폼 */}
+                        <InlineTaskAddForm team={t.taskTeam} yearMonth={nextYM} saveTeamTask={saveTeamTask} showToast={showToast} />
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* 4) 계약 만료 임박 */}
+                {monthlyReportData.contractExpiringSoon.length > 0 && (
+                  <div style={{ padding: '8px 0', marginTop: 8, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#d97706', marginBottom: 6 }}>🟡 계약 만료 임박 (D-60 이내)</div>
+                    {monthlyReportData.contractExpiringSoon.map((c, i) => (
+                      <div key={i} style={{ fontSize: 11, padding: '2px 0', color: 'var(--text2)' }}>
+                        • <strong>{c.company}</strong> — {c.product} / D-{c.daysLeft} ({c.expiry})
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* v3.20: g. 차월 수주 파이프라인 — 6-source 통합 (■ 5에서 분리) */}
           {monthlyReportData.monthlyPipeline.items.length > 0 && (() => {
@@ -6735,44 +7005,65 @@ export default function Report() {
             </div>
           )}
 
-          {/* v3.20: i. 기회 파이프라인 — GAP 메우는 영업 기회 단독 표시 (cross_selling + gap.opportunities + recovery_plan) */}
-          {monthlyReportData.monthlyPipeline.items.length > 0 && (() => {
-            const oppItems = monthlyReportData.monthlyPipeline.items.filter(it =>
-              it.source === 'cross' || it.source === 'gap' || it.source === 'recovery'
-            );
-            if (oppItems.length === 0) return null;
-            const oppExpected = oppItems.reduce((s, x) => s + (x.amount || 0), 0);
-            const oppWeighted = oppItems.reduce((s, x) => s + (x.weighted || 0), 0);
+          {/* v3.21: i. 기회 파이프라인 — 모든 미래 cross_selling/gap.opportunities/recovery */}
+          {/*   ERBE 등 고객카드 크로스셀링 탭에 입력한 모든 미래 기회 표시 (월 한정 없음) */}
+          {(monthlyReportData.allOpportunities || []).length > 0 && (() => {
+            const items = monthlyReportData.allOpportunities;
+            const oppExpected = items.reduce((s, x) => s + (x.amount || 0), 0);
+            const oppWeighted = items.reduce((s, x) => s + (x.weighted || 0), 0);
             const srcMeta = {
               cross:    { icon: '🤝', bg: '#ede9fe', color: '#6d28d9', label: '크로스셀링' },
               gap:      { icon: '📉', bg: '#fee2e2', color: '#b91c1c', label: 'GAP 기회' },
               recovery: { icon: '🛟', bg: '#fde68a', color: '#92400e', label: 'GAP 회복계획' },
             };
+            // 월별 그룹핑 (사용자가 어느 월에 기회가 집중되어 있는지 한눈에 보이게)
+            const byMonth = {};
+            items.forEach(it => {
+              const ym = it.expectedDate && it.expectedDate !== '미정' ? it.expectedDate.slice(0, 7) : '미정';
+              if (!byMonth[ym]) byMonth[ym] = { expected: 0, weighted: 0, count: 0 };
+              byMonth[ym].expected += it.amount || 0;
+              byMonth[ym].weighted += it.weighted || 0;
+              byMonth[ym].count++;
+            });
+            const monthKeys = Object.keys(byMonth).sort();
             return (
               <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #b91c1c' }}>
                 <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <span>■ 5-3. 기회 파이프라인 (i)</span>
                   <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                    — GAP을 메우는 영업 기회만 단독 표시 (크로스셀링 · GAP 기회 · 회복계획)
+                    — <strong>모든 미래 영업 기회</strong> (크로스셀링 · GAP 기회 · 회복계획) · 고객카드에서 업데이트한 즉시 반영
                   </span>
                   <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: '#b91c1c', padding: '2px 8px', background: 'rgba(185,28,28,0.08)', borderRadius: 4 }}>
-                    예상 {fmtKRW(oppExpected)} / 가중 {fmtKRW(oppWeighted)} · {oppItems.length}건
+                    예상 {fmtKRW(oppExpected)} / 가중 {fmtKRW(oppWeighted)} · {items.length}건
                   </span>
                 </div>
-                <div className="table-wrap" style={{ maxHeight: 300 }}>
+                {/* 월별 요약 미니 표 */}
+                {monthKeys.length > 0 && (
+                  <div style={{ marginBottom: 10, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4, display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 10 }}>
+                    <strong style={{ color: 'var(--text2)' }}>월별 분포:</strong>
+                    {monthKeys.map(mk => (
+                      <span key={mk}>
+                        <strong>{mk}</strong> {byMonth[mk].count}건/{fmtKRW(byMonth[mk].weighted)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="table-wrap" style={{ maxHeight: 400 }}>
                   <table className="data-table" style={{ fontSize: 11 }}>
                     <thead>
                       <tr>
                         <th>유형</th>
                         <th>고객사</th>
                         <th>담당자</th>
+                        <th>제품</th>
                         <th style={{ textAlign: 'right' }}>예상금액</th>
+                        <th style={{ textAlign: 'right' }}>확률</th>
                         <th style={{ textAlign: 'right' }}>가중금액</th>
-                        <th>비고</th>
+                        <th>예정일</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {oppItems.map((a, i) => {
+                      {items.map((a, i) => {
                         const src = srcMeta[a.source] || { icon: '⚪', bg: '#f3f4f6', color: '#6b7280', label: '기타' };
                         return (
                           <tr key={`opp-${i}`}>
@@ -6784,13 +7075,15 @@ export default function Report() {
                             <td style={{ fontSize: 11, fontWeight: 600 }}>
                               {a.account?.id ? (
                                 <a href="#" onClick={(e) => { e.preventDefault(); if (a.account) setEditingAccount(a.account); }}
-                                  style={{ color: 'var(--accent)', textDecoration: 'none' }}>{a.account?.company_name}</a>
-                              ) : (a.account?.company_name || '?')}
+                                  style={{ color: 'var(--accent)', textDecoration: 'none' }}>{a.customer || a.account?.company_name}</a>
+                              ) : (a.customer || '?')}
                             </td>
                             <td style={{ fontSize: 10 }}>{a.rep || '-'}</td>
+                            <td style={{ fontSize: 10 }}>{a.product || '-'}</td>
                             <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text2)' }}>{a.amount > 0 ? fmtKRW(a.amount) : '-'}</td>
+                            <td style={{ textAlign: 'right', fontSize: 10 }}>{a.probability}%</td>
                             <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--green, #16a34a)' }}>{a.weighted > 0 ? fmtKRW(a.weighted) : '-'}</td>
-                            <td style={{ fontSize: 10, color: 'var(--text3)', maxWidth: 220 }}>{a.msg}</td>
+                            <td style={{ fontSize: 10, color: 'var(--text3)' }}>{a.expectedDate || '-'}</td>
                           </tr>
                         );
                       })}
@@ -6798,7 +7091,7 @@ export default function Report() {
                   </table>
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
-                  ※ 차월 수주 파이프라인 (g)에서 cross/gap/recovery만 추려낸 GAP 회복 전용 뷰. 사업계획·FCST·계약분할은 g에 표시됨.
+                  ※ 차월 수주 파이프라인 (g)는 다음 달만, 본 표는 <strong>오늘 이후 모든 미래</strong>. ERBE 등 크로스셀링 탭에 입력하면 즉시 반영.
                 </div>
               </div>
             );
@@ -6909,8 +7202,8 @@ export default function Report() {
 
           {/* v3.19: ■ 10 GAP 원인별 분석은 ■ 4-3b로 이동됨 (Strategic Analysis 페이지 안) */}
 
-          {/* ══ 섹션 G — Pipeline CRM 신규 딜 하이라이트 ══ */}
-          {/* v3.17 Phase C2: pipelineHighlights가 {items, totalPipeline, activeCount, _note} 객체로 변경됨 */}
+          {/* ══ 섹션 G — Pipeline CRM 신규 딜 하이라이트 (v3.21: 데이터 없으면 hide) ══ */}
+          {(monthlyReportData.pipelineHighlights.items || []).length > 0 && (
           <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #2563eb' }}>
             <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>■ 7. Pipeline CRM — 신규 딜 하이라이트</span>
@@ -6919,23 +7212,6 @@ export default function Report() {
                 {monthlyReportData.pipelineHighlights.totalPipeline > 0 && ` / 전체 Pipeline 데이터 ${monthlyReportData.pipelineHighlights.totalPipeline}건`}]
               </span>
             </div>
-            {/* 진단 정보 */}
-            {monthlyReportData.pipelineHighlights.totalPipeline === 0 && (
-              <div style={{ padding: '12px 16px', background: 'rgba(220,38,38,0.06)', borderRadius: 6, fontSize: 12, color: 'var(--red)' }}>
-                ⚠ Pipeline CRM 데이터를 가져올 수 없습니다.
-                <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 4 }}>
-                  가능한 원인: (1) Pipeline CRM의 customers 컬렉션이 비어있음 (2) Firestore 권한 문제 (3) 네트워크 문제
-                </div>
-              </div>
-            )}
-            {monthlyReportData.pipelineHighlights.totalPipeline > 0 && monthlyReportData.pipelineHighlights.activeCount === 0 && (
-              <div style={{ padding: '12px 16px', background: 'rgba(217,119,6,0.06)', borderRadius: 6, fontSize: 12, color: '#d97706' }}>
-                ⚠ Pipeline 데이터 {monthlyReportData.pipelineHighlights.totalPipeline}건이 있으나 Proposal/Evaluation/Closing 단계 딜이 없습니다.
-                <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 4 }}>
-                  Pipeline CRM에서 단계가 LEAD/Qualification에 머물러 있거나, stage 필드 표기가 다를 수 있습니다.
-                </div>
-              </div>
-            )}
             {(monthlyReportData.pipelineHighlights.items || []).length > 0 && (
               <Fragment>
               <div className="table-wrap" style={{ maxHeight: 280 }}>
@@ -6980,6 +7256,7 @@ export default function Report() {
               </Fragment>
             )}
           </div>
+          )}
 
           {/* ── v3.2: 레거시 Section 1~5 전면 제거 (KPI/차트/분류별/고객별/Cross-Selling/FCST) ──
                     - Section 1 (KPI): 상단 KPI 4카드(수주·매출×MTD·YTD)로 대체됨
