@@ -1,8 +1,26 @@
 # Account CRM — 프로젝트 컨텍스트
 
-> Claude Code 세션 시작 시 이 파일을 먼저 읽어 프로젝트 전체 맥락을 파악하세요.
-> 상세 변경 이력: [DEVELOPMENT_LOG.md](./DEVELOPMENT_LOG.md) 참조
-> 최종 업데이트: 2026-04-20 (v2.8)
+> ⭐ **작업 규칙·절대 규칙·현재 상태는 [CLAUDE.md](./CLAUDE.md)가 최우선 (새 Claude 자동 로드).**
+> 이 문서는 시스템의 배경·철학 등 전체 맥락 보조용.
+> 직전 작업 상태: [SESSION_HANDOFF.md](./SESSION_HANDOFF.md) · 상세 이력: [DEVELOPMENT_LOG.md](./DEVELOPMENT_LOG.md)
+> 최종 업데이트: 2026-05-20 (v3.21)
+
+---
+
+## 🔄 v2.8(2026-04) → v3.21(2026-05) 주요 변화 요약
+
+아래 본문에는 v2.8 시점 내용이 일부 남아 있음. 그 이후 핵심 변화:
+
+1. **ProMES 전환** (v3.13~) — 수주/매출 데이터 소스가 영업현황 Excel → **ProMES 원본 Excel** import로 변경. dedupe key = year-month-account_id-product_code. order_date는 YYYY-MM-01 정규화 (월 단위 운영).
+2. **데이터 무결성 구조** (v3.18) — `src/lib/aggregation.js` 단일 집계 모듈. **source whitelist** (`excel_import_promes_O/S` + `excel_import_영업현황_O/S`만 집계, manual 제외). `import_audit_logs` 불변 원장. Settings 무결성 대시보드 (validateDataIntegrity).
+3. **수동 입력 영구 차단** (v3.17.10) — AccountModal 수주이력 수동 입력 제거 (manual 데이터 사고 대응).
+4. **점수 체계** (v3.17, 사양서 v1.0) — 100점 (영업 60 + CRM 품질 40 - 감점 max 20). `src/lib/scoring.js`. 대시보드 담당자 활동 점수 (월 선택 가능, v3.21).
+5. **담당자 분류 중앙화** — `classifyForRepView` / `getValidSalesReps`. 집계는 account.sales_rep 기준 (본부장 입력해도 그 고객 담당자로).
+6. **보고서 전면 재구성** (v3.20~3.21) — 월간 5페이지 a~k 구조, 주간 예측 입력 컬럼, 분기/반기 소계, GAP 통합, 차월 파이프라인(6-source)/기회 파이프라인(모든 미래 cross_selling), 팀 활동 상세, 다음달 계획+TASK 통합.
+7. **MyTasks 페이지** (v3.17.11) — 내 team_tasks + Open이슈 + 차주액션 + GAP.
+8. **관리자 viewAsRep** — 본부장이 특정 담당자 시점으로 전환.
+
+> 상세는 CLAUDE.md + DEVELOPMENT_LOG.md 참조. 아래 본문은 시스템 철학·구조 이해용.
 
 ---
 

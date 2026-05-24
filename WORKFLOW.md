@@ -7,20 +7,31 @@
 
 ## 🔄 수정 후 필수 체크리스트
 
-코드 변경 후 다음 5단계를 **순서대로** 이행:
+코드 변경 후 다음 단계를 **순서대로** 이행:
 
-### ① Build & Deploy
+### ① Build (⚠ v3.18 이후 캐시 비우기 필수)
 ```powershell
 # Account CRM
 cd "C:\Users\haksu\OneDrive\Claude Cowork\Customer CRM\account-crm"
+# ⚠ 반드시 캐시 먼저 비우기 — 안 하면 changelog 등 변경이 빌드에 누락됨 (v3.18 사고)
+Remove-Item -Recurse -Force node_modules/.vite, dist -ErrorAction SilentlyContinue
 npm run build
-npx firebase deploy --only hosting
-
-# Pipeline CRM
-cd "C:\Users\haksu\OneDrive\Claude Cowork\bioprotech-crm"
-npm run build
-npx firebase deploy --only hosting
 ```
+
+### ①-2 빌드 검증 (배포 전 필수)
+```powershell
+# 의도한 변경(예: 새 버전 문자열)이 실제 빌드에 포함됐는지 확인
+Select-String -Path "dist/assets/index-*.js" -Pattern "v3.XX"
+```
+
+### ①-3 Deploy (⚠ 사용자 명시 컨펌 후에만)
+```powershell
+npx firebase deploy --only hosting
+# 배포 후 라이브 검증: 새 JS hash가 서빙되는지
+# curl -s https://bioprotech-account-crm.web.app/  → index-XXXX.js hash 확인
+```
+
+> Pipeline CRM도 동일 절차. 위치: `C:\Users\haksu\OneDrive\Claude Cowork\bioprotech-crm`
 
 ### ② src/lib/changelog.js 갱신
 앱 내 "📝 업데이트 내역" 메뉴에 표시됨. 최상단에 새 버전 항목 추가:
