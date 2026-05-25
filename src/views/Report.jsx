@@ -2517,10 +2517,13 @@ export default function Report() {
           recoveryFuture += parseFloat(l.recovery_plan_amount) || 0;
         });
 
-        // 시나리오
-        const optimistic = ytdActual + fcstFuture + crossExpected + contractFuture + recoveryFuture;
-        const realistic = ytdActual + (fcstFuture * 0.8) + crossWeighted + (contractFuture * 0.9) + (recoveryFuture * 0.7);
-        const pessimistic = ytdActual + (fcstFuture * 0.5);
+        // 시나리오 — v3.29: 남은 사업계획 50%를 기본 바닥으로 포함
+        //   예측 = YTD실적 + 남은 사업계획×50% + 영업활동
+        //   (활동 미입력 품목이 전부 '위험'으로 뜨던 문제 해결)
+        const planBase = remainingTarget * 0.5;
+        const optimistic = ytdActual + planBase + fcstFuture + crossExpected + contractFuture + recoveryFuture;
+        const realistic = ytdActual + planBase + (fcstFuture * 0.8) + crossWeighted + (contractFuture * 0.9) + (recoveryFuture * 0.7);
+        const pessimistic = ytdActual + planBase + (fcstFuture * 0.5);
 
         const ytdPct = ytdTarget > 0 ? Math.round((ytdActual / ytdTarget) * 100) : 0;
         const optimisticPct = annualTarget > 0 ? Math.round((optimistic / annualTarget) * 100) : 0;
@@ -3403,9 +3406,7 @@ export default function Report() {
 
       // Line 4: 다음 달 기회
       const oppParts = [];
-      if (monthlyPipeline.totalWeighted > 0) {
-        oppParts.push(`차월 파이프라인 가중 ${fmtKRW(monthlyPipeline.totalWeighted)}(${monthlyPipeline.items.length}건)`);
-      }
+      // v3.29: 차월 파이프라인 제거에 따라 자동요약의 차월 파이프라인 기회 항목도 제외
       if (gapSummary.catchUpTotal > 0) {
         oppParts.push(`FCST catch-up 잠재 ${fmtKRW(gapSummary.catchUpTotal)}`);
       }
@@ -7098,78 +7099,9 @@ export default function Report() {
             );
           })()}
 
-          {/* v3.20: g. 차월 수주 파이프라인 — 6-source 통합 (■ 5에서 분리) */}
-          {monthlyReportData.monthlyPipeline.items.length > 0 && (() => {
-            const { items, totalExpected, totalWeighted, nextYM } = monthlyReportData.monthlyPipeline;
-            const p1 = items.filter(x => x.priority === 'P1');
-            const p2 = items.filter(x => x.priority === 'P2');
-            const p3 = items.filter(x => x.priority === 'P3');
-            const sourceMeta = {
-              fcst:     { icon: '🔵', bg: '#dbeafe', color: '#1d4ed8', label: 'FCST (80%)' },
-              plan:     { icon: '🟢', bg: '#dcfce7', color: '#15803d', label: '사업계획 (60%)' },
-              trend:    { icon: '🟡', bg: '#fef3c7', color: '#b45309', label: '트렌드 (40%)' },
-              cross:    { icon: '🤝', bg: '#ede9fe', color: '#6d28d9', label: '크로스셀링 (확률)' },
-              gap:      { icon: '📉', bg: '#fee2e2', color: '#b91c1c', label: 'GAP 기회 (확률)' },
-              contract: { icon: '📑', bg: '#d1fae5', color: '#047857', label: '계약분할 (90%)' },
-              recovery: { icon: '🛟', bg: '#fde68a', color: '#92400e', label: 'GAP 회복계획 (70%)' },
-              other:    { icon: '⚪', bg: '#f3f4f6', color: '#6b7280', label: '기타 (30%)' },
-            };
-            const renderItem = (a, i) => {
-              const src = sourceMeta[a.source] || sourceMeta.other;
-              const prioColor = a.priority === 'P1' ? 'var(--red)' : a.priority === 'P2' ? '#d97706' : '#6b7280';
-              return (
-                <tr key={i}>
-                  <td style={{ fontSize: 11, fontWeight: 700, color: prioColor, whiteSpace: 'nowrap' }}>{a.priority}</td>
-                  <td style={{ fontSize: 11, fontWeight: 600 }}>
-                    {a.account?.id ? (
-                      <a href="#" onClick={(e) => { e.preventDefault(); if (a.account) setEditingAccount(a.account); }}
-                        style={{ color: 'var(--accent)', textDecoration: 'none' }}>{a.account?.company_name}</a>
-                    ) : (a.account?.company_name || '?')}
-                  </td>
-                  <td style={{ fontSize: 10 }}>
-                    <span style={{ padding: '1px 6px', background: src.bg, color: src.color, borderRadius: 3, fontWeight: 600 }}>
-                      {src.icon} {src.label}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text2)' }}>{a.amount > 0 ? fmtKRW(a.amount) : '-'}</td>
-                  <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--green, #16a34a)' }}>{a.weighted > 0 ? fmtKRW(a.weighted) : '-'}</td>
-                  <td style={{ fontSize: 10, color: 'var(--text3)', maxWidth: 200 }}>{a.msg}</td>
-                </tr>
-              );
-            };
-            return (
-              <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--accent)' }}>
-                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span>■ 5-1. 차월 수주 파이프라인 (g)</span>
-                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                    — {nextYM} 예상 · 6-source 통합 (사용자 요청: 고객카드 미래 수주 모든 내용 포함)
-                  </span>
-                  <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: 'var(--green, #16a34a)', padding: '2px 8px', background: 'rgba(22,163,74,0.08)', borderRadius: 4 }}>
-                    예상 {fmtKRW(totalExpected)} / 가중 {fmtKRW(totalWeighted)} · {items.length}건 · P1 {p1.length} · P2 {p2.length} · P3 {p3.length}
-                  </span>
-                </div>
-                <div className="table-wrap" style={{ maxHeight: 350 }}>
-                  <table className="data-table" style={{ fontSize: 11 }}>
-                    <thead>
-                      <tr>
-                        <th>우선</th>
-                        <th>고객사</th>
-                        <th>소스 (신뢰도)</th>
-                        <th style={{ textAlign: 'right' }}>예상금액</th>
-                        <th style={{ textAlign: 'right' }}>가중금액</th>
-                        <th>비고</th>
-                      </tr>
-                    </thead>
-                    <tbody>{items.map(renderItem)}</tbody>
-                  </table>
-                </div>
-                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4 }}>
-                  ※ <strong>v3.19 6-source</strong>: FCST 80% / 사업계획 60% / 트렌드 40% / 크로스셀링·GAP기회 확률가중 / 계약분할 90% / GAP회복계획 70% ·
-                  AccountModal 탭(GAP/크로스셀링/계약/Activity) 업데이트가 즉시 반영
-                </div>
-              </div>
-            );
-          })()}
+          {/* v3.29: ■ 5-1 차월 수주 파이프라인 제거 — 3개월 예측(■ 5-2)의 M+1과 수치가 불일치하여
+              혼선을 주던 문제 → 차월 금액은 ■ 5-2 의 M+1 단일 기준으로 통일. (monthlyPipeline 계산 로직은
+              코드에 남아있으나 더 이상 화면에 렌더링하지 않음) */}
 
           {/* v3.17 Phase C1: 3개월 수주 예측 (영업 3개월 선행 활동 가시화) */}
           {(monthlyReportData.threeMonthForecast || []).length > 0 && (
@@ -7351,13 +7283,13 @@ export default function Report() {
               <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
                 <span>■ 9-2. 품목별 미래 예측 (j)</span>
                 <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
-                  — 현재 영업활동 기반 연말 예상 (낙관/현실/비관) + 자동 권장 액션
+                  — YTD + 남은 사업계획 50% + 영업활동 기반 연말 예상 + 자동 권장 액션
                 </span>
               </div>
               <div style={{ display: 'grid', gap: 12 }}>
                 {monthlyReportData.productFutureForecast.map(p => {
-                  const realisticColor = p.scenarios.realisticPct >= 100 ? 'var(--green, #16a34a)' : p.scenarios.realisticPct >= 80 ? '#d97706' : 'var(--red)';
-                  const realisticStatus = p.scenarios.realisticPct >= 100 ? '🟢 정상' : p.scenarios.realisticPct >= 80 ? '🟡 주의' : '🔴 위험';
+                  const realisticColor = p.scenarios.realisticPct >= 100 ? 'var(--green, #16a34a)' : 'var(--red)';
+                  const realisticStatus = p.scenarios.realisticPct >= 100 ? '🟢 초과 (목표달성)' : '🔴 미달';
                   return (
                     <div key={p.product} style={{ border: `2px solid ${realisticColor}`, borderRadius: 8, overflow: 'hidden' }}>
                       {/* 헤더 */}
@@ -7399,7 +7331,7 @@ export default function Report() {
                             <div style={{ color: realisticColor, fontWeight: 700 }}>🟡 현실 {p.scenarios.realisticPct}%: {fmtKRW(p.scenarios.realistic)}</div>
                             <div style={{ color: 'var(--red)' }}>🔴 비관 {p.scenarios.pessimisticPct}%: {fmtKRW(p.scenarios.pessimistic)}</div>
                             <div style={{ marginTop: 4, fontSize: 9, color: 'var(--text3)' }}>
-                              ※ 낙관=모든 활동 100% / 현실=신뢰도 가중 / 비관=FCST 50%만
+                              ※ 공통: YTD + 남은 사업계획×50% / 낙관=활동100% · 현실=활동가중 · 비관=FCST50%
                             </div>
                           </div>
                         </div>
@@ -7422,7 +7354,7 @@ export default function Report() {
                 })}
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 10, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>
-                ※ 시나리오: 낙관 = 모든 영업활동 100% 달성 / 현실 = FCST 80% + 크로스 확률 가중 + 계약 90% + 회복 70% / 비관 = FCST 50%만
+                ※ 예측 = YTD실적 + 남은 사업계획×50%(기본) + 영업활동 · 낙관 = 활동 100% / 현실 = FCST 80% + 크로스 가중 + 계약 90% + 회복 70% / 비관 = FCST 50% · 현실 예측 100% 이상 = 초과, 미만 = 미달
               </div>
             </div>
           )}

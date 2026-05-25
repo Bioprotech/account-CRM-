@@ -3,21 +3,16 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 작업 규칙은 `CLAUDE.md`, 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-05-20 (v3.21 작업 완료 — 계정 이관 준비)
+**최종 갱신**: 2026-05-25 (v3.29 배포 완료 — 미래 예측 정리)
 
 ---
 
 ## 🎯 현재 상태
 
-- **운영 버전(라이브)**: v3.20 — https://bioprotech-account-crm.web.app
-- **로컬 최신 작업**: **v3.21** (커밋·배포 상태는 아래 ⚠ 참조)
+- **운영 버전(라이브)**: **v3.29** — https://bioprotech-account-crm.web.app (index-Ca7g1YnK.js)
 - **GitHub**: https://github.com/Bioprotech/account-CRM-.git
 - **Firebase 프로젝트**: bioprotech-crm (Pipeline CRM과 공유)
-
-### ⚠ 이관 시점 미완 상태 (반드시 확인)
-- v3.21 코드는 작성 완료 + 빌드 검증 완료
-- **커밋/푸시/배포 여부는 `git status`와 `git log`로 직접 확인할 것**
-- 라이브가 아직 v3.20이면 → v3.21 배포 필요 (사용자 컨펌 후)
+- 커밋/푸시/배포 상태는 항상 `git status` + `git log`로 직접 확인할 것
 
 ---
 
