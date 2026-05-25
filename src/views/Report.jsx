@@ -1425,6 +1425,37 @@ export default function Report() {
       };
     });
 
+    // v3.27: 매출 분기별 진행 현황 (목표: team_sales 우선 / 없으면 customerPlans fallback, 실적: sales)
+    const teamSalesPlansQ = businessPlans.filter(p => p.type === 'team_sales' && p.year === wkYear);
+    const salesQuarterData = [1, 2, 3, 4].map(q => {
+      const startMonth = (q - 1) * 3 + 1;
+      const endMonth = q * 3;
+      let target = 0;
+      let actual = 0;
+      for (let m = startMonth; m <= endMonth; m++) {
+        const mKey = String(m).padStart(2, '0');
+        if (teamSalesPlansQ.length > 0) {
+          teamSalesPlansQ.forEach(p => { target += (p.targets?.[mKey] || 0); });
+        } else {
+          customerPlans.forEach(p => { target += (p.targets?.[mKey] || 0); });
+        }
+        const mPrefix = `${wkYear}-${mKey}`;
+        sales.forEach(s => {
+          if ((s.sale_date || '').startsWith(mPrefix)) actual += (s.sale_amount || 0);
+        });
+      }
+      const currentQ = Math.ceil(wkMonth / 3);
+      let status = 'future';
+      if (q < currentQ) status = 'done';
+      else if (q === currentQ) status = 'active';
+      return {
+        q, target, actual,
+        achieveRate: target > 0 ? Math.round((actual / target) * 100) : 0,
+        status,
+        label: `Q${q}`,
+      };
+    });
+
     return {
       wkStart, wkEnd, monday,
       weekLabel: getWeekLabel(monday),
@@ -1438,6 +1469,7 @@ export default function Report() {
       ytdOrderTarget, ytdOrderActual, ytdOrderShortage, ytdOrderSurplus, ytdOrderPct, ytdOrderStatus,
       ytdSalesTarget, ytdSalesActual, ytdSalesShortage, ytdSalesSurplus, ytdSalesPct, ytdSalesStatus,
       quarterData,
+      salesQuarterData,
       weekRepRows, wkNewDetails, wkEtcDetails,
     };
   }, [orders, sales, customerPlans, businessPlans, weekOffset, planLookup, accounts, teamMembers, priorYearSet]);
@@ -4612,15 +4644,23 @@ export default function Report() {
                 <table className="data-table" style={{ fontSize: 12 }}>
                   <thead>
                     <tr>
-                      <th style={{ minWidth: 80 }}>분기</th>
+                      <th style={{ minWidth: 80 }} rowSpan={2}>분기</th>
+                      <th colSpan={3} style={{ textAlign: 'center', background: 'rgba(46,125,50,0.06)' }}>🆕 수주</th>
+                      <th colSpan={3} style={{ textAlign: 'center', background: 'rgba(37,99,235,0.06)', borderLeft: '2px solid var(--border)' }}>💰 매출</th>
+                      <th style={{ textAlign: 'left', paddingLeft: 12 }} rowSpan={2}>상태</th>
+                    </tr>
+                    <tr>
                       <th style={{ textAlign: 'right' }}>목표</th>
                       <th style={{ textAlign: 'right' }}>실적</th>
                       <th style={{ textAlign: 'right' }}>달성률</th>
-                      <th style={{ textAlign: 'left', paddingLeft: 12 }}>상태</th>
+                      <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>목표</th>
+                      <th style={{ textAlign: 'right' }}>실적</th>
+                      <th style={{ textAlign: 'right' }}>달성률</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sectionAData.quarterData.map(q => {
+                    {sectionAData.quarterData.map((q, i) => {
+                      const sq = sectionAData.salesQuarterData[i] || { target: 0, actual: 0, achieveRate: 0 };
                       const statusLabel = q.status === 'done' ? '✅ 완료' : q.status === 'active' ? '🔵 진행중' : '⏸ 예정';
                       const statusColor = q.status === 'done' ? 'var(--text2)' : q.status === 'active' ? 'var(--accent)' : 'var(--text3)';
                       return (
@@ -4631,10 +4671,17 @@ export default function Report() {
                               ({(q.q - 1) * 3 + 1}~{q.q * 3}월)
                             </span>
                           </td>
+                          {/* 수주 */}
                           <td style={{ textAlign: 'right' }}>{fmtM(q.target)}</td>
                           <td style={{ textAlign: 'right', fontWeight: 600, color: q.actual > 0 ? 'var(--accent)' : 'var(--text3)' }}>{fmtM(q.actual)}</td>
                           <td style={{ textAlign: 'right', ...achieveStyle(q.achieveRate) }}>
                             {q.target > 0 ? `${q.achieveRate}%` : '-'}
+                          </td>
+                          {/* 매출 */}
+                          <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(sq.target)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: sq.actual > 0 ? '#2563eb' : 'var(--text3)' }}>{fmtM(sq.actual)}</td>
+                          <td style={{ textAlign: 'right', ...achieveStyle(sq.achieveRate) }}>
+                            {sq.target > 0 ? `${sq.achieveRate}%` : '-'}
                           </td>
                           <td style={{ paddingLeft: 12, fontSize: 11, color: statusColor, fontWeight: 600 }}>{statusLabel}</td>
                         </tr>
@@ -4644,6 +4691,9 @@ export default function Report() {
                       const t = sectionAData.quarterData.reduce((acc, q) => ({
                         target: acc.target + q.target, actual: acc.actual + q.actual,
                       }), { target: 0, actual: 0 });
+                      const st = sectionAData.salesQuarterData.reduce((acc, q) => ({
+                        target: acc.target + q.target, actual: acc.actual + q.actual,
+                      }), { target: 0, actual: 0 });
                       return (
                         <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
                           <td>연간 합계</td>
@@ -4651,6 +4701,11 @@ export default function Report() {
                           <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(t.actual)}</td>
                           <td style={{ textAlign: 'right', ...achieveStyle(pct(t.actual, t.target)) }}>
                             {t.target > 0 ? `${pct(t.actual, t.target)}%` : '-'}
+                          </td>
+                          <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(st.target)}</td>
+                          <td style={{ textAlign: 'right', color: '#2563eb' }}>{fmtM(st.actual)}</td>
+                          <td style={{ textAlign: 'right', ...achieveStyle(pct(st.actual, st.target)) }}>
+                            {st.target > 0 ? `${pct(st.actual, st.target)}%` : '-'}
                           </td>
                           <td></td>
                         </tr>
