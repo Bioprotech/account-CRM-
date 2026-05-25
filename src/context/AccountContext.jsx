@@ -352,12 +352,14 @@ export default function AccountProvider({ children }) {
     // → 어제 잔여, 다른 브라우저에서 저장된 데이터까지 모두 정리됨
 
     if (FIREBASE_ENABLED && replaceSource) {
-      // 1) 기존 source 데이터 일괄 삭제 (Firestore query 기반, 빠름)
+      // 1) 기존 source 데이터 일괄 삭제 (v3.22: 삭제 실패 시 저장 중단 — 중복 원천 차단)
       let deletedCount = 0;
       try {
         deletedCount = await deleteOrdersBySource(replaceSource);
       } catch (e) {
         console.error('수주 일괄 삭제 실패:', e);
+        showToast('⚠ 기존 수주 삭제 실패 — 중복 방지 위해 import 중단. 잠시 후 다시 시도하세요.', 'error');
+        return; // ★ 삭제 실패 시 저장 안 함
       }
       // 2) React state도 동기화 (즉시 UI 반영)
       setOrders(prev => prev.filter(o => o.source !== replaceSource));
@@ -407,11 +409,14 @@ export default function AccountProvider({ children }) {
   const importSales = useCallback(async (newSales, replaceSource) => {
     // v3.5.1: Firestore source 기반 직접 삭제 (React state가 아닌 DB 기준)
     if (FIREBASE_ENABLED && replaceSource) {
+      // v3.22: 삭제 실패 시 저장 중단 — 매출 596건 2배 중복 사고 재발 방지
       let deletedCount = 0;
       try {
         deletedCount = await deleteSalesBySource(replaceSource);
       } catch (e) {
         console.error('매출 일괄 삭제 실패:', e);
+        showToast('⚠ 기존 매출 삭제 실패 — 중복 방지 위해 import 중단. 잠시 후 다시 시도하세요.', 'error');
+        return; // ★ 삭제 실패 시 저장 안 함
       }
       setSales(prev => prev.filter(s => s.source !== replaceSource));
       try {

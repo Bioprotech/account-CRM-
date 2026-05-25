@@ -231,20 +231,42 @@ export async function batchSaveBusinessPlans(plans) {
 
 /* ── v3.5.1: Source 기반 일괄 삭제 (Import 시 어제 잔여 데이터까지 깔끔히 정리) ── */
 // React state가 아닌 Firestore에서 직접 query 기반 삭제 (state 외부의 잔여 데이터까지 처리)
+// v3.22: 삭제 후 0건이 될 때까지 재확인 루프 (이전엔 1회 삭제 후 검증 없음 → 일부 잔존 시 import 중복 사고)
+//   - 매 라운드: source 매칭 전부 조회 → batch 삭제 → 다시 조회. 0건이면 종료.
+//   - 최대 라운드 초과 시 throw → 호출측(importOrders/Sales)이 저장을 중단하여 중복 원천 차단.
 async function deleteByQuerySource(colName, source) {
   if (!FIREBASE_ENABLED) return 0;
-  const q = query(collection(db, colName), where('source', '==', source));
-  const snap = await getDocs(q);
-  const docs = snap.docs;
-  if (docs.length === 0) return 0;
-  const CHUNK = 500;
-  for (let i = 0; i < docs.length; i += CHUNK) {
-    const batch = writeBatch(db);
-    docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
-    await batch.commit();
+  let totalDeleted = 0;
+  const MAX_ROUNDS = 6;
+  const CHUNK = 450;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const q = query(collection(db, colName), where('source', '==', source));
+    const snap = await getDocs(q);
+    const docs = snap.docs;
+    if (docs.length === 0) return totalDeleted; // 완전 삭제 확인
+    for (let i = 0; i < docs.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      totalDeleted += docs.slice(i, i + CHUNK).length;
+    }
   }
-  return docs.length;
+  // 여기 도달 = 6라운드 후에도 잔존 → 호출측이 저장 중단하도록 throw
+  const remaining = (await getDocs(query(collection(db, colName), where('source', '==', source)))).docs.length;
+  if (remaining > 0) {
+    throw new Error(`${colName} source='${source}' 삭제 미완료 — ${remaining}건 잔존 (import 중단으로 중복 방지)`);
+  }
+  return totalDeleted;
 }
+
+// v3.22: source별 잔여 건수 확인 (import 전후 검증용)
+export async function countBySource(colName, source) {
+  if (!FIREBASE_ENABLED) return 0;
+  const snap = await getDocs(query(collection(db, colName), where('source', '==', source)));
+  return snap.docs.length;
+}
+export async function countOrdersBySource(source) { return countBySource(ORDERS_COL, source); }
+export async function countSalesBySource(source) { return countBySource(SALES_COL, source); }
 
 export async function deleteOrdersBySource(source) {
   return await deleteByQuerySource(ORDERS_COL, source);
