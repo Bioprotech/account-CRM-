@@ -4910,6 +4910,101 @@ export default function Report() {
             </div>
           )}
 
+          {/* ══ 섹션 1-4 — 고객별 수주목표 진행 현황 (v3.25) ══ */}
+          {/* 이번 달 수주목표가 있는 고객별: 목표 대비 실적(meet 여부) + 담당자 + 수주활동 정상 이행 점검 */}
+          {(() => {
+            const monthStr = sectionAData.monthStr;
+            if (!monthStr) return null;
+            const monthKey = monthStr.slice(5, 7);
+            const plansWithTarget = customerPlans.filter(p => (p.targets?.[monthKey] || 0) > 0);
+            if (plansWithTarget.length === 0) return null;
+            const today = new Date();
+            const rows = plansWithTarget.map(p => {
+              const acc = accounts.find(a => a.id === p.account_id)
+                || accounts.find(a => (a.company_name || '').toLowerCase().trim() === (p.customer_name || '').toLowerCase().trim());
+              const accId = acc?.id || p.account_id;
+              const target = p.targets[monthKey] || 0;
+              const actual = orders
+                .filter(o => o.account_id === accId && (o.order_date || '').startsWith(monthStr))
+                .reduce((s, o) => s + (o.order_amount || 0), 0);
+              const rate = target > 0 ? Math.round((actual / target) * 100) : 0;
+              const rep = acc?.sales_rep || p.sales_rep || '미배정';
+              const accActs = (activityLogs || []).filter(l => l.account_id === accId);
+              const lastAct = accActs.slice().sort((a, b) =>
+                (b.date || b.created_at || '').localeCompare(a.date || a.created_at || ''))[0];
+              const lastActDate = lastAct ? (lastAct.date || lastAct.created_at || '').slice(0, 10) : '';
+              const daysSince = lastActDate ? Math.floor((today - new Date(lastActDate)) / 86400000) : null;
+              const openIssues = accActs.filter(l => l.status && l.status !== 'Closed').length;
+              let statusColor, statusLabel;
+              if (rate >= 100) { statusColor = 'var(--green, #16a34a)'; statusLabel = '✅ 달성'; }
+              else if (daysSince !== null && daysSince <= 30) { statusColor = '#d97706'; statusLabel = '🟡 진행중'; }
+              else { statusColor = 'var(--red)'; statusLabel = '🔴 점검필요'; }
+              return { name: acc?.company_name || p.customer_name || '?', accId, acc, rep, target, actual, rate, openIssues, lastActDate, daysSince, statusColor, statusLabel };
+            }).sort((a, b) => a.rate - b.rate);
+            const totalTarget = rows.reduce((s, r) => s + r.target, 0);
+            const totalActual = rows.reduce((s, r) => s + r.actual, 0);
+            const totalPct = totalTarget > 0 ? Math.round((totalActual / totalTarget) * 100) : 0;
+            const metCount = rows.filter(r => r.rate >= 100).length;
+            const riskCount = rows.filter(r => r.statusLabel.includes('점검')).length;
+            return (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span>■ 1-4. 고객별 수주목표 진행 현황</span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                    ({monthStr} 기준 · 목표 보유 {rows.length}사 · ✅ 달성 {metCount} · 🔴 점검필요 {riskCount} · 달성률 낮은 순 · 단위: 백만원)
+                  </span>
+                </div>
+                <div className="table-wrap" style={{ maxHeight: 480 }}>
+                  <table className="data-table" style={{ fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ minWidth: 140 }}>고객명</th>
+                        <th>담당자</th>
+                        <th style={{ textAlign: 'right' }}>당월 목표</th>
+                        <th style={{ textAlign: 'right' }}>당월 실적</th>
+                        <th style={{ textAlign: 'right' }}>달성률</th>
+                        <th style={{ textAlign: 'center' }}>최근 활동</th>
+                        <th style={{ textAlign: 'center' }}>Open</th>
+                        <th style={{ textAlign: 'center' }}>상태</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i} style={{ background: r.rate >= 100 ? 'rgba(34,197,94,0.04)' : r.statusLabel.includes('점검') ? 'rgba(220,38,38,0.04)' : undefined }}>
+                          <td style={{ fontWeight: 600 }}>
+                            {r.acc ? (
+                              <a href="#" onClick={(e) => { e.preventDefault(); setEditingAccount(r.acc); }}
+                                style={{ color: 'var(--accent)', textDecoration: 'none' }}>{r.name}</a>
+                            ) : r.name}
+                          </td>
+                          <td style={{ color: 'var(--text2)' }}>{r.rep}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtM(r.target)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: r.actual > 0 ? 'var(--accent)' : 'var(--text3)' }}>{fmtM(r.actual)}</td>
+                          <td style={{ textAlign: 'right', ...achieveStyle(r.rate) }}>{r.rate}%</td>
+                          <td style={{ textAlign: 'center', fontSize: 10, color: r.daysSince === null ? 'var(--red)' : r.daysSince > 30 ? 'var(--red)' : 'var(--text2)' }}>
+                            {r.lastActDate ? `${r.lastActDate} (${r.daysSince}일)` : '없음'}
+                          </td>
+                          <td style={{ textAlign: 'center', fontWeight: 600, color: r.openIssues > 0 ? '#d97706' : 'var(--text3)' }}>{r.openIssues || '-'}</td>
+                          <td style={{ textAlign: 'center', fontSize: 11, fontWeight: 600, color: r.statusColor, whiteSpace: 'nowrap' }}>{r.statusLabel}</td>
+                        </tr>
+                      ))}
+                      <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700, background: 'var(--bg2)' }}>
+                        <td colSpan={2}>합계 ({rows.length}사)</td>
+                        <td style={{ textAlign: 'right' }}>{fmtM(totalTarget)}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(totalActual)}</td>
+                        <td style={{ textAlign: 'right', ...achieveStyle(totalPct) }}>{totalPct}%</td>
+                        <td colSpan={3}></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                  ※ 이번 달 수주목표가 있는 고객만 표시 · 담당자 = 고객카드 담당자 · 상태: ✅ 달성(100%+) / 🟡 진행중(미달+30일내 활동) / 🔴 점검필요(미달+30일↑ 또는 활동없음) · 고객명 클릭 시 카드 열림
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ══ 섹션 B — 팀별 통합 블록 (금주활동 / 주요이슈 / Open이슈 / 차주계획 / 리스크) ══ */}
           {TEAM_ORDER.map(teamKey => {
             const blk = teamBlocksData.blocks[teamKey];
