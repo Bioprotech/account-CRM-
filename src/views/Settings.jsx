@@ -4990,6 +4990,13 @@ export default function Settings() {
       </div>
       )}
 
+      {/* v3.22: 🔧 고급 도구 — 평소 접힘 (자주 안 쓰는 일회성 도구 모음, 누더기 정리) */}
+      <details style={{ marginBottom: 16 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 700, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8 }}>
+          🔧 고급 도구 (고객 분류 · Account 합병 · 정합성 진단 · 퍼지 매칭) — 평소 접힘, 필요 시 클릭
+        </summary>
+        <div style={{ marginTop: 12 }}>
+
       {/* ── v3.12: 고객 분류 일괄 적용 도구 ── */}
       <BulkClassificationTool
         accounts={accounts}
@@ -5025,6 +5032,8 @@ export default function Settings() {
         applyFuzzyMatches={applyFuzzyMatches}
         showToast={showToast}
       />
+        </div>
+      </details>
 
       {/* ── 사업계획 Import ── */}
       <div className="card" style={{ marginBottom: 16 }}>
