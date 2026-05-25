@@ -2455,9 +2455,10 @@ export default function Report() {
             // category 없으면 전 품목 분배 시뮬레이션 — 무시
           }
         });
-        // ② 크로스셀링 (gap.opportunities)
+        // ② 크로스셀링 (gap.opportunities + cross_selling 탭) — v3.28: cross_selling 탭 누락 수정
         let crossExpected = 0, crossWeighted = 0;
         (accounts || []).forEach(a => {
+          // (a) GAP 분석 탭의 기회 파이프라인 (account.gap.opportunities[])
           const opps = a.gap?.opportunities || [];
           opps.forEach(o => {
             if (!o.expected_date) return;
@@ -2468,6 +2469,22 @@ export default function Report() {
             if (!oProd || !(oProd.includes(product.toLowerCase()) || product.toLowerCase().includes(oProd))) return;
             const amt = parseFloat(o.amount) || 0;
             const prob = parseFloat(o.probability) || 50;
+            crossExpected += amt;
+            crossWeighted += amt * (prob / 100);
+          });
+          // (b) v3.28: 크로스셀링 탭 (account.cross_selling[]) — ERBE 등 영업이 직접 입력한 기회
+          const csItems = a.cross_selling || [];
+          csItems.forEach(c => {
+            if (c.status === '수주완료' || c.status === 'closed' || c.status === 'won' || c.status === '중단') return;
+            const expDate = c.expected_date || c.target_date || '';
+            if (!expDate) return;
+            const cMonth = parseInt(expDate.slice(5, 7), 10);
+            const cYear = parseInt(expDate.slice(0, 4), 10);
+            if (cYear !== selYear || cMonth <= selMonth) return;
+            const cProd = (c.product || c.product_category || c.product_name || '').toLowerCase();
+            if (!cProd || !(cProd.includes(product.toLowerCase()) || product.toLowerCase().includes(cProd))) return;
+            const amt = parseFloat(c.expected_amount || c.amount) || 0;
+            const prob = parseFloat(c.probability) || 50;
             crossExpected += amt;
             crossWeighted += amt * (prob / 100);
           });

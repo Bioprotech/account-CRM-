@@ -1,5 +1,24 @@
 export const CHANGELOG = [
   {
+    version: 'v3.28',
+    date: '2026-05-25',
+    title: '🐛 품목별 미래예측 — 크로스셀링 탭 누락 수정',
+    items: [
+      '🐛 **사용자 지적**: 품목별 미래예측에서 전 품목이 위험/주의 상태',
+      '  ↳ 원인: 크로스셀링 집계가 account.gap.opportunities만 보고 account.cross_selling[] 탭은 누락',
+      '  ↳ (monthlyPipeline은 v3.21에서 둘 다 추가됐는데 productFutureForecast만 빠져 있었음)',
+      '',
+      '🔧 **productFutureForecast 크로스셀링 집계에 cross_selling 탭 추가**',
+      '  ↳ (a) GAP 분석 탭 기회 (gap.opportunities) + (b) 크로스셀링 탭 (cross_selling[]) 둘 다 합산',
+      '  ↳ ERBE 등 영업이 크로스셀링 탭에 입력한 미래 기회가 품목 예측에 반영',
+      '  ↳ 선택월 이후 + 품목 매칭 + 미완료 상태만 (확률 가중)',
+      '',
+      '⚠ **한계 안내**: 품목별 예측은 영업활동에 "품목"이 기입돼야 매칭됨',
+      '  ↳ 품목 미지정 FCST/기회/계약은 어느 품목인지 모호해 제외됨',
+      '  ↳ 정확한 예측을 위해 영업활동 입력 시 품목 기입 권장',
+    ],
+  },
+  {
     version: 'v3.27',
     date: '2026-05-25',
     title: '📊 주간 분기별 진행 현황 — 매출 추가 (수주 + 매출 통합)',
