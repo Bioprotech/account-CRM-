@@ -1,5 +1,24 @@
 export const CHANGELOG = [
   {
+    version: 'v3.24',
+    date: '2026-05-25',
+    title: '🔗 GAP 분석 완전 일원화 — 중복 DEEP GAP ANALYSIS 제거',
+    items: [
+      '🙏 **사용자 재지적**: "GAP 분석이 여전히 분산". 확인 결과 Page 5 끝에 옛 "DEEP GAP ANALYSIS" 섹션(340줄)이 남아 4-3과 중복',
+      '',
+      '🗑 **Page 5 끝 DEEP GAP ANALYSIS 340줄 제거** — 4개 카드 모두 다른 곳과 중복이라 옮길 필요 없이 중복본만 삭제:',
+      '  ↳ Gap 원인 분석 (causeRanking) → 이미 Page 3 ■ 4-3b 원인별에 있음',
+      '  ↳ 고객별 심층 분석 (topGapCustomers) → 이미 Page 3 ■ 4-3 미달 고객 카드에 있음',
+      '  ↳ 기회 파이프라인 → 이미 Page 4 ■ 5-3 (v3.21 "모든 미래" 버전이 더 완전)',
+      '  ↳ AM 활동 품질 (amMetrics) → 이미 Page 5 ■ 11 담당자 활동 점수에 통합됨',
+      '',
+      '✅ **GAP이 Page 3 ■ 4-3 한 곳으로 완전 일원화** (4-3 고객별 + 4-3b 원인별)',
+      '✅ **내용 손실 0** — Excel 다운로드용 gapAnalysisData 계산은 그대로 유지',
+      '',
+      '📋 **지역별 Key Metrics**: 사용자 결정 — 대륙별(■ 9)로 충분, 추가 안 함',
+    ],
+  },
+  {
     version: 'v3.23',
     date: '2026-05-25',
     title: '🧹 설정창 정리 — 고급 도구 접이식 + 죽은 코드 제거 (누더기 해소)',
