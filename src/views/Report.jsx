@@ -4946,6 +4946,26 @@ export default function Report() {
             const totalPct = totalTarget > 0 ? Math.round((totalActual / totalTarget) * 100) : 0;
             const metCount = rows.filter(r => r.rate >= 100).length;
             const riskCount = rows.filter(r => r.statusLabel.includes('점검')).length;
+            // v3.26: 사업계획 외 (목표 없는 고객의 당월 수주) — 전체 금액(■ 1)과 일치시킴
+            const plannedAccIds = new Set(rows.map(r => r.accId).filter(Boolean));
+            const etcByAcc = {};
+            orders.filter(o => (o.order_date || '').startsWith(monthStr)).forEach(o => {
+              if (o.account_id && plannedAccIds.has(o.account_id)) return; // 목표 보유 고객은 위에서 집계됨
+              const key = o.account_id || o.customer_name || '?';
+              if (!etcByAcc[key]) {
+                const eacc = accounts.find(a => a.id === o.account_id);
+                etcByAcc[key] = {
+                  accId: o.account_id, acc: eacc,
+                  name: eacc?.company_name || o.customer_name || '?',
+                  rep: eacc?.sales_rep || o.sales_rep || '미배정',
+                  actual: 0,
+                };
+              }
+              etcByAcc[key].actual += o.order_amount || 0;
+            });
+            const etcRows = Object.values(etcByAcc).filter(e => e.actual > 0).sort((a, b) => b.actual - a.actual);
+            const etcActual = etcRows.reduce((s, e) => s + e.actual, 0);
+            const grandActual = totalActual + etcActual; // = ■ 1 전체 당월 수주
             return (
               <div className="card" style={{ marginBottom: 16 }}>
                 <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -4988,18 +5008,58 @@ export default function Report() {
                           <td style={{ textAlign: 'center', fontSize: 11, fontWeight: 600, color: r.statusColor, whiteSpace: 'nowrap' }}>{r.statusLabel}</td>
                         </tr>
                       ))}
-                      <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700, background: 'var(--bg2)' }}>
-                        <td colSpan={2}>합계 ({rows.length}사)</td>
+                      {/* 사업계획 목표 고객 소계 */}
+                      <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 600, fontSize: 11, background: 'rgba(46,125,50,0.04)' }}>
+                        <td colSpan={2}>↳ 사업계획 목표 고객 소계 ({rows.length}사)</td>
                         <td style={{ textAlign: 'right' }}>{fmtM(totalTarget)}</td>
                         <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(totalActual)}</td>
                         <td style={{ textAlign: 'right', ...achieveStyle(totalPct) }}>{totalPct}%</td>
                         <td colSpan={3}></td>
                       </tr>
+                      {/* v3.26: 사업계획 외 (신규/기타) — 목표 없이 당월 수주 발생한 고객 */}
+                      {etcRows.length > 0 && (
+                        <tr style={{ background: 'rgba(217,119,6,0.08)', fontWeight: 700 }}>
+                          <td colSpan={8} style={{ fontSize: 11, color: '#b45309' }}>
+                            🪣 사업계획 외 (신규/기타) — 목표 없이 당월 수주 발생 {etcRows.length}사
+                          </td>
+                        </tr>
+                      )}
+                      {etcRows.map((e, i) => (
+                        <tr key={`etc-${i}`} style={{ background: 'rgba(254,243,199,0.15)' }}>
+                          <td style={{ fontWeight: 600 }}>
+                            {e.acc ? (
+                              <a href="#" onClick={(ev) => { ev.preventDefault(); setEditingAccount(e.acc); }}
+                                style={{ color: '#b45309', textDecoration: 'none' }}>{e.name}</a>
+                            ) : e.name}
+                          </td>
+                          <td style={{ color: 'var(--text2)' }}>{e.rep}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text3)' }}>-</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{fmtM(e.actual)}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text3)' }}>-</td>
+                          <td colSpan={2}></td>
+                          <td style={{ textAlign: 'center', fontSize: 11, color: '#b45309', whiteSpace: 'nowrap' }}>계획 외</td>
+                        </tr>
+                      ))}
+                      {etcRows.length > 0 && (
+                        <tr style={{ fontWeight: 600, fontSize: 11, background: 'rgba(217,119,6,0.04)' }}>
+                          <td colSpan={2} style={{ paddingLeft: 16, color: 'var(--text2)' }}>↳ 사업계획 외 소계 ({etcRows.length}사)</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text3)' }}>-</td>
+                          <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(etcActual)}</td>
+                          <td colSpan={4}></td>
+                        </tr>
+                      )}
+                      {/* 전체 합계 (= ■ 1 수주 현황 합계와 일치) */}
+                      <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700, background: 'var(--bg2)' }}>
+                        <td colSpan={2}>📊 전체 합계 (목표 {rows.length}사 + 계획외 {etcRows.length}사)</td>
+                        <td style={{ textAlign: 'right' }}>{fmtM(totalTarget)}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(grandActual)}</td>
+                        <td colSpan={4}></td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                  ※ 이번 달 수주목표가 있는 고객만 표시 · 담당자 = 고객카드 담당자 · 상태: ✅ 달성(100%+) / 🟡 진행중(미달+30일내 활동) / 🔴 점검필요(미달+30일↑ 또는 활동없음) · 고객명 클릭 시 카드 열림
+                  ※ 사업계획 목표 고객(목표 대비 진행) + 사업계획 외 신규/기타(목표 없이 수주 발생) 모두 포함 → <strong>전체 합계 = ■ 1 수주 현황 합계와 일치</strong> · 담당자 = 고객카드 담당자 · 상태: ✅ 달성(100%+) / 🟡 진행중(미달+30일내 활동) / 🔴 점검필요(미달+30일↑ 또는 활동없음) · 고객명 클릭 시 카드 열림
                 </div>
               </div>
             );
