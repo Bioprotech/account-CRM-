@@ -1396,22 +1396,37 @@ export default function Report() {
     Object.keys(wkNewDetails).forEach(k => wkNewDetails[k].sort((a, b) => b.amount - a.amount));
     Object.keys(wkEtcDetails).forEach(k => wkEtcDetails[k].sort((a, b) => b.amount - a.amount));
 
-    // ── 분기별 진행 현황 (Q1~Q4) ──
+    // ── 분기별 진행 현황 (Q1~Q4) — v3.30: 사업부(해외/BPU/국내) breakdown 추가 ──
+    //   집계 기준은 ■ 1 (수주) / ■ 1-2 (매출)와 동일 헬퍼 사용 → 합계 정확히 일치
+    const TEAM_ORDER_3 = ['해외영업', '영업지원', '국내영업'];
+    const SALES_TEAM_3 = ['해외', 'BPU', '국내'];
     const quarterData = [1, 2, 3, 4].map(q => {
       const startMonth = (q - 1) * 3 + 1;
       const endMonth = q * 3;
       let target = 0;
       let actual = 0;
+      const byTeam = {};
+      TEAM_ORDER_3.forEach(t => { byTeam[t] = { target: 0, actual: 0 }; });
       for (let m = startMonth; m <= endMonth; m++) {
         const mKey = String(m).padStart(2, '0');
         customerPlans.forEach(p => {
-          target += (p.targets?.[mKey] || 0);
+          const tgt = p.targets?.[mKey] || 0;
+          target += tgt;
+          if (TEAM_ORDER_3.includes(p.team)) byTeam[p.team].target += tgt;
         });
         const mPrefix = `${wkYear}-${mKey}`;
         orders.forEach(o => {
-          if ((o.order_date || '').startsWith(mPrefix)) actual += (o.order_amount || 0);
+          if ((o.order_date || '').startsWith(mPrefix)) {
+            const amt = o.order_amount || 0;
+            actual += amt;
+            const t = getTeamForOrder(o);
+            if (byTeam[t]) byTeam[t].actual += amt;
+          }
         });
       }
+      Object.keys(byTeam).forEach(t => {
+        byTeam[t].achieveRate = byTeam[t].target > 0 ? Math.round((byTeam[t].actual / byTeam[t].target) * 100) : 0;
+      });
       // 분기 상태 판단
       const currentQ = Math.ceil(wkMonth / 3);
       let status = 'future';
@@ -1422,28 +1437,49 @@ export default function Report() {
         achieveRate: target > 0 ? Math.round((actual / target) * 100) : 0,
         status,
         label: `Q${q}`,
+        byTeam,
       };
     });
 
     // v3.27: 매출 분기별 진행 현황 (목표: team_sales 우선 / 없으면 customerPlans fallback, 실적: sales)
+    // v3.30: 사업부별 breakdown(해외/BPU/국내) 추가
     const teamSalesPlansQ = businessPlans.filter(p => p.type === 'team_sales' && p.year === wkYear);
     const salesQuarterData = [1, 2, 3, 4].map(q => {
       const startMonth = (q - 1) * 3 + 1;
       const endMonth = q * 3;
       let target = 0;
       let actual = 0;
+      const byTeam = {};
+      SALES_TEAM_3.forEach(t => { byTeam[t] = { target: 0, actual: 0 }; });
       for (let m = startMonth; m <= endMonth; m++) {
         const mKey = String(m).padStart(2, '0');
         if (teamSalesPlansQ.length > 0) {
-          teamSalesPlansQ.forEach(p => { target += (p.targets?.[mKey] || 0); });
+          teamSalesPlansQ.forEach(p => {
+            const tgt = p.targets?.[mKey] || 0;
+            target += tgt;
+            if (byTeam[p.team]) byTeam[p.team].target += tgt;
+          });
         } else {
-          customerPlans.forEach(p => { target += (p.targets?.[mKey] || 0); });
+          customerPlans.forEach(p => {
+            const tgt = p.targets?.[mKey] || 0;
+            target += tgt;
+            const st = ORDER_TEAM_TO_SALES[p.team];
+            if (st && byTeam[st]) byTeam[st].target += tgt;
+          });
         }
         const mPrefix = `${wkYear}-${mKey}`;
         sales.forEach(s => {
-          if ((s.sale_date || '').startsWith(mPrefix)) actual += (s.sale_amount || 0);
+          if ((s.sale_date || '').startsWith(mPrefix)) {
+            const amt = s.sale_amount || 0;
+            actual += amt;
+            const t = getSalesTeamForSale(s);
+            if (byTeam[t]) byTeam[t].actual += amt;
+          }
         });
       }
+      Object.keys(byTeam).forEach(t => {
+        byTeam[t].achieveRate = byTeam[t].target > 0 ? Math.round((byTeam[t].actual / byTeam[t].target) * 100) : 0;
+      });
       const currentQ = Math.ceil(wkMonth / 3);
       let status = 'future';
       if (q < currentQ) status = 'done';
@@ -1453,6 +1489,7 @@ export default function Report() {
         achieveRate: target > 0 ? Math.round((actual / target) * 100) : 0,
         status,
         label: `Q${q}`,
+        byTeam,
       };
     });
 
@@ -4663,6 +4700,7 @@ export default function Report() {
                   <thead>
                     <tr>
                       <th style={{ minWidth: 80 }} rowSpan={2}>분기</th>
+                      <th style={{ minWidth: 70 }} rowSpan={2}>사업부</th>
                       <th colSpan={3} style={{ textAlign: 'center', background: 'rgba(46,125,50,0.06)' }}>🆕 수주</th>
                       <th colSpan={3} style={{ textAlign: 'center', background: 'rgba(37,99,235,0.06)', borderLeft: '2px solid var(--border)' }}>💰 매출</th>
                       <th style={{ textAlign: 'left', paddingLeft: 12 }} rowSpan={2}>상태</th>
@@ -4677,57 +4715,140 @@ export default function Report() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sectionAData.quarterData.map((q, i) => {
-                      const sq = sectionAData.salesQuarterData[i] || { target: 0, actual: 0, achieveRate: 0 };
-                      const statusLabel = q.status === 'done' ? '✅ 완료' : q.status === 'active' ? '🔵 진행중' : '⏸ 예정';
-                      const statusColor = q.status === 'done' ? 'var(--text2)' : q.status === 'active' ? 'var(--accent)' : 'var(--text3)';
-                      return (
-                        <tr key={q.q}>
-                          <td style={{ fontWeight: 600, color: q.status === 'active' ? 'var(--accent)' : undefined }}>
-                            {q.label}
-                            <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 6 }}>
-                              ({(q.q - 1) * 3 + 1}~{q.q * 3}월)
-                            </span>
-                          </td>
-                          {/* 수주 */}
-                          <td style={{ textAlign: 'right' }}>{fmtM(q.target)}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, color: q.actual > 0 ? 'var(--accent)' : 'var(--text3)' }}>{fmtM(q.actual)}</td>
-                          <td style={{ textAlign: 'right', ...achieveStyle(q.achieveRate) }}>
-                            {q.target > 0 ? `${q.achieveRate}%` : '-'}
-                          </td>
-                          {/* 매출 */}
-                          <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(sq.target)}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, color: sq.actual > 0 ? '#2563eb' : 'var(--text3)' }}>{fmtM(sq.actual)}</td>
-                          <td style={{ textAlign: 'right', ...achieveStyle(sq.achieveRate) }}>
-                            {sq.target > 0 ? `${sq.achieveRate}%` : '-'}
-                          </td>
-                          <td style={{ paddingLeft: 12, fontSize: 11, color: statusColor, fontWeight: 600 }}>{statusLabel}</td>
-                        </tr>
-                      );
-                    })}
                     {(() => {
+                      // v3.30: 사업부(해외/BPU/국내) sub-row 매핑
+                      const BIZ = [
+                        { label: '해외', orderKey: '해외영업', salesKey: '해외' },
+                        { label: 'BPU', orderKey: '영업지원', salesKey: 'BPU' },
+                        { label: '국내', orderKey: '국내영업', salesKey: '국내' },
+                      ];
+                      // 분기별 사업부 breakdown + 분기 소계
+                      const quarterRows = sectionAData.quarterData.map((q, i) => {
+                        const sq = sectionAData.salesQuarterData[i] || { target: 0, actual: 0, achieveRate: 0, byTeam: {} };
+                        const statusLabel = q.status === 'done' ? '✅ 완료' : q.status === 'active' ? '🔵 진행중' : '⏸ 예정';
+                        const statusColor = q.status === 'done' ? 'var(--text2)' : q.status === 'active' ? 'var(--accent)' : 'var(--text3)';
+                        const qBg = q.status === 'active' ? 'rgba(46,125,50,0.04)' : 'transparent';
+                        return (
+                          <Fragment key={q.q}>
+                            {BIZ.map((b, bi) => {
+                              const od = q.byTeam?.[b.orderKey] || { target: 0, actual: 0, achieveRate: 0 };
+                              const sd = sq.byTeam?.[b.salesKey] || { target: 0, actual: 0, achieveRate: 0 };
+                              return (
+                                <tr key={`q${q.q}-${b.label}`} style={{ background: qBg, fontSize: 11, color: 'var(--text2)' }}>
+                                  {bi === 0 && (
+                                    <td rowSpan={4} style={{ fontWeight: 600, color: q.status === 'active' ? 'var(--accent)' : undefined, verticalAlign: 'top', paddingTop: 8, borderTop: '2px solid var(--border)' }}>
+                                      {q.label}
+                                      <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                                        ({(q.q - 1) * 3 + 1}~{q.q * 3}월)
+                                      </div>
+                                    </td>
+                                  )}
+                                  <td style={{ paddingLeft: 12 }}>{b.label}</td>
+                                  <td style={{ textAlign: 'right' }}>{fmtM(od.target)}</td>
+                                  <td style={{ textAlign: 'right', color: od.actual > 0 ? 'var(--accent)' : 'var(--text3)' }}>{fmtM(od.actual)}</td>
+                                  <td style={{ textAlign: 'right', ...achieveStyle(od.achieveRate) }}>
+                                    {od.target > 0 ? `${od.achieveRate}%` : '-'}
+                                  </td>
+                                  <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(sd.target)}</td>
+                                  <td style={{ textAlign: 'right', color: sd.actual > 0 ? '#2563eb' : 'var(--text3)' }}>{fmtM(sd.actual)}</td>
+                                  <td style={{ textAlign: 'right', ...achieveStyle(sd.achieveRate) }}>
+                                    {sd.target > 0 ? `${sd.achieveRate}%` : '-'}
+                                  </td>
+                                  {bi === 0 && (
+                                    <td rowSpan={4} style={{ paddingLeft: 12, fontSize: 11, color: statusColor, fontWeight: 600, verticalAlign: 'top', paddingTop: 8, borderTop: '2px solid var(--border)' }}>
+                                      {statusLabel}
+                                    </td>
+                                  )}
+                                </tr>
+                              );
+                            })}
+                            {/* 분기 소계 */}
+                            <tr style={{ background: 'rgba(46,125,50,0.10)', fontWeight: 700, borderTop: '1px dashed var(--border)' }}>
+                              <td style={{ paddingLeft: 12 }}>분기 소계</td>
+                              <td style={{ textAlign: 'right' }}>{fmtM(q.target)}</td>
+                              <td style={{ textAlign: 'right', color: q.actual > 0 ? 'var(--accent)' : 'var(--text3)' }}>{fmtM(q.actual)}</td>
+                              <td style={{ textAlign: 'right', ...achieveStyle(q.achieveRate) }}>
+                                {q.target > 0 ? `${q.achieveRate}%` : '-'}
+                              </td>
+                              <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(sq.target)}</td>
+                              <td style={{ textAlign: 'right', color: sq.actual > 0 ? '#2563eb' : 'var(--text3)' }}>{fmtM(sq.actual)}</td>
+                              <td style={{ textAlign: 'right', ...achieveStyle(sq.achieveRate) }}>
+                                {sq.target > 0 ? `${sq.achieveRate}%` : '-'}
+                              </td>
+                            </tr>
+                          </Fragment>
+                        );
+                      });
+                      // 연간 합계 (사업부 sub-rows + 전체 합계)
+                      const yearByOrder = {}; const yearBySales = {};
+                      BIZ.forEach(b => {
+                        yearByOrder[b.orderKey] = { target: 0, actual: 0 };
+                        yearBySales[b.salesKey] = { target: 0, actual: 0 };
+                      });
+                      sectionAData.quarterData.forEach(q => {
+                        BIZ.forEach(b => {
+                          const od = q.byTeam?.[b.orderKey] || { target: 0, actual: 0 };
+                          yearByOrder[b.orderKey].target += od.target;
+                          yearByOrder[b.orderKey].actual += od.actual;
+                        });
+                      });
+                      sectionAData.salesQuarterData.forEach(q => {
+                        BIZ.forEach(b => {
+                          const sd = q.byTeam?.[b.salesKey] || { target: 0, actual: 0 };
+                          yearBySales[b.salesKey].target += sd.target;
+                          yearBySales[b.salesKey].actual += sd.actual;
+                        });
+                      });
                       const t = sectionAData.quarterData.reduce((acc, q) => ({
                         target: acc.target + q.target, actual: acc.actual + q.actual,
                       }), { target: 0, actual: 0 });
                       const st = sectionAData.salesQuarterData.reduce((acc, q) => ({
                         target: acc.target + q.target, actual: acc.actual + q.actual,
                       }), { target: 0, actual: 0 });
-                      return (
-                        <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
-                          <td>연간 합계</td>
-                          <td style={{ textAlign: 'right' }}>{fmtM(t.target)}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(t.actual)}</td>
-                          <td style={{ textAlign: 'right', ...achieveStyle(pct(t.actual, t.target)) }}>
-                            {t.target > 0 ? `${pct(t.actual, t.target)}%` : '-'}
-                          </td>
-                          <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(st.target)}</td>
-                          <td style={{ textAlign: 'right', color: '#2563eb' }}>{fmtM(st.actual)}</td>
-                          <td style={{ textAlign: 'right', ...achieveStyle(pct(st.actual, st.target)) }}>
-                            {st.target > 0 ? `${pct(st.actual, st.target)}%` : '-'}
-                          </td>
-                          <td></td>
-                        </tr>
+                      const yearRows = (
+                        <Fragment key="year-total">
+                          {BIZ.map((b, bi) => {
+                            const od = yearByOrder[b.orderKey];
+                            const sd = yearBySales[b.salesKey];
+                            const oRate = od.target > 0 ? Math.round((od.actual / od.target) * 100) : 0;
+                            const sRate = sd.target > 0 ? Math.round((sd.actual / sd.target) * 100) : 0;
+                            return (
+                              <tr key={`year-${b.label}`} style={{ background: 'rgba(2,6,23,0.02)', fontSize: 11, color: 'var(--text2)' }}>
+                                {bi === 0 && (
+                                  <td rowSpan={4} style={{ fontWeight: 700, verticalAlign: 'top', paddingTop: 8, borderTop: '3px double var(--border)' }}>연간 합계</td>
+                                )}
+                                <td style={{ paddingLeft: 12 }}>{b.label}</td>
+                                <td style={{ textAlign: 'right' }}>{fmtM(od.target)}</td>
+                                <td style={{ textAlign: 'right', color: od.actual > 0 ? 'var(--accent)' : 'var(--text3)' }}>{fmtM(od.actual)}</td>
+                                <td style={{ textAlign: 'right', ...achieveStyle(oRate) }}>
+                                  {od.target > 0 ? `${oRate}%` : '-'}
+                                </td>
+                                <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(sd.target)}</td>
+                                <td style={{ textAlign: 'right', color: sd.actual > 0 ? '#2563eb' : 'var(--text3)' }}>{fmtM(sd.actual)}</td>
+                                <td style={{ textAlign: 'right', ...achieveStyle(sRate) }}>
+                                  {sd.target > 0 ? `${sRate}%` : '-'}
+                                </td>
+                                {bi === 0 && <td rowSpan={4}></td>}
+                              </tr>
+                            );
+                          })}
+                          {/* 전체 합계 */}
+                          <tr style={{ background: 'rgba(46,125,50,0.14)', fontWeight: 700, borderTop: '1px dashed var(--border)' }}>
+                            <td style={{ paddingLeft: 12 }}>전체 합계</td>
+                            <td style={{ textAlign: 'right' }}>{fmtM(t.target)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtM(t.actual)}</td>
+                            <td style={{ textAlign: 'right', ...achieveStyle(pct(t.actual, t.target)) }}>
+                              {t.target > 0 ? `${pct(t.actual, t.target)}%` : '-'}
+                            </td>
+                            <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtM(st.target)}</td>
+                            <td style={{ textAlign: 'right', color: '#2563eb' }}>{fmtM(st.actual)}</td>
+                            <td style={{ textAlign: 'right', ...achieveStyle(pct(st.actual, st.target)) }}>
+                              {st.target > 0 ? `${pct(st.actual, st.target)}%` : '-'}
+                            </td>
+                          </tr>
+                        </Fragment>
                       );
+                      return [...quarterRows, yearRows];
                     })()}
                   </tbody>
                 </table>
