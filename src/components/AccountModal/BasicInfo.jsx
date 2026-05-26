@@ -11,7 +11,14 @@ const TYPE_TRANSITIONS = {
 };
 
 export default function BasicInfo({ draft, update }) {
-  const { teamMembers, businessPlans, appSettings } = useAccount();
+  const { teamMembers, businessPlans, appSettings, contracts } = useAccount();
+
+  // v3.32: 계약전환율 = contract_status === '활성' 기준 (기존 필드 그대로 활용)
+  //   가이드 박스로 '활성' 판정 기준 안내. 계약 1건 이상이면 컨텍스트의
+  //   saveContractItem이 자동으로 contract_status를 '활성'으로 설정 (override 가능).
+  const acctContracts = useMemo(() => (contracts || []).filter(c => c.account_id === draft.id), [contracts, draft.id]);
+  const hasContracts = acctContracts.length > 0;
+  const isActiveStatus = draft.contract_status === '활성';
 
   // v3.12: 자동 분류 추천 계산
   const priorSet = useMemo(() => {
@@ -229,6 +236,26 @@ export default function BasicInfo({ draft, update }) {
             {CONTRACT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
+      </div>
+
+      {/* v3.32: 계약 상태 가이드 박스 (기존 contract_status 필드 활용 — 전환율 지표) */}
+      <div style={{ marginBottom: 14, padding: 10, background: 'rgba(46,125,50,0.04)', border: '1px solid rgba(46,125,50,0.2)', borderRadius: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: 'var(--accent)' }}>
+          🎯 계약 상태 안내 — <span style={{ fontWeight: 400, color: 'var(--text2)' }}>금년 영업 핵심 지표 (전환율 = '활성' 비율)</span>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+          다음 중 하나면 위 <strong>계약 상태 = '활성'</strong>로 선택:
+          <ul style={{ margin: '4px 0 0 0', paddingLeft: 18 }}>
+            <li>✅ <strong>정식 계약 체결됨</strong> (가격/계약 탭에 계약 등록 — 자동으로 '활성' 설정됨)</li>
+            <li>📅 <strong>연간 수량 개런티</strong> (계약 X, 연간 약정 — 예: Diros)</li>
+            <li>🔄 <strong>정기 FCST 수신</strong> (MPS·MRP·월별 발주 계획 정기 업데이트 — 예: Mckesson, Cardinal)</li>
+          </ul>
+        </div>
+        {hasContracts && !isActiveStatus && (
+          <div style={{ marginTop: 6, padding: '4px 8px', background: 'rgba(217,119,6,0.08)', borderRadius: 4, fontSize: 11, color: '#d97706', fontWeight: 600 }}>
+            ⚠ 계약이 {acctContracts.length}건 등록되어 있는데 계약 상태가 '활성'이 아닙니다 — '활성'으로 변경 권장
+          </div>
+        )}
       </div>
 
       <div className="form-row">

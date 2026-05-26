@@ -682,7 +682,28 @@ function MonthlyBreakdownTable({ title, rows }) {
    REPORT COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function Report() {
-  const { accounts, activityLogs, orders: ordersAll, sales: salesAll, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, teamActivities, teamProjects, showToast } = useAccount();
+  const { accounts: accountsAll, activityLogs: rawActivityLogs, orders: ordersAll, sales: salesAll, forecasts, businessPlans, contracts, openIssues: rawOpenIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, teamActivities, teamProjects, showToast } = useAccount();
+
+  // v3.32: 거래종료(inactive) 고객 — 모든 보고서 집계/표시에서 자동 제외
+  //   accounts 자체를 필터해 내부 모든 useMemo가 자동 반영 (■1~■9, GAP, 미래예측 등)
+  //   activityLogs / openIssues 도 inactive id 제외 (활동 집계 안전망)
+  //   수주·매출 과거 실적(orders/sales)은 그대로 유지 — 이미 발생한 데이터 보존
+  const inactiveAccountIds = useMemo(
+    () => new Set((accountsAll || []).filter(a => a?.customer_category === 'inactive').map(a => a.id)),
+    [accountsAll]
+  );
+  const accounts = useMemo(
+    () => (accountsAll || []).filter(a => a?.customer_category !== 'inactive'),
+    [accountsAll]
+  );
+  const activityLogs = useMemo(
+    () => (rawActivityLogs || []).filter(l => !inactiveAccountIds.has(l.account_id)),
+    [rawActivityLogs, inactiveAccountIds]
+  );
+  const openIssues = useMemo(
+    () => (rawOpenIssues || []).filter(i => !inactiveAccountIds.has(i.account_id)),
+    [rawOpenIssues, inactiveAccountIds]
+  );
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용 — 모든 화면 일관성 보장
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);

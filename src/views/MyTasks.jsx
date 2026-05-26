@@ -48,9 +48,11 @@ const STATUS_COLORS = {
 export default function MyTasks() {
   const ctx = useAccount();
   const {
-    accounts, activityLogs, openIssues, teamTasks, businessPlans,
+    accounts: accountsAll, activityLogs, openIssues, teamTasks, businessPlans,
     orders: ordersAll, saveTeamTask, removeTeamTask, setEditingAccount, setCurrentTab, showToast,
   } = ctx;
+  // v3.32: 거래종료(inactive) 고객 — 내 업무에서 자동 제외
+  const accounts = useMemo(() => (accountsAll || []).filter(a => a?.customer_category !== 'inactive'), [accountsAll]);
   const currentUser = ctx.effectiveCurrentUser ?? ctx.currentUser;
   const isAdmin = ctx.effectiveIsAdmin ?? ctx.isAdmin;
   const viewAsRep = ctx.viewAsRep;

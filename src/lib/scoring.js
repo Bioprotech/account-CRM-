@@ -488,6 +488,13 @@ export function computeScore({ rep, accounts, activityLogs, orders, businessPlan
     return { total: 0, performance: 0, quality: 0, deduction: 0, breakdown: {}, _error: 'rep / yearMonth required' };
   }
 
+  // v3.32: 거래종료(inactive) 고객 제외 — 활동 점수에 영향 없게
+  //   accounts 자체에서 inactive 제거 + 그에 속한 activity_logs도 제거
+  const activeAccounts = (accounts || []).filter(a => a?.customer_category !== 'inactive');
+  const inactiveIds = new Set((accounts || []).filter(a => a?.customer_category === 'inactive').map(a => a.id));
+  const activeLogs = (activityLogs || []).filter(l => !inactiveIds.has(l.account_id));
+  // 이하 헬퍼에 activeAccounts/activeLogs 전달 (orders는 그대로 — 과거 실적 보존)
+
   // 영업 성과 (60점)
   const monthly = calcMonthlyAchievement({ rep, orders, businessPlans, yearMonth });
   const ytd = calcYtdProgress({ rep, orders, businessPlans, yearMonth });
@@ -495,18 +502,18 @@ export function computeScore({ rep, accounts, activityLogs, orders, businessPlan
   const performance = monthly.score + ytd.score + mom.score;
 
   // CRM 활동 품질 (40점)
-  const contact = calcContactFrequency({ rep, accounts, activityLogs, yearMonth });
-  const resolve = calcIssueResolveRate({ rep, accounts, activityLogs, yearMonth });
-  const overdue = calcOverdue14({ rep, accounts, activityLogs, yearMonth });
-  const gapDetail = calcGapDetailFill({ rep, accounts, orders, businessPlans, yearMonth });
-  const aTier = calcATierContact({ rep, accounts, activityLogs, yearMonth });
+  const contact = calcContactFrequency({ rep, accounts: activeAccounts, activityLogs: activeLogs, yearMonth });
+  const resolve = calcIssueResolveRate({ rep, accounts: activeAccounts, activityLogs: activeLogs, yearMonth });
+  const overdue = calcOverdue14({ rep, accounts: activeAccounts, activityLogs: activeLogs, yearMonth });
+  const gapDetail = calcGapDetailFill({ rep, accounts: activeAccounts, orders, businessPlans, yearMonth });
+  const aTier = calcATierContact({ rep, accounts: activeAccounts, activityLogs: activeLogs, yearMonth });
   const quality = contact.score + resolve.score + overdue.score + gapDetail.score + aTier.score;
 
   // 감점 (-20점 max)
-  const zeroWeek = calcZeroWeekDeduction({ rep, accounts, activityLogs, yearMonth });
-  const aTier45 = calcATier45Deduction({ rep, accounts, activityLogs, yearMonth });
-  const gapMissing = calcGapMissingDeduction({ rep, accounts, orders, businessPlans, yearMonth });
-  const falseInput = calcFalseInputDeduction({ rep, accounts, activityLogs, yearMonth });
+  const zeroWeek = calcZeroWeekDeduction({ rep, accounts: activeAccounts, activityLogs: activeLogs, yearMonth });
+  const aTier45 = calcATier45Deduction({ rep, accounts: activeAccounts, activityLogs: activeLogs, yearMonth });
+  const gapMissing = calcGapMissingDeduction({ rep, accounts: activeAccounts, orders, businessPlans, yearMonth });
+  const falseInput = calcFalseInputDeduction({ rep, accounts: activeAccounts, activityLogs: activeLogs, yearMonth });
   const deductionRaw = zeroWeek.deduction + aTier45.deduction + gapMissing.deduction + falseInput.deduction;
   const deduction = Math.min(deductionRaw, POINTS.DEDUCTION.MAX_TOTAL);
 

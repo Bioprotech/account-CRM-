@@ -6,6 +6,8 @@ import { classifyCustomers, classifyForRepView, loadPriorYearCustomers, syncPrio
 import { getSortedValidReps } from '../lib/salesReps';
 import { computeScore } from '../lib/scoring';
 import { filterValidOrders } from '../lib/aggregation';
+import { aggregateConversionByRep } from '../lib/contractConversion';
+import { getValidSalesReps } from '../lib/salesReps';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -28,6 +30,122 @@ function pctColor(p) {
   if (p >= 90) return 'green';
   if (p >= 70) return 'yellow';
   return 'red';
+}
+
+/**
+ * v3.32 — 🎯 계약전환율 KPI 카드 (Dashboard 상단, 사이드바 메뉴 대체)
+ *   전환 = account.contract_status === '활성' (기존 필드 활용)
+ *   거래종료(customer_category === 'inactive')는 분모에서 자동 제외
+ *   본부장: 전체 / 담당자: 본인 행만
+ *   펼침: 미달 고객 리스트 + 인라인 상태 변경 (권한 있을 때)
+ */
+function ConversionKpiCard({ accounts, businessPlans, teamMembers, currentUser, isAdmin, setEditingAccount, saveAccount }) {
+  const [expandedRep, setExpandedRep] = useState(null);
+
+  const validReps = useMemo(() => getValidSalesReps(businessPlans, teamMembers), [businessPlans, teamMembers]);
+  const byRep = useMemo(() => aggregateConversionByRep(accounts, validReps), [accounts, validReps]);
+  const repList = useMemo(() => Object.values(byRep).sort((a, b) => b.total - a.total), [byRep]);
+  const totals = useMemo(() => repList.reduce((acc, r) => ({
+    total: acc.total + r.total,
+    converted: acc.converted + r.converted,
+    pending: acc.pending + r.pending,
+  }), { total: 0, converted: 0, pending: 0 }), [repList]);
+
+  if (totals.total === 0) return null;
+  const totalRate = Math.round((totals.converted / totals.total) * 100);
+  const rateColor = totalRate >= 50 ? 'var(--green, #16a34a)' : totalRate >= 30 ? '#d97706' : 'var(--red)';
+  const displayRows = (!isAdmin && currentUser) ? repList.filter(r => r.rep === currentUser) : repList;
+
+  const handleStatusChange = async (account, newStatus) => {
+    const canEdit = isAdmin || (account.sales_rep === currentUser);
+    if (!canEdit) {
+      alert(`${account.sales_rep || '미배정'} 담당자 또는 본부장만 변경 가능합니다`);
+      return;
+    }
+    await saveAccount({ ...account, contract_status: newStatus });
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 12, borderLeft: '4px solid var(--accent)', padding: 12, background: 'linear-gradient(135deg, rgba(46,125,50,0.04), rgba(37,99,235,0.04))' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+        <strong style={{ fontSize: 14 }}>🎯 계약전환율</strong>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>금년 영업 핵심 TASK · 전환 = 계약 상태 '활성' / 거래종료 분류 자동 제외</span>
+        {isAdmin && (
+          <>
+            <span style={{ fontSize: 28, fontWeight: 800, color: rateColor, marginLeft: 8 }}>{totalRate}%</span>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>전환 {totals.converted} / 미달 {totals.pending} / 담당 {totals.total}</span>
+          </>
+        )}
+      </div>
+      <div style={{ display: 'grid', gap: 4 }}>
+        {displayRows.map(r => {
+          const rc = r.conversionRate >= 50 ? 'var(--green, #16a34a)' : r.conversionRate >= 30 ? '#d97706' : 'var(--red)';
+          const expanded = expandedRep === r.rep;
+          const pendingList = r.accounts.filter(a => !a.converted);
+          return (
+            <div key={r.rep}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 8px', background: 'var(--bg)', borderRadius: 4 }}>
+                <span style={{ minWidth: 80, fontWeight: 700 }}>{r.rep}</span>
+                <div style={{ flex: 1, height: 10, background: 'var(--bg2)', borderRadius: 5, overflow: 'hidden', maxWidth: 240 }}>
+                  <div style={{ width: `${r.conversionRate}%`, height: '100%', background: rc }} />
+                </div>
+                <span style={{ minWidth: 50, fontSize: 13, fontWeight: 700, color: rc, textAlign: 'right' }}>{r.conversionRate}%</span>
+                <span style={{ fontSize: 11, color: 'var(--text2)' }}>
+                  전환 <strong>{r.converted}</strong> / 미달 <strong style={{ color: 'var(--red)' }}>{r.pending}</strong> / 담당 <strong>{r.total}</strong>
+                </span>
+                {pendingList.length > 0 && (
+                  <button
+                    onClick={() => setExpandedRep(expanded ? null : r.rep)}
+                    style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
+                  >
+                    {expanded ? '▲ 닫기' : `▼ 미달 ${pendingList.length}개 보기`}
+                  </button>
+                )}
+              </div>
+              {expanded && pendingList.length > 0 && (
+                <div style={{ marginLeft: 16, marginTop: 4, marginBottom: 8, padding: 8, background: 'var(--bg2)', borderRadius: 4 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>
+                    {r.rep} 담당 미달 {pendingList.length}개 — 계약 상태 인라인 변경 가능
+                  </div>
+                  <div style={{ display: 'grid', gap: 3, maxHeight: 240, overflow: 'auto' }}>
+                    {pendingList.map(it => {
+                      const acc = accounts.find(a => a.id === it.id);
+                      const canEdit = isAdmin || (acc && acc.sales_rep === currentUser);
+                      return (
+                        <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '3px 6px', background: 'var(--bg)', borderRadius: 3 }}>
+                          <a href="#" onClick={(e) => { e.preventDefault(); if (acc) setEditingAccount(acc); }}
+                            style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', minWidth: 180 }}>
+                            {it.name}
+                          </a>
+                          <span style={{ fontSize: 10, color: 'var(--text3)' }}>현재: {it.status}</span>
+                          {canEdit ? (
+                            <select
+                              value={it.status}
+                              onChange={e => handleStatusChange(acc, e.target.value)}
+                              style={{ marginLeft: 'auto', fontSize: 10, padding: '1px 4px' }}
+                              title="활성 = 정식계약/연간개런티/정기FCST 중 하나"
+                            >
+                              <option value="없음">없음</option>
+                              <option value="협상중">협상중</option>
+                              <option value="만료임박">만료임박</option>
+                              <option value="만료">만료</option>
+                              <option value="활성">활성 (전환)</option>
+                            </select>
+                          ) : (
+                            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{acc?.sales_rep || '미배정'}만 변경 가능</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -366,9 +484,10 @@ export default function Dashboard() {
   // ── 담당자별 데이터 필터링 ──
   // 대시보드는 엄격 필터: sales_rep === currentUser인 고객만 (미배정 고객 제외)
   // 관리자/미로그인은 전체
+  // v3.32: 거래종료(customer_category === 'inactive') 고객은 모든 카드(긴급/전략등급/체크리스트 등)에서 자동 제외
   const myAccounts = useMemo(() => {
-    if (isAdmin || !currentUser) return visibleAccounts;
-    return accounts.filter(a => a.sales_rep === currentUser);
+    const base = (isAdmin || !currentUser) ? visibleAccounts : accounts.filter(a => a.sales_rep === currentUser);
+    return base.filter(a => a?.customer_category !== 'inactive');
   }, [accounts, visibleAccounts, isAdmin, currentUser]);
 
   const myAccountIds = useMemo(() => {
@@ -873,6 +992,18 @@ export default function Dashboard() {
           <span style={{ marginLeft: 'auto', fontSize: 11, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setCurrentTab('accounts')}>목록 보기 →</span>
         </div>
       )}
+
+      {/* v3.32: 🎯 계약전환율 KPI 카드 (금년 영업 핵심 TASK) — 사이드바 메뉴 제거 후 Dashboard에만 표시 */}
+      <ConversionKpiCard
+        accounts={accounts}
+        businessPlans={businessPlans}
+        teamMembers={teamMembers}
+        currentUser={currentUser}
+        isAdmin={isAdmin}
+        setEditingAccount={setEditingAccount}
+        saveAccount={saveAccount}
+      />
+
 
       {/* v3.21: 담당자 활동 점수 — 월 선택 드롭다운 (월단위 비교 가능) */}
       {((currentUser && !isAdmin) || (isAdmin && viewAsRep) || (isAdmin && !viewAsRep && teamMembers && teamMembers.length > 0)) && (

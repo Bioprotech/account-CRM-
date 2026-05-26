@@ -245,8 +245,23 @@ export const CUSTOMER_CATEGORIES = [
   { key: 'domestic_other', label: '국내기타',   icon: '🏠', color: '#d97706', desc: '사업계획 외 + 국내(병원 포함, 전년 수주 有)' },
   { key: 'overseas_new',   label: '해외신규',   icon: '🆕', color: '#7c3aed', desc: '전년 수주 無 + 해외' },
   { key: 'domestic_new',   label: '국내신규',   icon: '🆕', color: '#7c3aed', desc: '전년 수주 無 + 국내' },
+  { key: 'inactive',       label: '거래종료',   icon: '🚫', color: '#6b7280', desc: 'v3.32 — 거래 종료된 고객 (CRM 활동점수·전환율·활동 집계에서 제외)' },
   { key: 'unclassified',   label: '미분류',     icon: '❓', color: '#6b7280', desc: '기본값 — 자동 추천 또는 수동 분류 필요' },
 ];
+
+/* ── v3.32: 거래종료 고객 판별 헬퍼 (활동점수·전환율·활동 집계에서 제외) ── */
+export const INACTIVE_CATEGORY_KEY = 'inactive';
+export function isInactiveAccount(account) {
+  return account?.customer_category === INACTIVE_CATEGORY_KEY;
+}
+export function getInactiveAccountIds(accounts) {
+  return new Set((accounts || []).filter(isInactiveAccount).map(a => a.id));
+}
+export function filterActiveActivityLogs(activityLogs, accounts) {
+  const inactiveIds = getInactiveAccountIds(accounts);
+  if (inactiveIds.size === 0) return activityLogs || [];
+  return (activityLogs || []).filter(l => !inactiveIds.has(l.account_id));
+}
 
 // 분류 카테고리 → rep 버킷 매핑 (분류 시 사용)
 export const CATEGORY_TO_BUCKET = {

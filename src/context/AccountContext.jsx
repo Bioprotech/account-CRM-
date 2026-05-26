@@ -458,7 +458,20 @@ export default function AccountProvider({ children }) {
     if (FIREBASE_ENABLED) {
       try { await fbSaveContract(clean); } catch (e) { console.error('계약 저장 실패:', e); }
     }
-  }, []);
+    // v3.32 Q2-B: 계약 등록 시 해당 account의 contract_status가 빈 값/'없음'이면
+    //   '활성'으로 자동 설정 (다른 값이면 사용자 override 존중)
+    if (clean.account_id) {
+      const acct = accounts.find(a => a.id === clean.account_id);
+      if (acct && (!acct.contract_status || acct.contract_status === '없음')) {
+        const updated = { ...acct, contract_status: '활성', updated_at: new Date().toISOString().slice(0, 10) };
+        setAccounts(prev => prev.map(a => a.id === updated.id ? updated : a));
+        if (FIREBASE_ENABLED) {
+          try { await saveAccountToFirestore(updated); }
+          catch (e) { console.error('계약 자동 활성 설정 실패:', e); }
+        }
+      }
+    }
+  }, [accounts]);
 
   const removeContract = useCallback(async (id) => {
     setContracts(prev => prev.filter(c => c.id !== id));
@@ -705,9 +718,16 @@ export default function AccountProvider({ children }) {
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [activityLogs]);
 
+  // v3.32: 거래종료(inactive) 고객의 로그/이슈는 자동 제외
+  //   → Dashboard, Report, MyTasks 등 모든 화면에 일괄 반영
+  const inactiveAccountIds = useMemo(
+    () => new Set((accounts || []).filter(a => a?.customer_category === 'inactive').map(a => a.id)),
+    [accounts]
+  );
+
   const openIssues = useMemo(() => {
-    return activityLogs.filter(l => l.status !== 'Closed');
-  }, [activityLogs]);
+    return activityLogs.filter(l => l.status !== 'Closed' && !inactiveAccountIds.has(l.account_id));
+  }, [activityLogs, inactiveAccountIds]);
 
   /* ── Alarms ── */
   const alarms = useMemo(() => {
@@ -719,6 +739,8 @@ export default function AccountProvider({ children }) {
     const bpAccountIds = new Set(businessPlans.filter(p => p.account_id).map(p => p.account_id));
 
     accounts.forEach(a => {
+      // v3.32: 거래종료 고객 — 모든 알람에서 자동 제외
+      if (a?.customer_category === 'inactive') return;
       const score = a.intelligence?.total_score ?? 0;
       const noContact = daysSince(a.last_contact_date) > 30;
       const hasBeenUpdated = !!a.last_contact_date || !!a.intelligence?.last_updated;

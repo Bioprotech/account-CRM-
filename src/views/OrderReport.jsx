@@ -26,10 +26,12 @@ function pct(a, b) {
 }
 
 export default function OrderReport() {
-  const { accounts, orders: ordersAll, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts } = useAccount();
+  const { accounts: accountsAll, orders: ordersAll, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts } = useAccount();
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
+  // v3.32: 거래종료(inactive) 고객 — 수주목표관리 모든 뷰에서 자동 제외
+  const accounts = useMemo(() => (accountsAll || []).filter(a => a?.customer_category !== 'inactive'), [accountsAll]);
 
   const [viewYear] = useState(CURRENT_YEAR);
   const [viewMode, setViewMode] = useState('customer'); // 'customer' | 'team' | 'product'

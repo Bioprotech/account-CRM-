@@ -26,10 +26,12 @@ function fmtKRW(n) {
 }
 
 export default function Progress() {
-  const { businessPlans, orders: ordersAll, accounts, setEditingAccount } = useAccount();
+  const { businessPlans, orders: ordersAll, accounts: accountsAll, setEditingAccount } = useAccount();
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
+  // v3.32: 거래종료(inactive) 고객 — 진도관리 자동 제외
+  const accounts = useMemo(() => (accountsAll || []).filter(a => a?.customer_category !== 'inactive'), [accountsAll]);
 
   // 고객별 사업계획 (product plans 제외)
   const customerPlans = useMemo(() =>
