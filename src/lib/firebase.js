@@ -29,9 +29,11 @@ const SALES_COL = 'sales_history';
 const CONTRACTS_COL = 'price_contracts';
 const FORECASTS_COL = 'forecasts';
 const PLANS_COL = 'business_plans';
-const TASKS_COL = 'team_tasks';           // Phase C v3.2 — 팀별 TASK
+const TASKS_COL = 'team_tasks';            // Phase C v3.2 — 팀별 TASK
 const PIPELINE_COL = 'customers';          // Phase C v3.2 — Pipeline CRM 하이브리드 (read-only)
 const AUDIT_LOG_COL = 'import_audit_logs'; // v3.18 — Import 시점 raw 합계 불변 원장
+const TEAM_ACTIVITIES_COL = 'team_activities'; // v3.31 — 팀 공통 활동/이슈 (고객 단위 X)
+const TEAM_PROJECTS_COL = 'team_projects';     // v3.31 — 공통 프로젝트 (고객 가로지르는 지속성 PJT + KPI)
 
 let db = null;
 export let FIREBASE_ENABLED = false;
@@ -295,6 +297,52 @@ export async function saveTeamTask(task) {
 export async function deleteTeamTask(id) {
   if (!FIREBASE_ENABLED) return;
   await deleteDoc(doc(db, TASKS_COL, id));
+}
+
+/* ── Team Activities (v3.31) — 팀 공통 활동/이슈 (고객 단위 X)
+     - 가격인상 고지, 정책안내, 캠페인, 전시회, 교육, 법규 등 시점성 팀 업무
+     - share_with_teams[] 비어있지 않으면 유관부서 공유 callout 자동 노출 */
+
+export function subscribeTeamActivities(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  const col = collection(db, TEAM_ACTIVITIES_COL);
+  return onSnapshot(col,
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] team_activities onSnapshot 오류:', err)
+  );
+}
+
+export async function saveTeamActivity(activity) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, TEAM_ACTIVITIES_COL, activity.id), activity);
+}
+
+export async function deleteTeamActivity(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, TEAM_ACTIVITIES_COL, id));
+}
+
+/* ── Team Projects (v3.31) — 공통 프로젝트 (Smoke 확대 등 고객 가로지르는 PJT)
+     - 프로젝트 단위 KPI(목표/실적) + 마일스톤 + 진행 update 타임라인
+     - share_with_teams(프로젝트 단위) + updates[i].share_with_teams(update 단위) */
+
+export function subscribeTeamProjects(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  const col = collection(db, TEAM_PROJECTS_COL);
+  return onSnapshot(col,
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] team_projects onSnapshot 오류:', err)
+  );
+}
+
+export async function saveTeamProject(project) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, TEAM_PROJECTS_COL, project.id), project);
+}
+
+export async function deleteTeamProject(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, TEAM_PROJECTS_COL, id));
 }
 
 /* ══════════════════════════════════════════════════════════════════

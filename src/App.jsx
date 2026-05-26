@@ -10,6 +10,7 @@ import Report from './views/Report';
 import OrderReport from './views/OrderReport';
 import Progress from './views/Progress';
 import MyTasks from './views/MyTasks';
+import TeamCommon from './views/TeamCommon';
 import TypeGuideView from './views/TypeGuideView';
 import AccountModal from './components/AccountModal/AccountModal';
 
@@ -188,6 +189,7 @@ function AppContent() {
       case 'report': return <Report />;
       case 'progress': return <Progress />;
       case 'myTasks': return <MyTasks />;
+      case 'teamCommon': return <TeamCommon />;
       case 'typeguide': return <TypeGuideView />;
       case 'settings': return <Settings />;
       case 'changelog': return <ChangelogView />;

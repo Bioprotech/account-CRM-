@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource, subscribeImportAuditLogs, saveImportAuditLog as fbSaveAuditLog, deleteImportAuditLog as fbDeleteAuditLog } from '../lib/firebase';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource, subscribeImportAuditLogs, saveImportAuditLog as fbSaveAuditLog, deleteImportAuditLog as fbDeleteAuditLog, subscribeTeamActivities, saveTeamActivity as fbSaveTeamActivity, deleteTeamActivity as fbDeleteTeamActivity, subscribeTeamProjects, saveTeamProject as fbSaveTeamProject, deleteTeamProject as fbDeleteTeamProject } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -92,6 +92,8 @@ export default function AccountProvider({ children }) {
   const [forecasts, setForecasts] = useState([]);
   const [businessPlans, setBusinessPlans] = useState([]);
   const [teamTasks, setTeamTasks] = useState([]);              // Phase C v3.2
+  const [teamActivities, setTeamActivities] = useState([]);    // v3.31 — 팀 공통 활동/이슈
+  const [teamProjects, setTeamProjects] = useState([]);        // v3.31 — 공통 프로젝트
   const [importAuditLogs, setImportAuditLogs] = useState([]);  // v3.18 — Import 시점 raw 합계 원장
   const [pipelineCustomers, setPipelineCustomers] = useState([]);  // Phase C v3.2 (read-only)
   const [fbStatus, setFbStatus] = useState(FIREBASE_ENABLED ? 'connecting' : 'disabled');
@@ -124,8 +126,10 @@ export default function AccountProvider({ children }) {
     const unsub8 = subscribeTeamTasks((data) => setTeamTasks(data));
     const unsub9 = subscribePipelineCustomers((data) => setPipelineCustomers(data));
     const unsub10 = subscribeImportAuditLogs((data) => setImportAuditLogs(data));
+    const unsub11 = subscribeTeamActivities((data) => setTeamActivities(data));
+    const unsub12 = subscribeTeamProjects((data) => setTeamProjects(data));
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); };
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); };
   }, []);
 
   // v3.4: 대용량 localStorage 백업 완전 제거 — Firebase가 원본 소스로 충분
@@ -589,6 +593,64 @@ export default function AccountProvider({ children }) {
     if (FIREBASE_ENABLED) { try { await fbDeleteTask(id); } catch {} }
   }, []);
 
+  /* ── Team Activities (v3.31) — 팀 공통 활동/이슈 (고객 단위 X) ── */
+  const saveTeamActivity = useCallback(async (activity) => {
+    const clean = {
+      ...activity,
+      updated_at: new Date().toISOString().slice(0, 10),
+      created_at: activity.created_at || new Date().toISOString().slice(0, 10),
+      created_by: activity.created_by || (typeof window !== 'undefined' ? (localStorage.getItem('currentUser') || '') : ''),
+    };
+    setTeamActivities(prev => {
+      const idx = prev.findIndex(t => t.id === clean.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
+      return [...prev, clean];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveTeamActivity(clean); }
+      catch (e) { console.error('팀 활동 저장 실패:', e); showToast('저장 실패', 'error'); return; }
+    }
+    showToast('저장 완료', 'success');
+  }, []);
+
+  const removeTeamActivity = useCallback(async (id) => {
+    setTeamActivities(prev => prev.filter(t => t.id !== id));
+    if (FIREBASE_ENABLED) {
+      try { await fbDeleteTeamActivity(id); }
+      catch (e) { console.error('팀 활동 삭제 실패:', e); }
+    }
+    showToast('삭제 완료', 'success');
+  }, []);
+
+  /* ── Team Projects (v3.31) — 공통 프로젝트 ── */
+  const saveTeamProject = useCallback(async (project) => {
+    const clean = {
+      ...project,
+      updated_at: new Date().toISOString().slice(0, 10),
+      created_at: project.created_at || new Date().toISOString().slice(0, 10),
+      created_by: project.created_by || (typeof window !== 'undefined' ? (localStorage.getItem('currentUser') || '') : ''),
+    };
+    setTeamProjects(prev => {
+      const idx = prev.findIndex(t => t.id === clean.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
+      return [...prev, clean];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveTeamProject(clean); }
+      catch (e) { console.error('PJT 저장 실패:', e); showToast('저장 실패', 'error'); return; }
+    }
+    showToast('저장 완료', 'success');
+  }, []);
+
+  const removeTeamProject = useCallback(async (id) => {
+    setTeamProjects(prev => prev.filter(t => t.id !== id));
+    if (FIREBASE_ENABLED) {
+      try { await fbDeleteTeamProject(id); }
+      catch (e) { console.error('PJT 삭제 실패:', e); }
+    }
+    showToast('삭제 완료', 'success');
+  }, []);
+
   /* ── Import Audit Logs (v3.18) ── */
   const saveImportAuditLog = useCallback(async (log) => {
     setImportAuditLogs(prev => {
@@ -934,7 +996,7 @@ export default function AccountProvider({ children }) {
     effectiveCurrentUser, effectiveIsAdmin,
     accounts, filteredAccounts, visibleAccounts,
     activityLogs, openIssues,
-    orders, sales, contracts, forecasts, businessPlans, teamTasks, pipelineCustomers, alarms, importAuditLogs,
+    orders, sales, contracts, forecasts, businessPlans, teamTasks, teamActivities, teamProjects, pipelineCustomers, alarms, importAuditLogs,
     filters, setFilters,
     currentTab, setCurrentTab,
     editingAccount, setEditingAccount,
@@ -948,6 +1010,8 @@ export default function AccountProvider({ children }) {
     importBusinessPlans, clearBusinessPlans, getPlansForAccount,
     applyFuzzyMatches,
     saveTeamTask, removeTeamTask,
+    saveTeamActivity, removeTeamActivity,
+    saveTeamProject, removeTeamProject,
     saveImportAuditLog, removeImportAuditLog,
     toast, showToast,
     fbStatus,

@@ -682,7 +682,7 @@ function MonthlyBreakdownTable({ title, rows }) {
    REPORT COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function Report() {
-  const { accounts, activityLogs, orders: ordersAll, sales: salesAll, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, showToast } = useAccount();
+  const { accounts, activityLogs, orders: ordersAll, sales: salesAll, forecasts, businessPlans, contracts, openIssues, alarms, teamMembers, setEditingAccount, appSettings, saveAppSetting, teamTasks, pipelineCustomers, saveTeamTask, removeTeamTask, teamActivities, teamProjects, showToast } = useAccount();
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용 — 모든 화면 일관성 보장
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
@@ -5259,6 +5259,60 @@ export default function Report() {
             );
           })()}
 
+          {/* v3.31: 📢 유관부서 공유 사항 (consolidated — team_activities + team_projects.updates 공유 항목) */}
+          {(() => {
+            const ws = sectionAData.wkStart;
+            const we = sectionAData.wkEnd;
+            const items = [];
+            // ① team_activities 공유
+            (teamActivities || []).forEach(a => {
+              if (!a.share_with_teams || a.share_with_teams.length === 0) return;
+              const d = a.date || '';
+              if (d < ws || d > we) return;
+              const prio = a.priority === 'urgent' ? { icon: '🔴', color: 'var(--red)' } : a.priority === 'major' ? { icon: '🟡', color: '#d97706' } : { icon: '🟢', color: 'var(--green, #16a34a)' };
+              items.push({
+                key: `a_${a.id}`, kind: '활동', source: a.team, share: a.share_with_teams, date: d,
+                title: a.title, content: a.content, prio, badge: a.type,
+              });
+            });
+            // ② team_projects.updates 공유
+            (teamProjects || []).forEach(p => {
+              (p.updates || []).forEach(u => {
+                if (!u.share_with_teams || u.share_with_teams.length === 0) return;
+                const d = u.date || '';
+                if (d < ws || d > we) return;
+                items.push({
+                  key: `u_${p.id}_${u.id}`, kind: 'PJT', source: `🚀 ${p.project_name}`, share: u.share_with_teams, date: d,
+                  title: u.content, content: '', prio: { icon: '🟦', color: '#1d4ed8' }, badge: p.owner_team,
+                });
+              });
+            });
+            items.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            if (items.length === 0) return null;
+            return (
+              <div className="card" style={{ marginBottom: 12, borderLeft: '4px solid #1d4ed8', background: 'rgba(37,99,235,0.03)' }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 14 }}>📢 유관부서 공유 사항 (이번 주)</span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>— 팀 공통 활동 + 공통 PJT update 중 공유 필요 항목 자동 집계</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 4, fontWeight: 600 }}>{items.length}건</span>
+                </div>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  {items.map(it => (
+                    <div key={it.key} style={{ fontSize: 11, padding: '4px 8px', background: '#fff', borderLeft: `3px solid ${it.prio.color}`, borderRadius: 3 }}>
+                      <span style={{ color: it.prio.color, fontWeight: 700 }}>{it.prio.icon}</span>
+                      <span style={{ marginLeft: 4, fontSize: 9, padding: '0 4px', background: it.kind === 'PJT' ? 'rgba(124,58,237,0.12)' : 'rgba(46,125,50,0.12)', color: it.kind === 'PJT' ? '#6d28d9' : 'var(--accent)', borderRadius: 2, fontWeight: 700 }}>{it.kind}</span>
+                      <strong style={{ marginLeft: 4 }}>{it.source}</strong>
+                      <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text3)' }}>→ [{(it.share || []).join(' · ')}]</span>
+                      <span style={{ marginLeft: 6 }}>{it.title}</span>
+                      {it.content && <span style={{ marginLeft: 4, color: 'var(--text3)' }}>— {it.content.length > 60 ? it.content.slice(0, 60) + '…' : it.content}</span>}
+                      <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>({it.date}{it.badge ? ` · ${it.badge}` : ''})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ══ 섹션 B — 팀별 통합 블록 (금주활동 / 주요이슈 / Open이슈 / 차주계획 / 리스크) ══ */}
           {TEAM_ORDER.map(teamKey => {
             const blk = teamBlocksData.blocks[teamKey];
@@ -5284,6 +5338,93 @@ export default function Report() {
                   {blk.activity.sampleRequest > 0 && <span style={{ marginLeft: 6 }}>| 샘플요청 {blk.activity.sampleRequest}</span>}
                   {blk.activity.crossSelling > 0 && <span style={{ marginLeft: 6 }}>| 크로스셀링 {blk.activity.crossSelling}</span>}
                 </div>
+
+                {/* v3.31: 공통 PJT 진행 (이번 주, team_projects — owner 또는 collaborator) */}
+                {(() => {
+                  const ws = sectionAData.wkStart;
+                  const we = sectionAData.wkEnd;
+                  const relevantProjects = (teamProjects || []).filter(p => {
+                    if (p.status === 'done') return false;
+                    return p.owner_team === teamKey || (p.collaborator_teams || []).includes(teamKey);
+                  });
+                  if (relevantProjects.length === 0) return null;
+                  return (
+                    <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(124,58,237,0.04)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: '#6d28d9' }}>
+                        🚀 공통 PJT 진행 ({relevantProjects.length}개)
+                      </div>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        {relevantProjects.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '')).map(p => {
+                          const kpiPct = p.kpi_target > 0 ? Math.round((p.kpi_actual / p.kpi_target) * 100) : 0;
+                          const kpiColor = kpiPct >= 100 ? 'var(--green, #16a34a)' : kpiPct >= 50 ? '#d97706' : 'var(--red)';
+                          const wkUpdates = (p.updates || []).filter(u => (u.date || '') >= ws && (u.date || '') <= we);
+                          const isOwner = p.owner_team === teamKey;
+                          return (
+                            <div key={p.id} style={{ fontSize: 11, padding: '4px 8px', background: '#fff', borderLeft: '2px solid #6d28d9', borderRadius: 3 }}>
+                              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                                <strong>🚀 {p.project_name}</strong>
+                                <span style={{ fontSize: 9, padding: '0 4px', background: 'var(--bg2)', borderRadius: 2, color: 'var(--text3)' }}>{isOwner ? '주관' : '협업'}</span>
+                                {p.kpi_metric && (
+                                  <span style={{ fontSize: 10, color: kpiColor, fontWeight: 600 }}>
+                                    📊 {p.kpi_metric} {p.kpi_actual}/{p.kpi_target} ({kpiPct}%)
+                                  </span>
+                                )}
+                                {(p.share_with_teams || []).length > 0 && (
+                                  <span style={{ fontSize: 9, padding: '0 4px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 2, fontWeight: 600 }}>📢 PJT공유</span>
+                                )}
+                              </div>
+                              {wkUpdates.length > 0 ? (
+                                <div style={{ marginTop: 3, display: 'grid', gap: 2 }}>
+                                  {wkUpdates.map(u => (
+                                    <div key={u.id} style={{ fontSize: 10, color: 'var(--text2)', paddingLeft: 8 }}>
+                                      <span style={{ color: 'var(--text3)' }}>{u.date}:</span> {u.content}
+                                      {(u.share_with_teams || []).length > 0 && (
+                                        <span style={{ marginLeft: 4, fontSize: 9, padding: '0 4px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 2, fontWeight: 600 }}>📢</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div style={{ marginTop: 2, fontSize: 10, color: 'var(--text3)', paddingLeft: 8 }}>이번 주 update 없음</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* v3.31: 팀 공통 활동 (이번 주, team_activities) */}
+                {(() => {
+                  const ws = sectionAData.wkStart;
+                  const we = sectionAData.wkEnd;
+                  const items = (teamActivities || []).filter(a => a.team === teamKey && (a.date || '') >= ws && (a.date || '') <= we);
+                  if (items.length === 0) return null;
+                  return (
+                    <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(46,125,50,0.04)', border: '1px solid rgba(46,125,50,0.2)', borderRadius: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: 'var(--accent)' }}>
+                        📣 팀 공통 활동 ({items.length}건)
+                      </div>
+                      <div style={{ display: 'grid', gap: 3 }}>
+                        {items.sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(a => {
+                          const prio = a.priority === 'urgent' ? { icon: '🔴', color: 'var(--red)' } : a.priority === 'major' ? { icon: '🟡', color: '#d97706' } : { icon: '🟢', color: 'var(--green, #16a34a)' };
+                          const isShared = a.share_with_teams && a.share_with_teams.length > 0;
+                          return (
+                            <div key={a.id} style={{ fontSize: 11, padding: '3px 8px', background: '#fff', borderLeft: `2px solid ${prio.color}`, borderRadius: 3 }}>
+                              <span style={{ color: prio.color, fontWeight: 700 }}>{prio.icon}</span>
+                              <span style={{ marginLeft: 4, fontWeight: 600 }}>{a.title}</span>
+                              <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text3)' }}>[{a.type} · {a.date}]</span>
+                              {isShared && <span style={{ marginLeft: 4, fontSize: 9, padding: '0 4px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 2, fontWeight: 600 }}>📢 공유</span>}
+                              {a.status === 'closed' && <span style={{ marginLeft: 4, fontSize: 9, color: 'var(--text3)' }}>[Closed]</span>}
+                              {a.content && <div style={{ marginTop: 2, fontSize: 10, color: 'var(--text2)' }}>{a.content.length > 80 ? a.content.slice(0, 80) + '…' : a.content}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* ── v3.17 Phase B1: 타부서 공유 / 협조 필요 이슈 ── */}
                 {(blk.crossDeptIssues || []).length > 0 && (
@@ -6531,6 +6672,49 @@ export default function Report() {
             color="#d97706"
           />
 
+          {/* v3.31: 📢 유관부서 공유 사항 — 이번 달 (월간) (activities + PJT updates 통합) */}
+          {(() => {
+            const ym = monthlyReportData.selMonthStr;
+            const items = [];
+            (teamActivities || []).forEach(a => {
+              if (!a.share_with_teams || a.share_with_teams.length === 0) return;
+              if (!(a.date || '').startsWith(ym)) return;
+              const prio = a.priority === 'urgent' ? { icon: '🔴', color: 'var(--red)' } : a.priority === 'major' ? { icon: '🟡', color: '#d97706' } : { icon: '🟢', color: 'var(--green, #16a34a)' };
+              items.push({ key: `a_${a.id}`, kind: '활동', source: a.team, share: a.share_with_teams, date: a.date, title: a.title, content: a.content, prio, badge: a.type });
+            });
+            (teamProjects || []).forEach(p => {
+              (p.updates || []).forEach(u => {
+                if (!u.share_with_teams || u.share_with_teams.length === 0) return;
+                if (!(u.date || '').startsWith(ym)) return;
+                items.push({ key: `u_${p.id}_${u.id}`, kind: 'PJT', source: `🚀 ${p.project_name}`, share: u.share_with_teams, date: u.date, title: u.content, content: '', prio: { icon: '🟦', color: '#1d4ed8' }, badge: p.owner_team });
+              });
+            });
+            items.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            if (items.length === 0) return null;
+            return (
+              <div className="card" style={{ marginBottom: 12, borderLeft: '4px solid #1d4ed8', background: 'rgba(37,99,235,0.03)' }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 14 }}>📢 유관부서 공유 사항 ({monthlyReportData.selYear}년 {monthlyReportData.selMonth}월)</span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>— 팀 공통 활동 + 공통 PJT update 중 공유 필요 항목 자동 집계</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 4, fontWeight: 600 }}>{items.length}건</span>
+                </div>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  {items.map(it => (
+                    <div key={it.key} style={{ fontSize: 11, padding: '4px 8px', background: '#fff', borderLeft: `3px solid ${it.prio.color}`, borderRadius: 3 }}>
+                      <span style={{ color: it.prio.color, fontWeight: 700 }}>{it.prio.icon}</span>
+                      <span style={{ marginLeft: 4, fontSize: 9, padding: '0 4px', background: it.kind === 'PJT' ? 'rgba(124,58,237,0.12)' : 'rgba(46,125,50,0.12)', color: it.kind === 'PJT' ? '#6d28d9' : 'var(--accent)', borderRadius: 2, fontWeight: 700 }}>{it.kind}</span>
+                      <strong style={{ marginLeft: 4 }}>{it.source}</strong>
+                      <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text3)' }}>→ [{(it.share || []).join(' · ')}]</span>
+                      <span style={{ marginLeft: 6 }}>{it.title}</span>
+                      {it.content && <span style={{ marginLeft: 4, color: 'var(--text3)' }}>— {it.content.length > 60 ? it.content.slice(0, 60) + '…' : it.content}</span>}
+                      <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>({it.date}{it.badge ? ` · ${it.badge}` : ''})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ══ 섹션 C — 팀별 월간 활동 분석 (v3.21: 항상 표시 + 의미있는 항목만) ══ */}
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
@@ -6597,6 +6781,112 @@ export default function Report() {
                         )}
                       </div>
                     ))}
+                    {/* v3.31: 공통 PJT 진행 (이번 달, team_projects — owner 또는 collaborator) */}
+                    {(() => {
+                      const ym = monthlyReportData.selMonthStr;
+                      const relevantProjects = (teamProjects || []).filter(p => {
+                        if (p.status === 'done') return false;
+                        return p.owner_team === team || (p.collaborator_teams || []).includes(team);
+                      });
+                      return (
+                        <div style={{ marginBottom: 10, paddingBottom: 8, borderBottom: '1px dashed var(--border)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: '#6d28d9' }}>
+                            🚀 공통 PJT 진행
+                            <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700 }}>{relevantProjects.length}개</span>
+                          </div>
+                          {relevantProjects.length === 0 ? (
+                            <div style={{ fontSize: 10, color: 'var(--text3)', padding: '2px 4px' }}>이번 달 관련 공통 PJT 없음</div>
+                          ) : (
+                            <div style={{ display: 'grid', gap: 3 }}>
+                              {relevantProjects.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '')).map(p => {
+                                const kpiPct = p.kpi_target > 0 ? Math.round((p.kpi_actual / p.kpi_target) * 100) : 0;
+                                const kpiColor = kpiPct >= 100 ? 'var(--green, #16a34a)' : kpiPct >= 50 ? '#d97706' : 'var(--red)';
+                                const monthUpdates = (p.updates || []).filter(u => (u.date || '').startsWith(ym));
+                                const isOwner = p.owner_team === team;
+                                return (
+                                  <div key={p.id} style={{ fontSize: 10, padding: '3px 6px', background: 'var(--bg)', borderRadius: 3, borderLeft: '2px solid #6d28d9' }}>
+                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
+                                      <strong>🚀 {p.project_name}</strong>
+                                      <span style={{ fontSize: 9, padding: '0 4px', background: 'var(--bg2)', borderRadius: 2, color: 'var(--text3)' }}>{isOwner ? '주관' : '협업'}</span>
+                                      {p.kpi_metric && (
+                                        <span style={{ fontSize: 9, color: kpiColor, fontWeight: 600 }}>
+                                          📊 {p.kpi_metric} {p.kpi_actual}/{p.kpi_target} ({kpiPct}%)
+                                        </span>
+                                      )}
+                                      <span style={{ fontSize: 9, color: 'var(--text3)' }}>· 이달 update {monthUpdates.length}건</span>
+                                      {(p.share_with_teams || []).length > 0 && (
+                                        <span style={{ fontSize: 9, padding: '0 4px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 2, fontWeight: 600 }}>📢 PJT공유</span>
+                                      )}
+                                    </div>
+                                    {monthUpdates.length > 0 && (
+                                      <div style={{ marginTop: 2, paddingLeft: 8, display: 'grid', gap: 1 }}>
+                                        {monthUpdates.slice(0, 5).map(u => (
+                                          <div key={u.id} style={{ fontSize: 10, color: 'var(--text2)' }}>
+                                            <span style={{ color: 'var(--text3)' }}>{u.date}:</span> {u.content.length > 70 ? u.content.slice(0, 70) + '…' : u.content}
+                                            {(u.share_with_teams || []).length > 0 && (
+                                              <span style={{ marginLeft: 4, fontSize: 9, padding: '0 4px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 2, fontWeight: 600 }}>📢</span>
+                                            )}
+                                          </div>
+                                        ))}
+                                        {monthUpdates.length > 5 && (
+                                          <div style={{ fontSize: 9, color: 'var(--text3)' }}>... 외 {monthUpdates.length - 5}건</div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* v3.31: 팀 공통 활동 (이번 달, team_activities) */}
+                    {(() => {
+                      const ym = monthlyReportData.selMonthStr;
+                      const items = (teamActivities || []).filter(a => a.team === team && (a.date || '').startsWith(ym));
+                      return (
+                        <div style={{ marginBottom: 4 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: 'var(--text2)' }}>
+                            📣 팀 공통 활동
+                            <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700 }}>{items.length}건</span>
+                          </div>
+                          {items.length === 0 ? (
+                            <div style={{ fontSize: 10, color: 'var(--text3)', padding: '2px 4px' }}>이번 달 팀 공통 활동 없음</div>
+                          ) : (
+                            <div style={{ display: 'grid', gap: 3 }}>
+                              {items.sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 12).map((a) => {
+                                const prio = a.priority === 'urgent' ? { icon: '🔴', color: 'var(--red)' } : a.priority === 'major' ? { icon: '🟡', color: '#d97706' } : { icon: '🟢', color: 'var(--green, #16a34a)' };
+                                const isShared = a.share_with_teams && a.share_with_teams.length > 0;
+                                return (
+                                  <div key={a.id} style={{ fontSize: 10, padding: '3px 6px', background: 'var(--bg)', borderRadius: 3, borderLeft: `2px solid ${prio.color}` }}>
+                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
+                                      <span style={{ color: prio.color, fontWeight: 700 }}>{prio.icon}</span>
+                                      <span style={{ fontWeight: 600 }}>{a.title}</span>
+                                      <span style={{ fontSize: 9, padding: '0 4px', background: 'var(--bg2)', borderRadius: 2, color: 'var(--text3)' }}>{a.type}</span>
+                                      <span style={{ fontSize: 9, color: 'var(--text3)' }}>{a.date}</span>
+                                      {isShared && <span style={{ fontSize: 9, padding: '0 4px', background: 'rgba(37,99,235,0.12)', color: '#1d4ed8', borderRadius: 2, fontWeight: 600 }}>📢 공유</span>}
+                                      {a.status === 'closed' && <span style={{ fontSize: 9, color: 'var(--text3)' }}>[Closed]</span>}
+                                    </div>
+                                    {a.content && (
+                                      <div style={{ marginTop: 2, color: 'var(--text2)', fontSize: 10 }}>
+                                        {a.content.length > 80 ? a.content.slice(0, 80) + '…' : a.content}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {items.length > 12 && (
+                                <div style={{ fontSize: 9, color: 'var(--text3)', textAlign: 'center', padding: 2 }}>
+                                  ... 외 {items.length - 12}건
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
