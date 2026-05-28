@@ -16,7 +16,7 @@ function fmtKRW(n) {
 const PROB_OPTIONS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
 export default function GapAnalysis({ draft, update }) {
-  const { businessPlans, orders } = useAccount();
+  const { businessPlans, orders, t, te } = useAccount();
   const [oppForm, setOppForm] = useState(null);
 
   const gap = draft.gap_analysis || {};
@@ -129,25 +129,25 @@ export default function GapAnalysis({ draft, update }) {
       {/* ── Section 1: 수주 Gap 현황 (자동 계산) ── */}
       {planGap && (
         <div className="card" style={{ marginBottom: 12 }}>
-          <div className="card-title">YTD 수주 Gap 현황</div>
+          <div className="card-title">{t('gap.ytdStatus')}</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 8 }}>
             <div style={{ textAlign: 'center', padding: 8, background: 'var(--bg3)', borderRadius: 6 }}>
-              <div style={{ fontSize: 10, color: 'var(--text3)' }}>연간 목표</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>{t('gap.annualTarget')}</div>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{fmtKRW(planGap.annualTarget)}</div>
             </div>
             <div style={{ textAlign: 'center', padding: 8, background: 'var(--bg3)', borderRadius: 6 }}>
-              <div style={{ fontSize: 10, color: 'var(--text3)' }}>YTD 목표</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>{t('gap.ytdTarget')}</div>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{fmtKRW(planGap.ytdTarget)}</div>
             </div>
             <div style={{ textAlign: 'center', padding: 8, background: 'var(--bg3)', borderRadius: 6 }}>
-              <div style={{ fontSize: 10, color: 'var(--text3)' }}>YTD 실적</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>{t('gap.ytdActual')}</div>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent)' }}>{fmtKRW(planGap.ytdActual)}</div>
             </div>
             <div style={{
               textAlign: 'center', padding: 8, borderRadius: 6,
               background: planGap.ytdGap >= 0 ? 'rgba(22,163,74,.08)' : 'rgba(220,38,38,.08)',
             }}>
-              <div style={{ fontSize: 10, color: 'var(--text3)' }}>Gap</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>{t('gap.gapLabel')}</div>
               <div style={{
                 fontSize: 14, fontWeight: 700,
                 color: planGap.ytdGap >= 0 ? 'var(--green)' : 'var(--red)',
@@ -155,7 +155,7 @@ export default function GapAnalysis({ draft, update }) {
                 {planGap.ytdGap >= 0 ? '+' : ''}{fmtKRW(planGap.ytdGap)}
               </div>
               <div style={{ fontSize: 10, color: planGap.achieveRate >= 90 ? 'var(--green)' : planGap.achieveRate >= 70 ? 'var(--yellow)' : 'var(--red)' }}>
-                달성률 {planGap.achieveRate}%
+                {t('gap.achievementRate')} {planGap.achieveRate}%
               </div>
             </div>
           </div>
@@ -165,20 +165,18 @@ export default function GapAnalysis({ draft, update }) {
       {/* ── Section 2: Gap 원인 / 대책 ── */}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-title">
-          Gap 원인 및 대책
+          {t('gap.causesAndCounter')}
           {planGap && (
             <span style={{ fontSize: 10, marginLeft: 8, padding: '2px 8px', borderRadius: 10,
               background: planGap.ytdGap >= 0 ? 'rgba(22,163,74,.12)' : 'rgba(220,38,38,.12)',
               color: planGap.ytdGap >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700,
             }}>
-              {planGap.ytdGap >= 0 ? '초과 달성' : '미달'}
+              {planGap.ytdGap >= 0 ? t('gap.overAchieved') : t('gap.underTarget')}
             </span>
           )}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
-          {planGap?.ytdGap < 0
-            ? '수주 미달의 주요 원인을 선택하세요 (복수 선택 가능)'
-            : '목표 대비 수주 상황의 주요 원인을 선택하세요 (복수 선택 가능)'}
+          {planGap?.ytdGap < 0 ? t('gap.causeHintUnder') : t('gap.causeHintOver')}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
           {GAP_CAUSES.map(cause => {
@@ -195,9 +193,9 @@ export default function GapAnalysis({ draft, update }) {
                   style={{ accentColor: 'var(--accent)' }} />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: selected ? 600 : 400 }}>
-                    {cause.icon} {cause.label}
+                    {cause.icon} {te(cause.label)}
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)' }}>{cause.desc}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)' }}>{te(cause.desc)}</div>
                 </div>
               </label>
             );
@@ -205,39 +203,37 @@ export default function GapAnalysis({ draft, update }) {
         </div>
         <div style={{ marginTop: 8 }}>
           <label style={{ fontSize: 11, fontWeight: 600, color: hasCauseButNoDetail ? 'var(--red)' : 'var(--text2)', display: 'block', marginBottom: 4 }}>
-            상세 설명 — {planGap?.ytdGap >= 0 ? '초과 달성 원인' : 'Gap 원인 분석'}
-            {(gap.causes || []).length > 0 && <span style={{ color: 'var(--red)', marginLeft: 4 }}>* 필수</span>}
+            {planGap?.ytdGap >= 0 ? t('gap.detailLabelOver') : t('gap.detailLabelUnder')}
+            {(gap.causes || []).length > 0 && <span style={{ color: 'var(--red)', marginLeft: 4 }}>{t('gap.detailRequired')}</span>}
           </label>
           <textarea
             value={gap.cause_detail || ''}
             onChange={e => updateGap({ cause_detail: e.target.value })}
             placeholder={planGap?.ytdGap >= 0
-              ? "초과 달성 원인을 구체적으로 기록하세요 (예: 예상외 대량 수주, 경쟁사 이탈 고객 유입 등)"
-              : "Gap 원인에 대한 구체적 상황을 기록하세요..."}
+              ? t('gap.detailPlaceholderOver')
+              : t('gap.detailPlaceholderUnder')}
             style={{
               minHeight: 60,
               borderColor: hasCauseButNoDetail ? 'var(--red)' : undefined,
               boxShadow: hasCauseButNoDetail ? '0 0 0 2px rgba(220,38,38,0.1)' : undefined,
             }}
           />
-          {/* v3.17 Phase A3: 원인 선택했는데 상세 미입력 시 경고 */}
           {hasCauseButNoDetail && (
             <div style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600, marginTop: 4, padding: '6px 8px', background: 'rgba(220,38,38,0.06)', borderRadius: 4 }}>
-              ⚠ 원인이 선택되었지만 <strong>상세 설명이 비어 있습니다</strong>. 상세 설명 미입력 시 GAP 분석 미실시로 간주되어 담당자 점수에 반영됩니다.
+              {t('gap.warnEmptyDetail')}
             </div>
           )}
         </div>
-        {/* 부족분: 대책 / 초과분: 추가 요소 */}
         <div style={{ marginTop: 8 }}>
           <label style={{ fontSize: 11, fontWeight: 600, color: planGap?.ytdGap < 0 ? 'var(--red)' : 'var(--green)', display: 'block', marginBottom: 4 }}>
-            {planGap?.ytdGap < 0 ? '⚠ 대책 (부족분 만회 계획) *필수' : '✅ 지속 발전 요소 (초과 원인 강화)'}
+            {planGap?.ytdGap < 0 ? t('gap.counterUnder') : t('gap.counterOver')}
           </label>
           <textarea
             value={gap.countermeasure || ''}
             onChange={e => updateGap({ countermeasure: e.target.value })}
             placeholder={planGap?.ytdGap < 0
-              ? "Gap 만회를 위한 구체적 대책 (예: 4월 Q2 가격 재협상, 추가 샘플 공급으로 5월 PO 확보 예상)"
-              : "초과 실적 유지 방안 (예: 신제품 추가 제안, 장기 계약 체결 검토 등)"}
+              ? t('gap.counterPlaceholderUnder')
+              : t('gap.counterPlaceholderOver')}
             style={{ minHeight: 60 }}
           />
         </div>
@@ -245,33 +241,33 @@ export default function GapAnalysis({ draft, update }) {
 
       {/* ── Section 3: 고객 예산/구매 사이클 ── */}
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="card-title">고객 예산/구매 사이클</div>
+        <div className="card-title">{t('gap.budgetCycleSection')}</div>
         <div className="form-row">
           <div className="form-group">
-            <label>예산 편성 시기</label>
+            <label>{t('gap.budgetTime')}</label>
             <select value={gap.budget_cycle || ''} onChange={e => updateGap({ budget_cycle: e.target.value })}>
-              <option value="">선택</option>
-              {BUDGET_CYCLES.map(b => <option key={b} value={b}>{b}</option>)}
+              <option value="">{t('common.select')}</option>
+              {BUDGET_CYCLES.map(b => <option key={b} value={b}>{te(b)}</option>)}
             </select>
           </div>
           <div className="form-group">
-            <label>구매 의사결정 주기</label>
+            <label>{t('gap.decisionCycle')}</label>
             <select value={gap.decision_cycle || ''} onChange={e => updateGap({ decision_cycle: e.target.value })}>
-              <option value="">선택</option>
-              <option value="월간">월간</option>
-              <option value="분기">분기</option>
-              <option value="반기">반기</option>
-              <option value="연간">연간</option>
-              <option value="수시">수시 (필요시)</option>
+              <option value="">{t('common.select')}</option>
+              <option value="월간">{t('gap.cycleMonthly')}</option>
+              <option value="분기">{t('gap.cycleQuarter')}</option>
+              <option value="반기">{t('gap.cycleHalf')}</option>
+              <option value="연간">{t('gap.cycleAnnual')}</option>
+              <option value="수시">{t('gap.cycleAdhoc')}</option>
             </select>
           </div>
         </div>
         <div className="form-group" style={{ marginTop: 4 }}>
-          <label>경쟁 동향 메모</label>
+          <label>{t('gap.compNotes')}</label>
           <textarea
             value={gap.competition_notes || ''}
             onChange={e => updateGap({ competition_notes: e.target.value })}
-            placeholder="최근 경쟁사 움직임 (가격 인하, 신제품, 거래선 변경 등)"
+            placeholder={t('gap.compNotesPlaceholder')}
             style={{ minHeight: 50 }}
           />
         </div>
@@ -280,14 +276,14 @@ export default function GapAnalysis({ draft, update }) {
       {/* ── Section 4: 기회 파이프라인 ── */}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>기회 파이프라인</span>
+          <span>{t('gap.oppPipeline')}</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {opportunities.length > 0 && (
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                {opportunities.length}건 | 가중합계 {fmtKRW(weightedOppTotal)}
+                {opportunities.length} {t('gap.oppCountLabel')} | {t('gap.oppWeighted')} {fmtKRW(weightedOppTotal)}
               </span>
             )}
-            <button className="btn btn-ghost btn-sm" onClick={addOpportunity}>+ 기회 추가</button>
+            <button className="btn btn-ghost btn-sm" onClick={addOpportunity}>{t('gap.oppAdd')}</button>
           </div>
         </div>
 
@@ -296,27 +292,27 @@ export default function GapAnalysis({ draft, update }) {
           <div style={{ padding: 10, background: 'var(--bg3)', borderRadius: 8, marginBottom: 8 }}>
             <div className="form-row">
               <div className="form-group">
-                <label>유형</label>
+                <label>{t('gap.oppType')}</label>
                 <select value={oppForm.type} onChange={e => setOppForm(p => ({ ...p, type: e.target.value }))}>
-                  {OPPORTUNITY_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  {OPPORTUNITY_TYPES.map(ot => <option key={ot.key} value={ot.key}>{te(ot.label)}</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label>대상 품목</label>
+                <label>{t('orderHistory.product')}</label>
                 <select value={oppForm.product} onChange={e => setOppForm(p => ({ ...p, product: e.target.value }))}>
-                  <option value="">선택</option>
+                  <option value="">{t('common.select')}</option>
                   {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>예상 금액 (원)</label>
+                <label>{t('gap.opp.amount')} (KRW)</label>
                 <input type="number" value={oppForm.amount}
                   onChange={e => setOppForm(p => ({ ...p, amount: e.target.value }))} placeholder="0" />
               </div>
               <div className="form-group">
-                <label>수주 확률 (%)</label>
+                <label>{t('gap.oppProbability')}</label>
                 <select value={oppForm.probability} onChange={e => setOppForm(p => ({ ...p, probability: Number(e.target.value) }))}>
                   {PROB_OPTIONS.map(p => <option key={p} value={p}>{p}%</option>)}
                 </select>
@@ -324,19 +320,19 @@ export default function GapAnalysis({ draft, update }) {
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>예상 수주 시기</label>
+                <label>{t('gap.oppExpected')}</label>
                 <input type="date" value={oppForm.expected_date}
                   onChange={e => setOppForm(p => ({ ...p, expected_date: e.target.value }))} />
               </div>
               <div className="form-group">
-                <label>비고</label>
+                <label>{t('gap.oppNote')}</label>
                 <input type="text" value={oppForm.note}
-                  onChange={e => setOppForm(p => ({ ...p, note: e.target.value }))} placeholder="참고사항" />
+                  onChange={e => setOppForm(p => ({ ...p, note: e.target.value }))} placeholder={t('gap.oppNotePlaceholder')} />
               </div>
             </div>
             <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setOppForm(null)}>취소</button>
-              <button className="btn btn-primary btn-sm" onClick={saveOpportunity}>저장</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setOppForm(null)}>{t('common.cancel')}</button>
+              <button className="btn btn-primary btn-sm" onClick={saveOpportunity}>{t('common.save')}</button>
             </div>
           </div>
         )}
@@ -344,7 +340,7 @@ export default function GapAnalysis({ draft, update }) {
         {/* 기회 목록 */}
         {opportunities.length === 0 && !oppForm ? (
           <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
-            등록된 기회가 없습니다. '+기회 추가'로 Gap 만회 기회를 등록하세요.
+            {t('gap.oppEmpty')}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -356,7 +352,7 @@ export default function GapAnalysis({ draft, update }) {
                   padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)',
                   fontSize: 12,
                 }}>
-                  <span className="issue-badge" style={{ fontSize: 10 }}>{typeInfo.label || opp.type}</span>
+                  <span className="issue-badge" style={{ fontSize: 10 }}>{te(typeInfo.label) || opp.type}</span>
                   {opp.product && <span style={{ color: 'var(--text2)' }}>{opp.product}</span>}
                   <span style={{ fontWeight: 600 }}>{fmtKRW(opp.amount)}</span>
                   <span style={{
@@ -368,9 +364,9 @@ export default function GapAnalysis({ draft, update }) {
                   {opp.note && <span style={{ fontSize: 10, color: 'var(--text3)', flex: 1 }}>{opp.note}</span>}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
                     <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
-                      onClick={() => setOppForm({ ...opp, amount: String(opp.amount || '') })}>수정</button>
+                      onClick={() => setOppForm({ ...opp, amount: String(opp.amount || '') })}>{t('common.edit')}</button>
                     <button className="btn btn-danger btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
-                      onClick={() => removeOpportunity(opp.id)}>삭제</button>
+                      onClick={() => removeOpportunity(opp.id)}>{t('common.delete')}</button>
                   </div>
                 </div>
               );
@@ -382,9 +378,9 @@ export default function GapAnalysis({ draft, update }) {
       {/* ── Section 5: 이번 달 액션 플랜 ── */}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>이번 달 액션 플랜</span>
+          <span>{t('gap.actionPlan')}</span>
           <span style={{ fontSize: 10, color: 'var(--text3)' }}>
-            {actionPlan.filter(a => a.done).length}/{actionPlan.filter(a => a.text.trim()).length} 완료
+            {actionPlan.filter(a => a.done).length}/{actionPlan.filter(a => a.text.trim()).length} {t('gap.actionDone')}
           </span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -396,7 +392,7 @@ export default function GapAnalysis({ draft, update }) {
               <span style={{ fontSize: 11, color: 'var(--text3)', flexShrink: 0, width: 16 }}>{idx + 1}.</span>
               <input type="text" value={action.text}
                 onChange={e => updateAction(idx, 'text', e.target.value)}
-                placeholder={`액션 ${idx + 1}: 이번 달 고객과 협의/확인할 사항`}
+                placeholder={t('gap.actionPlaceholder', { n: idx + 1 })}
                 style={{
                   flex: 1,
                   textDecoration: action.done ? 'line-through' : 'none',
@@ -409,7 +405,7 @@ export default function GapAnalysis({ draft, update }) {
         {actionPlan.length < 5 && (
           <button className="btn btn-ghost btn-sm" style={{ marginTop: 6, fontSize: 10 }}
             onClick={() => updateGap({ action_plan: [...actionPlan, { text: '', done: false }] })}>
-            + 액션 추가
+            {t('gap.actionAdd')}
           </button>
         )}
       </div>
@@ -417,7 +413,7 @@ export default function GapAnalysis({ draft, update }) {
       {/* ── 마지막 업데이트 ── */}
       {gap.last_updated && (
         <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'right' }}>
-          마지막 업데이트: {gap.last_updated}
+          {t('gap.lastUpdated')} {gap.last_updated}
         </div>
       )}
     </div>

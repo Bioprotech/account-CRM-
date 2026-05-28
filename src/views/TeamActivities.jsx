@@ -52,7 +52,7 @@ function fmtPriority(p) {
 }
 
 export default function TeamActivities() {
-  const { teamActivities, saveTeamActivity, removeTeamActivity, currentUser, isAdmin, accounts } = useAccount();
+  const { teamActivities, saveTeamActivity, removeTeamActivity, currentUser, isAdmin, accounts, t } = useAccount();
 
   // 필터
   const [filterTeam, setFilterTeam] = useState('all');
@@ -139,16 +139,16 @@ export default function TeamActivities() {
       {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>📣 팀 공통 활동</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{t('teamAct.title')}</h3>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-            고객 단위가 아닌 팀 공통 업무 (가격정책·정책안내·전시회·교육 등)
+            {t('teamAct.subtitle')}
           </div>
         </div>
         <button
           onClick={openNew}
           style={{ marginLeft: 'auto', padding: '8px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}
         >
-          + 새 활동 추가
+          {t('teamAct.add')}
         </button>
       </div>
 
@@ -192,7 +192,7 @@ export default function TeamActivities() {
       {/* 리스트 */}
       {filtered.length === 0 ? (
         <div className="card" style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>
-          등록된 팀 활동이 없습니다. [+ 새 활동 추가] 버튼으로 첫 활동을 등록해보세요.
+          {t('teamAct.empty')}
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>

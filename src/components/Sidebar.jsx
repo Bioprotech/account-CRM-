@@ -1,21 +1,22 @@
 import { useAccount } from '../context/AccountContext';
 import { CURRENT_VERSION } from '../lib/changelog';
 
+// v3.33: label은 i18n 키 — 렌더 시점에 t(item.labelKey)로 변환
 const NAV_ITEMS = [
-  { key: 'dashboard', icon: '📊', label: '대시보드' },
-  { key: 'report', icon: '📋', label: '종합 리포트' },
-  { key: 'myTasks', icon: '🗒️', label: '내 업무' },
-  { key: 'teamCommon', icon: '👥', label: '팀 공통' },
-  { key: 'accounts', icon: '🏢', label: '고객 목록' },
-  { key: 'orderReport', icon: '📈', label: '수주목표관리' },
-  { key: 'progress', icon: '📈', label: '진도관리' },
-  { key: 'typeguide', icon: '📖', label: '유형가이드' },
-  { key: 'settings', icon: '⚙️', label: '설정', adminOnly: true },
-  { key: 'changelog', icon: '📝', label: '업데이트 내역' },
+  { key: 'dashboard',    icon: '📊',  labelKey: 'menu.dashboard' },
+  { key: 'report',       icon: '📋',  labelKey: 'menu.report' },
+  { key: 'myTasks',      icon: '🗒️', labelKey: 'menu.myTasks' },
+  { key: 'teamCommon',   icon: '👥',  labelKey: 'menu.teamCommon' },
+  { key: 'accounts',     icon: '🏢',  labelKey: 'menu.accounts' },
+  { key: 'orderReport',  icon: '📈',  labelKey: 'menu.orderReport' },
+  { key: 'progress',     icon: '📈',  labelKey: 'menu.progress' },
+  { key: 'typeguide',    icon: '📖',  labelKey: 'menu.typeguide' },
+  { key: 'settings',     icon: '⚙️', labelKey: 'menu.settings', adminOnly: true },
+  { key: 'changelog',    icon: '📝',  labelKey: 'menu.changelog' },
 ];
 
 export default function Sidebar() {
-  const { currentTab, setCurrentTab, currentUser, isAdmin, logout, accounts, openIssues, alarms, fbStatus, sidebarOpen, setSidebarOpen } = useAccount();
+  const { currentTab, setCurrentTab, currentUser, isAdmin, logout, accounts, openIssues, alarms, fbStatus, sidebarOpen, setSidebarOpen, t } = useAccount();
 
   return (
     <>
@@ -31,14 +32,14 @@ export default function Sidebar() {
         <div className="sidebar-user">
           <div>
             <div className="user-name">{isAdmin ? '👑' : '👤'} {currentUser}</div>
-            <div className="user-role">{isAdmin ? '관리자' : '담당자'}</div>
+            <div className="user-role">{isAdmin ? t('user.admin') : t('user.salesRep')}</div>
           </div>
-          <button className="logout-btn" onClick={logout}>로그아웃</button>
+          <button className="logout-btn" onClick={logout}>{t('common.changeLogin')}</button>
         </div>
 
         {/* Nav */}
         <div className="nav-section">
-          <div className="nav-label">메뉴</div>
+          <div className="nav-label">{t('menu.menuLabel')}</div>
           {NAV_ITEMS.filter(item => !item.adminOnly || isAdmin).map(item => (
             <div
               key={item.key}
@@ -46,7 +47,7 @@ export default function Sidebar() {
               onClick={() => { setCurrentTab(item.key); setSidebarOpen(false); }}
             >
               <span>{item.icon}</span>
-              <span>{item.label}</span>
+              <span>{t(item.labelKey)}</span>
               {item.key === 'accounts' && (
                 <span className="nav-badge">{accounts.length}</span>
               )}
@@ -62,9 +63,9 @@ export default function Sidebar() {
 
         {/* Summary */}
         <div className="nav-section" style={{ marginTop: 'auto', borderTop: '1px solid var(--border)' }}>
-          <div className="nav-label">요약</div>
+          <div className="nav-label">{t('menu.summaryLabel')}</div>
           <div style={{ padding: '4px 16px', fontSize: '11px', color: 'var(--text3)' }}>
-            Open 이슈: <strong style={{ color: openIssues.length > 0 ? 'var(--red)' : 'var(--green)' }}>{openIssues.length}</strong>건
+            {t('menu.openIssuesShort')}: <strong style={{ color: openIssues.length > 0 ? 'var(--red)' : 'var(--green)' }}>{openIssues.length}</strong>
           </div>
         </div>
 

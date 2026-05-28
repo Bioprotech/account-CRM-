@@ -44,7 +44,7 @@ function fmtPrio(p) { return PRIORITIES.find(x => x.key === p) || PRIORITIES[0];
 function fmtStatus(s) { return STATUSES.find(x => x.key === s) || STATUSES[1]; }
 
 export default function TeamProjects() {
-  const { teamProjects, saveTeamProject, removeTeamProject, currentUser, isAdmin, accounts } = useAccount();
+  const { teamProjects, saveTeamProject, removeTeamProject, currentUser, isAdmin, accounts, t } = useAccount();
 
   // 필터
   const [filterTeam, setFilterTeam] = useState('all');
@@ -185,16 +185,16 @@ export default function TeamProjects() {
       {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>🚀 공통 프로젝트</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{t('teamProj.title')}</h3>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-            특정 고객 아닌 전체/세그먼트 대상 PJT (예: Smoke 확대) · KPI 추적 + 마일스톤 + 진행 update
+            {t('teamProj.subtitle')}
           </div>
         </div>
         <button
           onClick={openNew}
           style={{ marginLeft: 'auto', padding: '8px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}
         >
-          + 새 프로젝트 추가
+          {t('teamProj.add')}
         </button>
       </div>
 

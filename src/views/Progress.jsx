@@ -26,7 +26,7 @@ function fmtKRW(n) {
 }
 
 export default function Progress() {
-  const { businessPlans, orders: ordersAll, accounts: accountsAll, setEditingAccount } = useAccount();
+  const { businessPlans, orders: ordersAll, accounts: accountsAll, setEditingAccount, t } = useAccount();
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);

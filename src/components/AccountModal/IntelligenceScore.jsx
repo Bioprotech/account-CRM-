@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useAccount } from '../../context/AccountContext';
 import { SCORE_CATEGORIES } from '../../lib/constants';
 import { computeIntelligenceScore, scoreColorClass } from '../../lib/utils';
 
@@ -34,7 +35,7 @@ function InputField({ item, value, onChange }) {
           value={value}
           onChange={e => onChange(e.target.value)}
         >
-          <option value="">-- 선택 --</option>
+          <option value="">-- Select --</option>
           {(item.options || []).map(opt => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
@@ -85,6 +86,7 @@ function StatusIcon({ filled }) {
 
 /* ── 메인 컴포넌트 ── */
 export default function IntelligenceScore({ draft, update }) {
+  const { te } = useAccount();
   const [expanded, setExpanded] = useState(SCORE_CATEGORIES.map(c => c.key));
 
   const intelligence = draft.intelligence || {};
@@ -166,7 +168,7 @@ export default function IntelligenceScore({ draft, update }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: '10px', color: 'var(--text3)' }}>
             <span>0%</span>
             <span className={`score-badge ${colorCls}`}>
-              {totalScore >= 70 ? '🟢 양호' : totalScore >= 50 ? '🟡 주의' : '🔴 경고'}
+              {totalScore >= 70 ? '🟢 Good' : totalScore >= 50 ? '🟡 Watch' : '🔴 Alert'}
             </span>
             <span>100%</span>
           </div>
@@ -182,8 +184,8 @@ export default function IntelligenceScore({ draft, update }) {
           <div key={cat.key} className="intel-category">
             <div className="intel-cat-header" onClick={() => toggleExpand(cat.key)}>
               <div>
-                <span className="intel-cat-title">{cat.label}</span>
-                <span className="intel-cat-weight">(가중치 {Math.round(cat.weight * 100)}%)</span>
+                <span className="intel-cat-title">{te(cat.label)}</span>
+                <span className="intel-cat-weight">(weight {Math.round(cat.weight * 100)}%)</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className={`score-badge ${pct >= 70 ? 'green' : pct >= 50 ? 'yellow' : 'red'}`}>
@@ -219,7 +221,7 @@ export default function IntelligenceScore({ draft, update }) {
                           marginBottom: 3,
                           color: complete ? 'var(--text1)' : 'var(--text2, #666)',
                         }}>
-                          {item.label}
+                          {te(item.label)}
                         </div>
                         <InputField
                           item={item}

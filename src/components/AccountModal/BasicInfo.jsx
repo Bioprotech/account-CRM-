@@ -11,7 +11,7 @@ const TYPE_TRANSITIONS = {
 };
 
 export default function BasicInfo({ draft, update }) {
-  const { teamMembers, businessPlans, appSettings, contracts } = useAccount();
+  const { teamMembers, businessPlans, appSettings, contracts, t, te } = useAccount();
 
   // v3.32: 계약전환율 = contract_status === '활성' 기준 (기존 필드 그대로 활용)
   //   가이드 박스로 '활성' 판정 기준 안내. 계약 1건 이상이면 컨텍스트의
@@ -63,12 +63,12 @@ export default function BasicInfo({ draft, update }) {
       {/* 회사 기본정보 */}
       <div className="form-row">
         <div className="form-group">
-          <label>회사명 *</label>
-          <input type="text" value={draft.company_name || ''} onChange={e => update({ company_name: e.target.value })} placeholder="회사명 입력" />
+          <label>{t('basic.companyName')} *</label>
+          <input type="text" value={draft.company_name || ''} onChange={e => update({ company_name: e.target.value })} placeholder={t('basic.companyName')} />
         </div>
         <div className="form-group">
-          <label>국가</label>
-          <input type="text" value={draft.country || ''} onChange={e => update({ country: e.target.value })} placeholder="국가명" />
+          <label>{t('basic.country')}</label>
+          <input type="text" value={draft.country || ''} onChange={e => update({ country: e.target.value })} placeholder={t('basic.country')} />
         </div>
       </div>
 
@@ -76,10 +76,7 @@ export default function BasicInfo({ draft, update }) {
       <div className="form-row full">
         <div className="form-group">
           <label>
-            🏷️ 고객 분류
-            <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
-              CRM 통계 기준 — 저장된 값 사용 (매번 계산 X)
-            </span>
+            🏷️ {t('basic.customerCategory')}
           </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select
@@ -88,7 +85,7 @@ export default function BasicInfo({ draft, update }) {
               style={{ padding: '5px 10px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, minWidth: 200 }}
             >
               {CUSTOMER_CATEGORIES.map(c => (
-                <option key={c.key} value={c.key}>{c.icon} {c.label}{c.key === 'unclassified' ? ' (미설정)' : ''}</option>
+                <option key={c.key} value={c.key}>{c.icon} {te(c.label)}{c.key === 'unclassified' ? '' : ''}</option>
               ))}
             </select>
             {!categoryMatchesSuggestion && (
@@ -126,9 +123,9 @@ export default function BasicInfo({ draft, update }) {
       <div className="form-row full">
         <div className="form-group">
           <label>
-            🔗 별칭 / 다른 표기명 (Alias)
+            🔗 {t('basic.aliases')}
             <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
-              영업현황 import 시 이 이름들도 같은 고객으로 인식됨
+              {t('basic.aliasesHint')}
             </span>
           </label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 6, border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg)', minHeight: 36 }}>
@@ -180,14 +177,14 @@ export default function BasicInfo({ draft, update }) {
 
       <div className="form-row">
         <div className="form-group">
-          <label>지역</label>
+          <label>{t('basic.region')}</label>
           <select value={draft.region || ''} onChange={e => update({ region: e.target.value })}>
-            <option value="">선택</option>
+            <option value="">{t('common.select')}</option>
             {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
         <div className="form-group">
-          <label>사업형태</label>
+          <label>{t('basic.businessType')}</label>
           <select value={draft.business_type || ''} onChange={e => {
             const oldType = draft.business_type || '';
             const newType = e.target.value;
@@ -199,8 +196,8 @@ export default function BasicInfo({ draft, update }) {
             }
             update(changes);
           }}>
-            <option value="">선택</option>
-            {BUSINESS_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
+            <option value="">{t('common.select')}</option>
+            {BUSINESS_TYPES.map(b => <option key={b} value={b}>{te(b)}</option>)}
           </select>
           {draft.type_history?.length > 0 && (
             <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text3)' }}>
@@ -223,17 +220,17 @@ export default function BasicInfo({ draft, update }) {
 
       <div className="form-row">
         <div className="form-group">
-          <label>담당자</label>
+          <label>{t('basic.salesRep')}</label>
           <select value={draft.sales_rep || ''} onChange={e => update({ sales_rep: e.target.value })}>
-            <option value="">선택</option>
+            <option value="">{t('common.select')}</option>
             {teamMembers.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
         <div className="form-group">
-          <label>계약 상태</label>
+          <label>{t('basic.contractStatus')}</label>
           <select value={draft.contract_status || ''} onChange={e => update({ contract_status: e.target.value })}>
-            <option value="">선택</option>
-            {CONTRACT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+            <option value="">{t('common.select')}</option>
+            {CONTRACT_STATUSES.map(s => <option key={s} value={s}>{te(s)}</option>)}
           </select>
         </div>
       </div>
@@ -241,30 +238,30 @@ export default function BasicInfo({ draft, update }) {
       {/* v3.32: 계약 상태 가이드 박스 (기존 contract_status 필드 활용 — 전환율 지표) */}
       <div style={{ marginBottom: 14, padding: 10, background: 'rgba(46,125,50,0.04)', border: '1px solid rgba(46,125,50,0.2)', borderRadius: 6 }}>
         <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: 'var(--accent)' }}>
-          🎯 계약 상태 안내 — <span style={{ fontWeight: 400, color: 'var(--text2)' }}>금년 영업 핵심 지표 (전환율 = '활성' 비율)</span>
+          {t('basic.contractGuideTitle')} — <span style={{ fontWeight: 400, color: 'var(--text2)' }}>{t('basic.contractGuideSubtitle')}</span>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
-          다음 중 하나면 위 <strong>계약 상태 = '활성'</strong>로 선택:
+          {t('basic.contractGuideIntro')}
           <ul style={{ margin: '4px 0 0 0', paddingLeft: 18 }}>
-            <li>✅ <strong>정식 계약 체결됨</strong> (가격/계약 탭에 계약 등록 — 자동으로 '활성' 설정됨)</li>
-            <li>📅 <strong>연간 수량 개런티</strong> (계약 X, 연간 약정 — 예: Diros)</li>
-            <li>🔄 <strong>정기 FCST 수신</strong> (MPS·MRP·월별 발주 계획 정기 업데이트 — 예: Mckesson, Cardinal)</li>
+            <li>{t('basic.contractGuide1')}</li>
+            <li>{t('basic.contractGuide2')}</li>
+            <li>{t('basic.contractGuide3')}</li>
           </ul>
         </div>
         {hasContracts && !isActiveStatus && (
           <div style={{ marginTop: 6, padding: '4px 8px', background: 'rgba(217,119,6,0.08)', borderRadius: 4, fontSize: 11, color: '#d97706', fontWeight: 600 }}>
-            ⚠ 계약이 {acctContracts.length}건 등록되어 있는데 계약 상태가 '활성'이 아닙니다 — '활성'으로 변경 권장
+            {t('basic.contractWarn', { n: acctContracts.length })}
           </div>
         )}
       </div>
 
       <div className="form-row">
         <div className="form-group">
-          <label>거래 시작일</label>
+          <label>{t('basic.tradeStartDate')}</label>
           <input type="date" value={draft.trade_start_date || ''} onChange={e => update({ trade_start_date: e.target.value })} />
         </div>
         <div className="form-group">
-          <label>전략 등급</label>
+          <label>{t('basic.strategicTier')}</label>
           <select value={draft.strategic_tier || ''} onChange={e => update({ strategic_tier: e.target.value })}>
             <option value="">미설정</option>
             {STRATEGIC_TIERS.map(t => (
@@ -281,7 +278,7 @@ export default function BasicInfo({ draft, update }) {
 
       {/* 현재 컨텍스트 메모 */}
       <div style={{ marginBottom: 16 }}>
-        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>현재 컨텍스트 메모</label>
+        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>{t('basic.contextMemo')}</label>
         <textarea
           value={draft.context_memo || ''}
           onChange={e => update({ context_memo: e.target.value })}
@@ -293,7 +290,7 @@ export default function BasicInfo({ draft, update }) {
 
       {/* 담당 제품군 */}
       <div style={{ marginBottom: 16 }}>
-        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>담당 제품군</label>
+        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>{t('basic.products')}</label>
         <div className="products-grid">
           {PRODUCTS.map(p => (
             <label key={p} className="prod-check">
@@ -307,7 +304,7 @@ export default function BasicInfo({ draft, update }) {
       {/* Key Contacts */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text2)' }}>고객사 Key Contact</label>
+          <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text2)' }}>{t('basic.keyContacts')}</label>
           <button className="btn btn-ghost btn-sm" onClick={addContact}>+ 연락처 추가</button>
         </div>
 
@@ -318,21 +315,21 @@ export default function BasicInfo({ draft, update }) {
             )}
             <div className="form-row">
               <div className="form-group">
-                <label>이름</label>
+                <label>{t('basic.contactName')}</label>
                 <input type="text" value={c.name || ''} onChange={e => updateContact(idx, 'name', e.target.value)} placeholder="담당자명" />
               </div>
               <div className="form-group">
-                <label>직책</label>
+                <label>{t('basic.contactTitle')}</label>
                 <input type="text" value={c.title || ''} onChange={e => updateContact(idx, 'title', e.target.value)} placeholder="직책" />
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>이메일</label>
+                <label>{t('basic.contactEmail')}</label>
                 <input type="email" value={c.email || ''} onChange={e => updateContact(idx, 'email', e.target.value)} placeholder="email@company.com" />
               </div>
               <div className="form-group">
-                <label>전화</label>
+                <label>{t('basic.contactPhone')}</label>
                 <input type="tel" value={c.phone || ''} onChange={e => updateContact(idx, 'phone', e.target.value)} placeholder="+00-000-0000" />
               </div>
             </div>

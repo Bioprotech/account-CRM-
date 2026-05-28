@@ -26,7 +26,7 @@ function pct(a, b) {
 }
 
 export default function OrderReport() {
-  const { accounts: accountsAll, orders: ordersAll, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts } = useAccount();
+  const { accounts: accountsAll, orders: ordersAll, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts, t } = useAccount();
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
@@ -267,7 +267,7 @@ export default function OrderReport() {
     <div style={{ padding: 0 }}>
       {/* 헤더 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>수주목표관리 ({viewYear})</h2>
+        <h2 style={{ margin: 0, fontSize: 18 }}>{t('orderReport.title')} ({viewYear})</h2>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* 담당자 필터 */}
           {isAdmin && (

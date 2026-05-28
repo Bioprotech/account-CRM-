@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useAccount } from '../context/AccountContext';
 import TeamActivities from './TeamActivities';
 import TeamProjects from './TeamProjects';
 
 export default function TeamCommon() {
+  const { t } = useAccount();
   const [tab, setTab] = useState('activities'); // 'activities' | 'projects'
 
   return (
@@ -10,21 +12,21 @@ export default function TeamCommon() {
       {/* 페이지 헤더 + 탭 */}
       <div style={{ marginBottom: 16, borderBottom: '2px solid var(--border)', paddingBottom: 0 }}>
         <h2 style={{ margin: 0, marginBottom: 12, fontSize: 20, fontWeight: 700 }}>
-          👥 팀 공통
+          👥 {t('teamCommon.title')}
           <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: 'var(--text3)' }}>
-            — 고객 단위 외 팀 공통 업무 (활동·프로젝트)를 한 곳에 기록 · 보고서에 자동 반영
+            — {t('teamCommon.subtitle')}
           </span>
         </h2>
         <div style={{ display: 'flex', gap: 4 }}>
           {[
-            { key: 'activities', label: '📣 팀 활동', desc: '시점성 (가격고지·정책·전시회 등)' },
-            { key: 'projects',   label: '🚀 공통 프로젝트', desc: '지속성 + KPI (Smoke 확대 등)' },
-          ].map(t => {
-            const active = tab === t.key;
+            { key: 'activities', label: t('teamCommon.tabActivities'), desc: t('teamCommon.tabActivitiesDesc') },
+            { key: 'projects',   label: t('teamCommon.tabProjects'),   desc: t('teamCommon.tabProjectsDesc') },
+          ].map(item => {
+            const active = tab === item.key;
             return (
               <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
+                key={item.key}
+                onClick={() => setTab(item.key)}
                 style={{
                   padding: '10px 18px',
                   background: active ? 'var(--bg)' : 'transparent',
@@ -37,9 +39,9 @@ export default function TeamCommon() {
                   fontFamily: 'inherit',
                   marginBottom: -2,
                 }}
-                title={t.desc}
+                title={item.desc}
               >
-                {t.label}
+                {item.label}
               </button>
             );
           })}

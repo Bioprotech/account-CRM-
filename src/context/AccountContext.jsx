@@ -3,6 +3,7 @@ import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAcco
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
+import { getT, translateEnum, DEFAULT_LANG, LANG_STORAGE_KEY } from '../lib/i18n';
 
 const Ctx = createContext();
 export const useAccount = () => useContext(Ctx);
@@ -15,6 +16,18 @@ export default function AccountProvider({ children }) {
   //   viewAsRep이 설정되어 있으면 currentUser는 그 담당자처럼 동작 (필터링·KPI 등)
   //   isAdmin는 그대로 true 유지 (편집 권한 보존)
   const [viewAsRep, setViewAsRep] = useState(null);
+
+  // v3.33: 언어 (ko/en) — localStorage 영속, 중국 법인 AM 영문화 지원
+  const [lang, setLangRaw] = useState(() => {
+    try { return localStorage.getItem(LANG_STORAGE_KEY) || DEFAULT_LANG; }
+    catch { return DEFAULT_LANG; }
+  });
+  const setLang = useCallback((newLang) => {
+    setLangRaw(newLang);
+    try { localStorage.setItem(LANG_STORAGE_KEY, newLang); } catch {}
+  }, []);
+  const t = useMemo(() => getT(lang), [lang]);
+  const te = useCallback((value) => translateEnum(value, lang), [lang]);
 
   useEffect(() => {
     try {
@@ -1016,6 +1029,8 @@ export default function AccountProvider({ children }) {
     // v3.17 Phase D: 관리자 시점 변경
     viewAsRep, setViewAsRep,
     effectiveCurrentUser, effectiveIsAdmin,
+    // v3.33: i18n (ko/en) — 중국 법인 영문 지원
+    lang, setLang, t, te,
     accounts, filteredAccounts, visibleAccounts,
     activityLogs, openIssues,
     orders, sales, contracts, forecasts, businessPlans, teamTasks, teamActivities, teamProjects, pipelineCustomers, alarms, importAuditLogs,

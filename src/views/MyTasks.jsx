@@ -51,6 +51,8 @@ export default function MyTasks() {
     accounts: accountsAll, activityLogs, openIssues, teamTasks, businessPlans,
     orders: ordersAll, saveTeamTask, removeTeamTask, setEditingAccount, setCurrentTab, showToast,
   } = ctx;
+  const t = ctx.t;
+  const te = ctx.te;
   // v3.32: 거래종료(inactive) 고객 — 내 업무에서 자동 제외
   const accounts = useMemo(() => (accountsAll || []).filter(a => a?.customer_category !== 'inactive'), [accountsAll]);
   const currentUser = ctx.effectiveCurrentUser ?? ctx.currentUser;
@@ -225,7 +227,7 @@ export default function MyTasks() {
     <div style={{ maxWidth: 1200 }}>
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
-          🗒️ 내 업무
+          🗒️ {t('myTasks.title')}
           {targetRep ? (
             <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text3)' }}>
               — {targetRep} {viewAsRep && isAdmin && '(viewAs)'}

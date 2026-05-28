@@ -3,13 +3,13 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 작업 규칙은 `CLAUDE.md`, 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-05-26 (v3.32 배포 완료 — 계약전환율 KPI + 거래종료 분류)
+**최종 갱신**: 2026-05-28 (v3.33 배포 완료 — i18n KO/EN 토글 + AM 운영 메뉴 영문화)
 
 ---
 
 ## 🎯 현재 상태
 
-- **운영 버전(라이브)**: **v3.32** — https://bioprotech-account-crm.web.app (index-Bm8h9lka.js)
+- **운영 버전(라이브)**: **v3.33** — https://bioprotech-account-crm.web.app (index-DW_q49LC.js)
 - **GitHub**: https://github.com/Bioprotech/account-CRM-.git
 - **Firebase 프로젝트**: bioprotech-crm (Pipeline CRM과 공유)
 - 커밋/푸시/배포 상태는 항상 `git status` + `git log`로 직접 확인할 것

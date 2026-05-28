@@ -15,7 +15,7 @@ function fmtKRW(n) {
 }
 
 export default function AccountList() {
-  const { visibleAccounts, filters, setFilters, setEditingAccount, getLogsForAccount, activityLogs, businessPlans, teamMembers } = useAccount();
+  const { visibleAccounts, filters, setFilters, setEditingAccount, getLogsForAccount, activityLogs, businessPlans, teamMembers, t } = useAccount();
   const [page, setPage] = useState(1);
   const [targetSortAsc, setTargetSortAsc] = useState(false); // default: descending
 

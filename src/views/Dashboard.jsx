@@ -39,7 +39,7 @@ function pctColor(p) {
  *   본부장: 전체 / 담당자: 본인 행만
  *   펼침: 미달 고객 리스트 + 인라인 상태 변경 (권한 있을 때)
  */
-function ConversionKpiCard({ accounts, businessPlans, teamMembers, currentUser, isAdmin, setEditingAccount, saveAccount }) {
+function ConversionKpiCard({ accounts, businessPlans, teamMembers, currentUser, isAdmin, setEditingAccount, saveAccount, t }) {
   const [expandedRep, setExpandedRep] = useState(null);
 
   const validReps = useMemo(() => getValidSalesReps(businessPlans, teamMembers), [businessPlans, teamMembers]);
@@ -59,21 +59,23 @@ function ConversionKpiCard({ accounts, businessPlans, teamMembers, currentUser, 
   const handleStatusChange = async (account, newStatus) => {
     const canEdit = isAdmin || (account.sales_rep === currentUser);
     if (!canEdit) {
-      alert(`${account.sales_rep || '미배정'} 담당자 또는 본부장만 변경 가능합니다`);
+      alert(t ? t('dashboard.onlyOwnerEdit') : '담당자 또는 본부장만 변경 가능합니다');
       return;
     }
     await saveAccount({ ...account, contract_status: newStatus });
   };
 
+  const tt = t || ((k) => k);
+
   return (
     <div className="card" style={{ marginBottom: 12, borderLeft: '4px solid var(--accent)', padding: 12, background: 'linear-gradient(135deg, rgba(46,125,50,0.04), rgba(37,99,235,0.04))' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
-        <strong style={{ fontSize: 14 }}>🎯 계약전환율</strong>
-        <span style={{ fontSize: 10, color: 'var(--text3)' }}>금년 영업 핵심 TASK · 전환 = 계약 상태 '활성' / 거래종료 분류 자동 제외</span>
+        <strong style={{ fontSize: 14 }}>{tt('dashboard.conversionTitle')}</strong>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>{tt('dashboard.conversionSubtitle')}</span>
         {isAdmin && (
           <>
             <span style={{ fontSize: 28, fontWeight: 800, color: rateColor, marginLeft: 8 }}>{totalRate}%</span>
-            <span style={{ fontSize: 12, color: 'var(--text2)' }}>전환 {totals.converted} / 미달 {totals.pending} / 담당 {totals.total}</span>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>{tt('dashboard.converted')} {totals.converted} / {tt('dashboard.pending')} {totals.pending} / {tt('dashboard.totalCustomers')} {totals.total}</span>
           </>
         )}
       </div>
@@ -91,14 +93,14 @@ function ConversionKpiCard({ accounts, businessPlans, teamMembers, currentUser, 
                 </div>
                 <span style={{ minWidth: 50, fontSize: 13, fontWeight: 700, color: rc, textAlign: 'right' }}>{r.conversionRate}%</span>
                 <span style={{ fontSize: 11, color: 'var(--text2)' }}>
-                  전환 <strong>{r.converted}</strong> / 미달 <strong style={{ color: 'var(--red)' }}>{r.pending}</strong> / 담당 <strong>{r.total}</strong>
+                  {tt('dashboard.converted')} <strong>{r.converted}</strong> / {tt('dashboard.pending')} <strong style={{ color: 'var(--red)' }}>{r.pending}</strong> / {tt('dashboard.totalCustomers')} <strong>{r.total}</strong>
                 </span>
                 {pendingList.length > 0 && (
                   <button
                     onClick={() => setExpandedRep(expanded ? null : r.rep)}
                     style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
                   >
-                    {expanded ? '▲ 닫기' : `▼ 미달 ${pendingList.length}개 보기`}
+                    {expanded ? `▲ ${tt('dashboard.closePending')}` : `▼ ${tt('dashboard.viewPending', { n: pendingList.length })}`}
                   </button>
                 )}
               </div>
@@ -117,22 +119,22 @@ function ConversionKpiCard({ accounts, businessPlans, teamMembers, currentUser, 
                             style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', minWidth: 180 }}>
                             {it.name}
                           </a>
-                          <span style={{ fontSize: 10, color: 'var(--text3)' }}>현재: {it.status}</span>
+                          <span style={{ fontSize: 10, color: 'var(--text3)' }}>{tt('dashboard.currentStatus')}: {tt(`contractStatus.${({'활성':'active','만료':'expired','만료임박':'expiringSoon','협상중':'negotiating','없음':'none'})[it.status] || 'none'}`)}</span>
                           {canEdit ? (
                             <select
                               value={it.status}
                               onChange={e => handleStatusChange(acc, e.target.value)}
                               style={{ marginLeft: 'auto', fontSize: 10, padding: '1px 4px' }}
-                              title="활성 = 정식계약/연간개런티/정기FCST 중 하나"
+                              title="Active = formal contract / annual guarantee / regular forecast"
                             >
-                              <option value="없음">없음</option>
-                              <option value="협상중">협상중</option>
-                              <option value="만료임박">만료임박</option>
-                              <option value="만료">만료</option>
-                              <option value="활성">활성 (전환)</option>
+                              <option value="없음">{tt('contractStatus.none')}</option>
+                              <option value="협상중">{tt('contractStatus.negotiating')}</option>
+                              <option value="만료임박">{tt('contractStatus.expiringSoon')}</option>
+                              <option value="만료">{tt('contractStatus.expired')}</option>
+                              <option value="활성">{tt('contractStatus.active')} ({tt('dashboard.converted')})</option>
                             </select>
                           ) : (
-                            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{acc?.sales_rep || '미배정'}만 변경 가능</span>
+                            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>{tt('dashboard.onlyOwnerEdit')}</span>
                           )}
                         </div>
                       );
@@ -442,7 +444,7 @@ function YtdProgressBadge({ ytdTarget, ytdActual, shortage, surplus, progressPct
 
 export default function Dashboard() {
   const accountCtx = useAccount();
-  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders: ordersAll, businessPlans, forecasts, contracts, saveAccount, showToast, appSettings, teamMembers } = accountCtx;
+  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders: ordersAll, businessPlans, forecasts, contracts, saveAccount, showToast, appSettings, teamMembers, t } = accountCtx;
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
@@ -953,13 +955,13 @@ export default function Dashboard() {
         <div className="alert-banner" style={{ background: 'rgba(230,81,0,.06)', border: '1px solid rgba(230,81,0,.3)', marginBottom: 12 }}>
           <span>⚠️</span>
           <div style={{ flex: 1 }}>
-            <strong>담당자 미배정 감지:</strong> 사업계획에 담당자가 설정된 고객 중 <strong style={{ color: 'var(--red)' }}>{syncInfo.needSync.length}개사</strong>의 고객카드에 담당자가 반영되지 않았습니다.
+            <strong>{t('dashboard.syncNeeded')}:</strong> <strong style={{ color: 'var(--red)' }}>{syncInfo.needSync.length}</strong> — {t('dashboard.syncDesc')}
             <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
-              동기화하면 각 담당자 로그인 시 본인 고객만 대시보드에 표시됩니다.
+              {t('dashboard.syncHint')}
             </div>
           </div>
           <button className="btn btn-primary" onClick={handleSync} disabled={syncing} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
-            {syncing ? '동기화 중...' : `${syncInfo.needSync.length}개 동기화 실행`}
+            {syncing ? t('dashboard.syncing') : `${syncInfo.needSync.length}${t('dashboard.syncBtn')}`}
           </button>
         </div>
       )}
@@ -967,7 +969,7 @@ export default function Dashboard() {
       {/* 담당자 표시 */}
       {currentUser && !isAdmin && (
         <div style={{ marginBottom: 12, padding: '8px 14px', background: 'rgba(46,125,50,.06)', borderRadius: 8, border: '1px solid rgba(46,125,50,.15)', fontSize: 12, color: 'var(--text2)' }}>
-          👤 <strong>{currentUser}</strong>님의 대시보드 — 담당 고객 기준 데이터
+          👤 <strong>{currentUser}</strong>{t('user.welcome')}
         </div>
       )}
 
@@ -976,9 +978,9 @@ export default function Dashboard() {
         <div style={{ marginBottom: 12, padding: '8px 14px', background: 'rgba(245,158,11,0.1)', borderRadius: 8, border: '2px solid #d97706', fontSize: 12, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 18 }}>👀</span>
           <div style={{ flex: 1 }}>
-            <strong style={{ color: '#d97706' }}>관리자 시점 변경 중</strong>
+            <strong style={{ color: '#d97706' }}>{t('user.viewingAs')}</strong>
             <span style={{ marginLeft: 6 }}>
-              — <strong>{viewAsRep}</strong>님의 시점으로 화면이 표시됩니다 (편집 권한 유지)
+              — <strong>{viewAsRep}</strong>{t('user.viewingAsDesc')}
             </span>
           </div>
         </div>
@@ -988,8 +990,8 @@ export default function Dashboard() {
       {urgentAccounts.length > 0 && (
         <div className="alert-banner danger">
           <span>🔴</span>
-          <strong>긴급 알람:</strong> Score 50% 미만 + 미접촉 30일 초과 고객 {urgentAccounts.length}개사
-          <span style={{ marginLeft: 'auto', fontSize: 11, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setCurrentTab('accounts')}>목록 보기 →</span>
+          <strong>{t('dashboard.urgentAlarm')}:</strong> {t('dashboard.urgentAlarmDesc')} — {urgentAccounts.length}
+          <span style={{ marginLeft: 'auto', fontSize: 11, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setCurrentTab('accounts')}>{t('dashboard.viewList')}</span>
         </div>
       )}
 
@@ -1002,13 +1004,14 @@ export default function Dashboard() {
         isAdmin={isAdmin}
         setEditingAccount={setEditingAccount}
         saveAccount={saveAccount}
+        t={t}
       />
 
 
       {/* v3.21: 담당자 활동 점수 — 월 선택 드롭다운 (월단위 비교 가능) */}
       {((currentUser && !isAdmin) || (isAdmin && viewAsRep) || (isAdmin && !viewAsRep && teamMembers && teamMembers.length > 0)) && (
         <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: 'var(--text2)' }}>📅 활동 점수 기준 월:</span>
+          <span style={{ fontSize: 11, color: 'var(--text2)' }}>{t('dashboard.activityScoreMonth')}:</span>
           <select
             value={scoreYearMonth}
             onChange={(e) => setScoreYearMonth(e.target.value)}
@@ -1019,7 +1022,7 @@ export default function Dashboard() {
             ))}
           </select>
           <span style={{ fontSize: 10, color: 'var(--text3)' }}>
-            ※ 최근 6개월 중 선택 · 월별 활동·실적·CRM 품질 비교 가능
+            {t('dashboard.activityScoreHint')}
           </span>
         </div>
       )}

@@ -51,6 +51,7 @@ const INITIAL_LOG = {
    이슈 종결 처리 모달 (Phase C v3.5)
    ══════════════════════════════════════════════════════ */
 function ResolutionModal({ log, currentUser, onClose, onSave }) {
+  const { te } = useAccount();
   const [resolution, setResolution] = useState('');
   const [method, setMethod] = useState('');
   const [resolutionDate, setResolutionDate] = useState(today());
@@ -139,7 +140,7 @@ function ResolutionModal({ log, currentUser, onClose, onSave }) {
                     cursor: 'pointer',
                   }}
                 >
-                  {m.icon} {m.label}
+                  {m.icon} {te(m.label)}
                 </button>
               );
             })}
@@ -186,7 +187,7 @@ function ResolutionModal({ log, currentUser, onClose, onSave }) {
 }
 
 export default function ActivityLog({ accountId, draft }) {
-  const { getLogsForAccount, saveLog, removeLog, currentUser, isAdmin } = useAccount();
+  const { getLogsForAccount, saveLog, removeLog, currentUser, isAdmin, t, te } = useAccount();
   const logs = getLogsForAccount(accountId);
 
   const [showForm, setShowForm] = useState(false);
@@ -464,13 +465,13 @@ export default function ActivityLog({ accountId, draft }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <select className="filter-select" value={filterType} onChange={e => { setFilterType(e.target.value); setFilterSubType(''); }}>
             <option value="">전체 유형</option>
-            {ISSUE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            {ISSUE_TYPES.map(it => <option key={it} value={it}>{te(it)}</option>)}
           </select>
           {filterType === '수주활동' && (
             <select className="filter-select" value={filterSubType} onChange={e => setFilterSubType(e.target.value)}
               style={{ fontSize: '11px' }}>
               <option value="">전체 세부유형</option>
-              {ORDER_ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              {ORDER_ACTIVITY_TYPES.map(oa => <option key={oa} value={oa}>{te(oa)}</option>)}
             </select>
           )}
           <span style={{ fontSize: '11px', color: 'var(--text3)' }}>{filteredLogs.length}건</span>
@@ -517,15 +518,15 @@ export default function ActivityLog({ accountId, draft }) {
               />
             </div>
             <div className="form-group">
-              <label>이슈 유형</label>
+              <label>{t('act.type')}</label>
               <select value={newLog.issue_type} onChange={e => setNewLog(p => ({ ...p, issue_type: e.target.value, order_sub_type: '', expected_amount: '', related_order_no: '', product_category: '', target_product: '' }))}>
-                {ISSUE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                {ISSUE_TYPES.map(it => <option key={it} value={it}>{te(it)}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label>중요도</label>
+              <label>{t('act.priority')}</label>
               <select value={newLog.priority || DEFAULT_PRIORITY} onChange={e => setNewLog(p => ({ ...p, priority: Number(e.target.value) }))}>
-                {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {p.label}</option>)}
+                {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {te(p.label)}</option>)}
               </select>
             </div>
           </div>
@@ -535,24 +536,24 @@ export default function ActivityLog({ accountId, draft }) {
             <>
               <div className="form-row">
                 <div className="form-group">
-                  <label>세부 유형</label>
+                  <label>{t('act.type')}</label>
                   <select value={newLog.order_sub_type} onChange={e => setNewLog(p => ({ ...p, order_sub_type: e.target.value }))}>
                     <option value="">선택...</option>
-                    {ORDER_ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    {ORDER_ACTIVITY_TYPES.map(oa => <option key={oa} value={oa}>{te(oa)}</option>)}
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>예상 수주금액 (원)</label>
+                  <label>{t('fc.amount')} (KRW)</label>
                   <input type="number" value={newLog.expected_amount} onChange={e => setNewLog(p => ({ ...p, expected_amount: e.target.value }))} placeholder="0" />
                 </div>
               </div>
               <div className="form-row">
                 <div className="form-group">
-                  <label>관련 오더번호</label>
+                  <label>Related Order #</label>
                   <input type="text" value={newLog.related_order_no} onChange={e => setNewLog(p => ({ ...p, related_order_no: e.target.value }))} placeholder="선택사항" />
                 </div>
                 <div className="form-group">
-                  <label>제품군</label>
+                  <label>{t('orderHistory.product')}</label>
                   <input type="text" value={newLog.product_category} onChange={e => setNewLog(p => ({ ...p, product_category: e.target.value }))} placeholder="선택사항" />
                 </div>
               </div>
@@ -563,11 +564,11 @@ export default function ActivityLog({ accountId, draft }) {
           {newLog.issue_type === '크로스셀링' && (
             <div className="form-row">
               <div className="form-group">
-                <label>대상 품목</label>
+                <label>{t('orderHistory.product')}</label>
                 <input type="text" value={newLog.target_product} onChange={e => setNewLog(p => ({ ...p, target_product: e.target.value }))} placeholder="크로스셀링 대상 품목" />
               </div>
               <div className="form-group">
-                <label>예상 금액 (원)</label>
+                <label>{t('gap.opp.amount')} (KRW)</label>
                 <input type="number" value={newLog.expected_amount} onChange={e => setNewLog(p => ({ ...p, expected_amount: e.target.value }))} placeholder="0" />
               </div>
             </div>
@@ -576,7 +577,7 @@ export default function ActivityLog({ accountId, draft }) {
           {/* 내용 */}
           <div className="form-row full">
             <div className="form-group">
-              <label>내용 *</label>
+              <label>{t('act.content')} *</label>
               <textarea value={newLog.content} onChange={e => setNewLog(p => ({ ...p, content: e.target.value }))} placeholder="이슈 내용을 입력하세요..." />
             </div>
           </div>
@@ -584,7 +585,7 @@ export default function ActivityLog({ accountId, draft }) {
           {/* v3.5: 하단 행 — 다음 액션 / 다음 액션 기한 (짝으로 묶음) */}
           <div className="form-row">
             <div className="form-group" style={{ flex: 2 }}>
-              <label>다음 액션</label>
+              <label>{t('act.nextAction')}</label>
               <input type="text" value={newLog.next_action} onChange={e => setNewLog(p => ({ ...p, next_action: e.target.value }))} placeholder="다음 단계 액션" />
             </div>
             <div className="form-group" style={{ flex: 1 }}>
@@ -621,7 +622,7 @@ export default function ActivityLog({ accountId, draft }) {
             </summary>
             <div className="form-row" style={{ marginTop: 8 }}>
               <div className="form-group" style={{ flex: 1 }}>
-                <label>예상 회복일</label>
+                <label>{t('act.recoveryDate')}</label>
                 <input
                   type="date"
                   value={newLog.recovery_plan_date}
@@ -629,7 +630,7 @@ export default function ActivityLog({ accountId, draft }) {
                 />
               </div>
               <div className="form-group" style={{ flex: 1 }}>
-                <label>예상 회복 금액 (원)</label>
+                <label>{t('act.recoveryAmount')} (KRW)</label>
                 <input
                   type="number"
                   value={newLog.recovery_plan_amount}
@@ -640,7 +641,7 @@ export default function ActivityLog({ accountId, draft }) {
             </div>
             <div className="form-row full">
               <div className="form-group">
-                <label>회복 계획 메모</label>
+                <label>{t('act.recoveryPlan')}</label>
                 <input
                   type="text"
                   value={newLog.recovery_plan_note}
@@ -687,19 +688,19 @@ export default function ActivityLog({ accountId, draft }) {
                   {/* 상단 */}
                   <div className="form-row">
                     <div className="form-group">
-                      <label>활동 발생일</label>
+                      <label>{t('act.date')}</label>
                       <input type="date" value={editForm.date} onChange={e => setEditForm(p => ({ ...p, date: e.target.value }))} />
                     </div>
                     <div className="form-group">
-                      <label>이슈 유형</label>
+                      <label>{t('act.type')}</label>
                       <select value={editForm.issue_type} onChange={e => setEditForm(p => ({ ...p, issue_type: e.target.value }))}>
-                        {ISSUE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        {ISSUE_TYPES.map(it => <option key={it} value={it}>{te(it)}</option>)}
                       </select>
                     </div>
                     <div className="form-group">
-                      <label>중요도</label>
+                      <label>{t('act.priority')}</label>
                       <select value={editForm.priority} onChange={e => setEditForm(p => ({ ...p, priority: Number(e.target.value) }))}>
-                        {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {p.label}</option>)}
+                        {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {te(p.label)}</option>)}
                       </select>
                     </div>
                   </div>
@@ -708,24 +709,24 @@ export default function ActivityLog({ accountId, draft }) {
                     <>
                       <div className="form-row">
                         <div className="form-group">
-                          <label>세부 유형</label>
+                          <label>{t('act.type')}</label>
                           <select value={editForm.order_sub_type} onChange={e => setEditForm(p => ({ ...p, order_sub_type: e.target.value }))}>
                             <option value="">선택...</option>
-                            {ORDER_ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            {ORDER_ACTIVITY_TYPES.map(oa => <option key={oa} value={oa}>{te(oa)}</option>)}
                           </select>
                         </div>
                         <div className="form-group">
-                          <label>예상 수주금액</label>
+                          <label>{t('fc.amount')}</label>
                           <input type="number" value={editForm.expected_amount} onChange={e => setEditForm(p => ({ ...p, expected_amount: e.target.value }))} />
                         </div>
                       </div>
                       <div className="form-row">
                         <div className="form-group">
-                          <label>관련 오더번호</label>
+                          <label>Related Order #</label>
                           <input type="text" value={editForm.related_order_no} onChange={e => setEditForm(p => ({ ...p, related_order_no: e.target.value }))} />
                         </div>
                         <div className="form-group">
-                          <label>제품군</label>
+                          <label>{t('orderHistory.product')}</label>
                           <input type="text" value={editForm.product_category} onChange={e => setEditForm(p => ({ ...p, product_category: e.target.value }))} />
                         </div>
                       </div>
@@ -735,11 +736,11 @@ export default function ActivityLog({ accountId, draft }) {
                   {editForm.issue_type === '크로스셀링' && (
                     <div className="form-row">
                       <div className="form-group">
-                        <label>대상 품목</label>
+                        <label>{t('orderHistory.product')}</label>
                         <input type="text" value={editForm.target_product} onChange={e => setEditForm(p => ({ ...p, target_product: e.target.value }))} />
                       </div>
                       <div className="form-group">
-                        <label>예상 금액</label>
+                        <label>{t('gap.opp.amount')}</label>
                         <input type="number" value={editForm.expected_amount} onChange={e => setEditForm(p => ({ ...p, expected_amount: e.target.value }))} />
                       </div>
                     </div>
@@ -747,13 +748,13 @@ export default function ActivityLog({ accountId, draft }) {
 
                   <div className="form-row full">
                     <div className="form-group">
-                      <label>내용 *</label>
+                      <label>{t('act.content')} *</label>
                       <textarea value={editForm.content} onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
                     </div>
                   </div>
                   <div className="form-row">
                     <div className="form-group" style={{ flex: 2 }}>
-                      <label>다음 액션</label>
+                      <label>{t('act.nextAction')}</label>
                       <input type="text" value={editForm.next_action} onChange={e => setEditForm(p => ({ ...p, next_action: e.target.value }))} />
                     </div>
                     <div className="form-group" style={{ flex: 1 }}>
@@ -775,7 +776,7 @@ export default function ActivityLog({ accountId, draft }) {
               <div key={log.id} className={`timeline-item ${statusClass}`}>
                 <div className="timeline-header">
                   <span className="timeline-date">{log.date}</span>
-                  <span className={`issue-badge ${log.issue_type?.replace('·', '')}`}>{log.issue_type}</span>
+                  <span className={`issue-badge ${log.issue_type?.replace('·', '')}`}>{te(log.issue_type)}</span>
                   {(log.priority ?? DEFAULT_PRIORITY) > 1 && (
                     <span style={{
                       fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 700,
@@ -787,9 +788,9 @@ export default function ActivityLog({ accountId, draft }) {
                       background: 'var(--primary-light, #e8edff)',
                       color: 'var(--primary, #4a6cf7)',
                       fontSize: '10px',
-                    }}>{log.order_sub_type}</span>
+                    }}>{te(log.order_sub_type)}</span>
                   )}
-                  <span className={`status-badge ${statusClass}`}>{log.status}</span>
+                  <span className={`status-badge ${statusClass}`}>{te(log.status)}</span>
                   <span style={{ fontSize: '10px', color: 'var(--text3)' }}>{log.sales_rep}</span>
                   {editHistory.length > 0 && (
                     <button
@@ -922,7 +923,7 @@ export default function ActivityLog({ accountId, draft }) {
                     title="중요도 변경"
                     disabled={!editable}
                   >
-                    {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {p.label}</option>)}
+                    {ISSUE_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {te(p.label)}</option>)}
                   </select>
                   {/* v3.5: 편집 버튼 (권한 있을 때만) */}
                   {editable && (

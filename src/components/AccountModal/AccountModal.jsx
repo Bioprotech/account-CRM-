@@ -12,16 +12,17 @@ import TypeGuide from './TypeGuide';
 import GapAnalysis from './GapAnalysis';
 import CustomerInsight from './CustomerInsight';
 
+// v3.33: label은 i18n 키 — 렌더 시점에 t() 적용
 const TABS = [
-  { key: 'basic', label: '기본정보' },
-  { key: 'insight', label: 'Insight' },
-  { key: 'activity', label: 'Activity' },
-  { key: 'orders', label: '수주이력' },
-  { key: 'gap', label: 'GAP분석' },
-  { key: 'contract', label: '가격·계약' },
-  { key: 'forecast', label: 'FCST' },
-  { key: 'crossselling', label: '크로스셀링' },
-  { key: 'typeguide', label: '유형가이드' },
+  { key: 'basic',        labelKey: 'modal.tab.basic' },
+  { key: 'insight',      labelKey: 'modal.tab.insight' },
+  { key: 'activity',     labelKey: 'modal.tab.activity' },
+  { key: 'orders',       labelKey: 'modal.tab.orders' },
+  { key: 'gap',          labelKey: 'modal.tab.gap' },
+  { key: 'contract',     labelKey: 'modal.tab.contract' },
+  { key: 'forecast',     labelKey: 'modal.tab.forecast' },
+  { key: 'crossselling', labelKey: 'modal.tab.crossselling' },
+  { key: 'typeguide',    labelKey: 'modal.tab.typeguide' },
 ];
 
 function fmtAmount(n) {
@@ -34,7 +35,7 @@ function fmtAmount(n) {
 
 export default function AccountModal() {
   const { editingAccount, setEditingAccount, saveAccount, removeAccount, isAdmin, currentUser,
-    getLogsForAccount, getOrdersForAccount, getContractsForAccount, getForecastsForAccount, getPlansForAccount } = useAccount();
+    getLogsForAccount, getOrdersForAccount, getContractsForAccount, getForecastsForAccount, getPlansForAccount, t } = useAccount();
   const [draft, setDraft] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
   const [showDelete, setShowDelete] = useState(false);
@@ -299,7 +300,7 @@ export default function AccountModal() {
               className={`modal-tab ${activeTab === tab.key ? 'active' : ''}`}
               onClick={() => setActiveTab(tab.key)}
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           ))}
         </div>

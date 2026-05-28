@@ -4,7 +4,7 @@ import { PRODUCTS } from '../../lib/constants';
 import { today, genId, fmtDate } from '../../lib/utils';
 
 export default function PriceContract({ accountId }) {
-  const { getContractsForAccount, saveContractItem, removeContract } = useAccount();
+  const { getContractsForAccount, saveContractItem, removeContract, t } = useAccount();
   const allContracts = getContractsForAccount(accountId);
 
   const [showForm, setShowForm] = useState(false);
@@ -159,9 +159,9 @@ export default function PriceContract({ accountId }) {
     <div>
       {/* 액션 바 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontSize: 12, fontWeight: 600 }}>가격·계약 조건 ({allContracts.length}건)</span>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{t('pc.sectionTitle')} ({allContracts.length} {t('pc.itemsCount')})</span>
         <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(!showForm); }}>
-          {showForm ? '취소' : '+ 조건 추가'}
+          {showForm ? t('common.cancel') : t('pc.addCondition')}
         </button>
       </div>
 
@@ -177,21 +177,21 @@ export default function PriceContract({ accountId }) {
               </select>
             </div>
             <div className="form-group">
-              <label>계약 시작일</label>
+              <label>{t('pc.contractStart')}</label>
               <input type="date" value={form.contract_start} onChange={e => setForm(p => ({ ...p, contract_start: e.target.value }))} />
             </div>
             <div className="form-group">
-              <label>계약 만료일</label>
+              <label>{t('pc.contractExpiry')}</label>
               <input type="date" value={form.contract_expiry} onChange={e => setForm(p => ({ ...p, contract_expiry: e.target.value }))} />
             </div>
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label>단가</label>
+              <label>{t('pc.unitPrice')}</label>
               <input type="number" step="any" value={form.unit_price} onChange={e => setForm(p => ({ ...p, unit_price: e.target.value }))} placeholder="단가" />
             </div>
             <div className="form-group">
-              <label>통화</label>
+              <label>{t('pc.currency')}</label>
               <select value={form.currency} onChange={e => setForm(p => ({ ...p, currency: e.target.value }))}>
                 <option value="USD">USD</option>
                 <option value="EUR">EUR</option>
@@ -300,7 +300,7 @@ export default function PriceContract({ accountId }) {
       {allContracts.length === 0 ? (
         <div className="empty-state">
           <div className="icon">📋</div>
-          <p>가격·계약 조건이 없습니다.<br />'+ 조건 추가'로 등록하세요.</p>
+          <p>{t("pc.empty")}</p>
         </div>
       ) : (
         <div>
@@ -326,30 +326,30 @@ export default function PriceContract({ accountId }) {
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 4 }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => startEdit(c)}>수정</button>
-                    <button className="btn btn-danger btn-sm" onClick={() => removeContract(c.id)}>삭제</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => startEdit(c)}>{t("common.edit")}</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => removeContract(c.id)}>{t("common.delete")}</button>
                   </div>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, fontSize: 12 }}>
                   <div>
-                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>단가</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>{t("pc.colUnitPrice")}</div>
                     <div style={{ fontWeight: 600 }}>{fmtAmt(c.currency, c.unit_price)}</div>
                   </div>
                   <div>
-                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>계약수량</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>{t("pc.colContractQty")}</div>
                     <div style={{ fontWeight: 600 }}>{c.contract_qty ? c.contract_qty.toLocaleString() : '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>MOQ</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>{t("pc.colMOQ")}</div>
                     <div>{c.moq ? c.moq.toLocaleString() : '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>결제조건</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>{t("pc.colNetTerms")}</div>
                     <div>{c.net_terms || '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>계약 만료</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 10 }}>{t("pc.colContractExpiry")}</div>
                     <div>{c.contract_expiry || '-'}</div>
                   </div>
                 </div>

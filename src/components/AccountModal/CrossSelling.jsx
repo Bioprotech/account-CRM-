@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAccount } from '../../context/AccountContext';
 import { PRODUCTS } from '../../lib/constants';
 import { today, genId } from '../../lib/utils';
 
@@ -24,6 +25,7 @@ const emptyItem = () => ({
 });
 
 export default function CrossSelling({ draft, update }) {
+  const { t, te } = useAccount();
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyItem());
@@ -92,19 +94,19 @@ export default function CrossSelling({ draft, update }) {
         gap: 10, marginBottom: 16,
       }}>
         <div style={summaryCard}>
-          <div style={{ fontSize: 11, color: 'var(--text3)' }}>전체 기회</div>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{activeItems.length}<span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 2 }}>건</span></div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>{t('cs.totalOpps')}</div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{activeItems.length}<span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 2 }}>{t('cs.itemUnit')}</span></div>
         </div>
         <div style={summaryCard}>
-          <div style={{ fontSize: 11, color: 'var(--text3)' }}>예상 수주금액</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>{t('cs.expAmount')}</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--primary)' }}>{fmtAmount(totalPotential)}</div>
         </div>
         <div style={summaryCard}>
-          <div style={{ fontSize: 11, color: 'var(--text3)' }}>실제 수주금액</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>{t('cs.actAmount')}</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#22c55e' }}>{fmtAmount(totalActual)}</div>
         </div>
         <div style={summaryCard}>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>파이프라인</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{t('cs.pipeline')}</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {Object.entries(statusCounts).map(([s, c]) => (
               <span key={s} style={{
@@ -112,7 +114,7 @@ export default function CrossSelling({ draft, update }) {
                 background: statusColor(s) + '18', color: statusColor(s),
                 fontWeight: 600,
               }}>
-                {s} {c}
+                {te(s)} {c}
               </span>
             ))}
           </div>
@@ -122,11 +124,11 @@ export default function CrossSelling({ draft, update }) {
       {/* Current Products */}
       <div style={{ marginBottom: 16 }}>
         <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>
-          현재 취급 품목
+          {t('cs.currentProducts')}
         </label>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {currentProducts.length === 0 && (
-            <span style={{ fontSize: 11, color: 'var(--text3)' }}>기본정보 탭에서 제품군을 설정해주세요</span>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>{t('cs.setProductsHint')}</span>
           )}
           {currentProducts.map(p => (
             <span key={p} style={{
@@ -140,9 +142,9 @@ export default function CrossSelling({ draft, update }) {
       {/* Add Button */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>
-          크로스셀링 기회 ({items.length}건)
+          {t('cs.opportunities')} ({items.length} {t('cs.itemUnit')})
         </label>
-        <button className="btn btn-ghost btn-sm" onClick={handleAdd}>+ 크로스셀링 추가</button>
+        <button className="btn btn-ghost btn-sm" onClick={handleAdd}>{t('cs.add')}</button>
       </div>
 
       {/* Add/Edit Form */}
@@ -153,44 +155,43 @@ export default function CrossSelling({ draft, update }) {
         }}>
           <div className="form-row">
             <div className="form-group">
-              <label>대상 품목 *</label>
+              <label>{t('cs.targetProduct')} *</label>
               <select value={form.target_product} onChange={e => setForm(f => ({ ...f, target_product: e.target.value }))}>
-                <option value="">선택</option>
+                <option value="">{t('common.select')}</option>
                 {availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
-                {/* If editing an item whose product is now in currentProducts, still show it */}
                 {editingId && form.target_product && !availableProducts.includes(form.target_product) && (
-                  <option value={form.target_product}>{form.target_product} (현재 취급)</option>
+                  <option value={form.target_product}>{form.target_product} ({t('cs.currentlyHandled')})</option>
                 )}
               </select>
             </div>
             <div className="form-group">
-              <label>상태</label>
+              <label>{t('cs.status')}</label>
               <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-                {CS_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                {CS_STATUSES.map(s => <option key={s} value={s}>{te(s)}</option>)}
               </select>
             </div>
           </div>
 
           <div className="form-row">
             <div className="form-group">
-              <label>예상 수주금액 (KRW)</label>
+              <label>{t('cs.expAmountKRW')}</label>
               <input
                 type="number"
                 value={form.potential_amount}
                 onChange={e => setForm(f => ({ ...f, potential_amount: e.target.value }))}
-                placeholder="예: 50000000"
+                placeholder={t('cs.placeholderAmt')}
               />
               {form.potential_amount && (
                 <span style={{ fontSize: 10, color: 'var(--text3)' }}>{fmtAmount(form.potential_amount)}</span>
               )}
             </div>
             <div className="form-group">
-              <label>실제 수주금액 (KRW)</label>
+              <label>{t('cs.actAmountKRW')}</label>
               <input
                 type="number"
                 value={form.actual_amount}
                 onChange={e => setForm(f => ({ ...f, actual_amount: e.target.value }))}
-                placeholder={form.status === '수주완료' ? '실제 금액 입력' : '수주완료 시 입력'}
+                placeholder={form.status === '수주완료' ? t('cs.actualAmountEnter') : t('cs.actualAmountWhenWon')}
                 disabled={form.status !== '수주완료'}
               />
               {form.actual_amount && form.status === '수주완료' && (
@@ -201,27 +202,27 @@ export default function CrossSelling({ draft, update }) {
 
           <div className="form-row">
             <div className="form-group">
-              <label>시작일</label>
+              <label>{t('cs.startDate')}</label>
               <input type="date" value={form.started_at} onChange={e => setForm(f => ({ ...f, started_at: e.target.value }))} />
             </div>
             <div className="form-group" />
           </div>
 
           <div className="form-group" style={{ marginBottom: 10 }}>
-            <label>비고</label>
+            <label>{t('cs.notes')}</label>
             <textarea
               rows={2}
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              placeholder="메모, 진행 상황 등"
+              placeholder={t('cs.notesPlaceholder')}
               style={{ width: '100%', resize: 'vertical' }}
             />
           </div>
 
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setShowForm(false); setEditingId(null); }}>취소</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setShowForm(false); setEditingId(null); }}>{t('common.cancel')}</button>
             <button className="btn btn-primary btn-sm" onClick={handleSave}>
-              {editingId ? '수정' : '추가'}
+              {editingId ? t('common.modify') : t('common.add')}
             </button>
           </div>
         </div>
@@ -230,7 +231,7 @@ export default function CrossSelling({ draft, update }) {
       {/* List */}
       {items.length === 0 && !showForm && (
         <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text3)', fontSize: 13 }}>
-          등록된 크로스셀링 기회가 없습니다.
+          {t('cs.empty')}
         </div>
       )}
 
@@ -247,21 +248,21 @@ export default function CrossSelling({ draft, update }) {
                 fontSize: 10, padding: '1px 8px', borderRadius: 8,
                 background: statusColor(item.status) + '18', color: statusColor(item.status),
                 fontWeight: 600,
-              }}>{item.status}</span>
+              }}>{te(item.status)}</span>
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(item)} style={{ fontSize: 11, padding: '2px 8px' }}>수정</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(item.id)} style={{ fontSize: 11, padding: '2px 8px', color: '#ef4444' }}>삭제</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(item)} style={{ fontSize: 11, padding: '2px 8px' }}>{t('common.edit')}</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(item.id)} style={{ fontSize: 11, padding: '2px 8px', color: '#ef4444' }}>{t('common.delete')}</button>
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text2)', flexWrap: 'wrap' }}>
-            <span>예상: <b>{fmtAmount(item.potential_amount)}</b></span>
+            <span>{t('cs.expAmount')}: <b>{fmtAmount(item.potential_amount)}</b></span>
             {item.status === '수주완료' && item.actual_amount && (
-              <span>실제: <b style={{ color: '#22c55e' }}>{fmtAmount(item.actual_amount)}</b></span>
+              <span>{t('cs.actAmount')}: <b style={{ color: '#22c55e' }}>{fmtAmount(item.actual_amount)}</b></span>
             )}
-            <span>시작: {item.started_at || '-'}</span>
-            <span>업데이트: {item.updated_at || '-'}</span>
+            <span>{t('cs.startDate')}: {item.started_at || '-'}</span>
+            <span>{t('common.changeLogin') === '로그아웃' ? '업데이트' : 'Updated'}: {item.updated_at || '-'}</span>
           </div>
 
           {item.notes && (

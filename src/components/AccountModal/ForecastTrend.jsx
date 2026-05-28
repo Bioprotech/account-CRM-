@@ -16,7 +16,7 @@ function fmtKRW(n) {
 }
 
 export default function ForecastTrend({ accountId }) {
-  const { getForecastsForAccount, saveForecast, removeForecast, getOrdersForAccount } = useAccount();
+  const { getForecastsForAccount, saveForecast, removeForecast, getOrdersForAccount, t } = useAccount();
   const allForecasts = getForecastsForAccount(accountId);
   const allOrders = getOrdersForAccount(accountId);
 
@@ -388,7 +388,7 @@ export default function ForecastTrend({ accountId }) {
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label>통화</label>
+              <label>{t('pc.currency')}</label>
               <select value={newFcst.currency} onChange={e => setNewFcst(p => ({ ...p, currency: e.target.value }))}>
                 <option value="KRW">KRW (원)</option>
                 <option value="USD">USD</option>
