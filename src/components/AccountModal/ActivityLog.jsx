@@ -45,6 +45,8 @@ const INITIAL_LOG = {
   recovery_plan_date: '',
   recovery_plan_amount: '',
   recovery_plan_note: '',
+  // v3.34: 활동 outcome (활동→수주 전환율 측정용 — 명세 P2)
+  outcome: '',  // NO_CHANGE / NEW_LEAD / QUALIFIED / PROPOSAL_SENT / WON / LOST
 };
 
 /* ══════════════════════════════════════════════════════
@@ -277,6 +279,8 @@ export default function ActivityLog({ accountId, draft }) {
       logEntry.recovery_plan_amount = Number(newLog.recovery_plan_amount) || 0;
       logEntry.recovery_plan_note = newLog.recovery_plan_note?.trim() || '';
     }
+    // v3.34: 활동 outcome (보고서 ROI 매트릭스용)
+    if (newLog.outcome) logEntry.outcome = newLog.outcome;
 
     saveLog(logEntry);
     setNewLog({ ...INITIAL_LOG, date: today() });
@@ -612,6 +616,24 @@ export default function ActivityLog({ accountId, draft }) {
                   (체크 시 주간/월간 회의 안건에 별도 표시됨)
                 </span>
               </label>
+            </div>
+          </div>
+
+          {/* v3.34: 활동 outcome (활동→수주 전환율 측정 — 보고서 ROI 매트릭스 자동 반영) */}
+          <div className="form-row full" style={{ marginTop: 6 }}>
+            <div className="form-group">
+              <label style={{ fontSize: 11, fontWeight: 600 }}>
+                🎯 활동 결과 (outcome) <span style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 400 }}>— 보고서 ROI 매트릭스에 반영</span>
+              </label>
+              <select value={newLog.outcome || ''} onChange={e => setNewLog(p => ({ ...p, outcome: e.target.value }))} style={{ fontSize: 12, padding: 5 }}>
+                <option value="">선택 (선택)</option>
+                <option value="NO_CHANGE">변화 없음 (단순 컨택)</option>
+                <option value="NEW_LEAD">신규 LEAD 발굴</option>
+                <option value="QUALIFIED">QUALIFIED (구매 의사 확인)</option>
+                <option value="PROPOSAL_SENT">제안서/견적 전달</option>
+                <option value="WON">수주 성공 ✅</option>
+                <option value="LOST">실패 / 종결 ❌</option>
+              </select>
             </div>
           </div>
 

@@ -237,6 +237,51 @@ export default function GapAnalysis({ draft, update }) {
             style={{ minHeight: 60 }}
           />
         </div>
+
+        {/* v3.34: Loss Reason 보강 — 회복 가능성 + 경쟁사명 (명세 P0) */}
+        {(gap.causes || []).length > 0 && (
+          <div style={{ marginTop: 12, padding: 10, background: 'rgba(46,125,50,0.04)', border: '1px solid rgba(46,125,50,0.18)', borderRadius: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>
+              📊 Loss Reason 보강 정보 (보고서 분석용)
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label style={{ fontSize: 11, fontWeight: 600 }}>회복 가능성 <span style={{ color: 'var(--red)' }}>*</span></label>
+                <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                  {[
+                    { key: 'HIGH',   label: '🟢 HIGH', color: 'var(--green, #16a34a)' },
+                    { key: 'MEDIUM', label: '🟡 MEDIUM', color: '#d97706' },
+                    { key: 'LOW',    label: '🔴 LOW', color: 'var(--red)' },
+                  ].map(r => {
+                    const checked = gap.recoverability === r.key;
+                    return (
+                      <label key={r.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', border: `1.5px solid ${checked ? r.color : 'var(--border)'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: checked ? 700 : 500, color: checked ? r.color : 'var(--text2)', background: checked ? 'var(--bg)' : 'transparent' }}>
+                        <input type="radio" name={`recov_${draft.id || 'new'}`} checked={checked} onChange={() => updateGap({ recoverability: r.key })} />
+                        {r.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* 경쟁사명 — '경쟁 이탈' cause 선택 시 표시 */}
+              {(gap.causes || []).includes('competition') && (
+                <div className="form-group">
+                  <label style={{ fontSize: 11, fontWeight: 600 }}>경쟁사명 <span style={{ color: 'var(--red)' }}>*</span></label>
+                  <input
+                    type="text"
+                    value={gap.competitor_name || ''}
+                    onChange={e => updateGap({ competitor_name: e.target.value })}
+                    placeholder="예: INTCO / J&J / Stryker / 미상"
+                    style={{ width: '100%', padding: 6, fontSize: 12, border: `1px solid ${(gap.causes || []).includes('competition') && !(gap.competitor_name || '').trim() ? 'var(--red)' : 'var(--border)'}`, borderRadius: 4 }}
+                  />
+                </div>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+              ※ 회복 가능성 + (경쟁이탈 시) 경쟁사명은 월간 보고서 "미달 원인 분석" 슬라이드에 자동 반영됩니다
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Section 3: 고객 예산/구매 사이클 ── */}

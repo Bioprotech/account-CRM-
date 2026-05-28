@@ -7,6 +7,7 @@ import { aggregateByRep, classifyForRepView, loadPriorYearCustomers, isDomestic 
 import { getValidSalesReps, getSortedValidReps } from '../lib/salesReps';
 import { computeScore } from '../lib/scoring';
 import { filterValidOrders, filterValidSales } from '../lib/aggregation';
+import { analyzeLossReasons, analyzeActivityOutcomes, analyzeForecastAccuracy } from '../lib/reportInsights';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -3618,9 +3619,15 @@ export default function Report() {
       return items.sort((a, b) => b.weighted - a.weighted);
     })();
 
+    // v3.34: 보고서 인사이트 (Loss Reason / Activity ROI / FCST 정확도)
+    const lossReasonData = analyzeLossReasons(accounts, businessPlans, ordersAll, selYear);
+    const activityOutcomeData = analyzeActivityOutcomes(activityLogs, selMonthStr);
+    const fcstAccuracyData = analyzeForecastAccuracy(forecasts, ordersAll, accounts, 6);
+
     return {
       selYear, selMonth, selMonthStr, selMonthKey,
       monthLabel: `${selYear}년 ${selMonth}월`,
+      lossReasonData, activityOutcomeData, fcstAccuracyData,
       // v3.17.5: 다음달 계획 이행 추적
       planExecution: {
         byTeam: planExecutionByTeam,
@@ -7361,6 +7368,134 @@ export default function Report() {
 
           {/* v3.21: 별도 4-3b 카드 제거 — 위 4-3 카드 안 sub-section으로 통합 */}
 
+          {/* v3.34: ■ 4-4 미달 원인 분석 (Loss Reason — 명세 P0) */}
+          {(() => {
+            const lr = monthlyReportData.lossReasonData;
+            if (!lr || lr.totalUnder === 0) return null;
+            const catMeta = {
+              demand_down: { icon: '📉', label: '수요 감소' }, competition: { icon: '⚔️', label: '경쟁 이탈' },
+              price_barrier: { icon: '💰', label: '가격 장벽' }, channel_issue: { icon: '🔗', label: '채널 문제' },
+              regulation: { icon: '📋', label: '인증/규제' }, relationship: { icon: '🤝', label: '관계 약화' },
+              timing: { icon: '⏰', label: '시점 차이' }, internal: { icon: '🏭', label: '내부 이슈' },
+            };
+            const lossColor = lr.inputRate >= 80 ? 'var(--green, #16a34a)' : lr.inputRate >= 50 ? '#d97706' : 'var(--red)';
+            return (
+              <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--red)' }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span>■ 4-4. 미달 원인 분석 (Loss Reason)</span>
+                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>— 80% 미달 고객의 원인·회복가능성·경쟁사 (명세 P0)</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: lossColor }}>
+                    입력률 {lr.inputRate}% ({lr.filled}/{lr.totalUnder}사)
+                  </span>
+                </div>
+                {/* 카테고리별 + 회복가능성 분포 */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>원인 카테고리별 미달 고객 수</div>
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      {Object.entries(lr.byCategory).sort((a, b) => b[1] - a[1]).map(([cat, cnt]) => (
+                        <div key={cat} style={{ fontSize: 11, display: 'flex', justifyContent: 'space-between', padding: '2px 6px', background: 'var(--bg2)', borderRadius: 3 }}>
+                          <span>{catMeta[cat]?.icon || ''} {catMeta[cat]?.label || cat}</span>
+                          <strong>{cnt}사</strong>
+                        </div>
+                      ))}
+                      {Object.keys(lr.byCategory).length === 0 && <div style={{ fontSize: 10, color: 'var(--text3)' }}>입력된 원인 없음</div>}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>회복 가능성</div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <span style={{ fontSize: 11, padding: '4px 10px', background: 'rgba(22,163,74,0.1)', color: 'var(--green, #16a34a)', borderRadius: 4, fontWeight: 600 }}>🟢 HIGH {lr.byRecov.HIGH || 0}</span>
+                      <span style={{ fontSize: 11, padding: '4px 10px', background: 'rgba(217,119,6,0.1)', color: '#d97706', borderRadius: 4, fontWeight: 600 }}>🟡 MEDIUM {lr.byRecov.MEDIUM || 0}</span>
+                      <span style={{ fontSize: 11, padding: '4px 10px', background: 'rgba(220,38,38,0.1)', color: 'var(--red)', borderRadius: 4, fontWeight: 600 }}>🔴 LOW {lr.byRecov.LOW || 0}</span>
+                    </div>
+                    {Object.keys(lr.byCompetitor).length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>경쟁 이탈 — 경쟁사별</div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {Object.entries(lr.byCompetitor).sort((a, b) => b[1] - a[1]).map(([comp, cnt]) => (
+                            <span key={comp} style={{ fontSize: 11, padding: '2px 8px', background: 'rgba(124,58,237,0.1)', color: '#6d28d9', borderRadius: 4, fontWeight: 600 }}>{comp} {cnt}건</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* 미달 고객 상세 표 */}
+                <div className="table-wrap" style={{ maxHeight: 300 }}>
+                  <table className="data-table" style={{ fontSize: 11 }}>
+                    <thead>
+                      <tr>
+                        <th>고객사</th><th>담당</th><th style={{ textAlign: 'right' }}>달성률</th><th style={{ textAlign: 'right' }}>Gap</th>
+                        <th>원인</th><th>회복</th><th>경쟁사</th><th>입력</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lr.underTargetAccounts.map(x => (
+                        <tr key={x.account.id}>
+                          <td style={{ fontWeight: 600 }}>
+                            <a href="#" onClick={(e) => { e.preventDefault(); setEditingAccount(x.account); }} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{x.account.company_name}</a>
+                          </td>
+                          <td>{x.account.sales_rep || '-'}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--red)', fontWeight: 600 }}>{Math.round(x.achieveRate * 100)}%</td>
+                          <td style={{ textAlign: 'right', color: 'var(--red)' }}>{fmtKRW(x.ytdGap)}</td>
+                          <td style={{ fontSize: 10 }}>{x.causes.map(c => catMeta[c]?.label || c).join(', ') || '-'}</td>
+                          <td style={{ fontSize: 10, fontWeight: 600, color: x.recoverability === 'HIGH' ? 'var(--green, #16a34a)' : x.recoverability === 'MEDIUM' ? '#d97706' : x.recoverability === 'LOW' ? 'var(--red)' : 'var(--text3)' }}>{x.recoverability || '-'}</td>
+                          <td style={{ fontSize: 10 }}>{x.competitor_name || '-'}</td>
+                          <td style={{ textAlign: 'center' }}>{x.fullyFilled ? '✅' : '⚠'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>
+                  ※ 미달 원인·회복가능성은 고객카드 → GAP 분석 탭에서 입력. 입력률 100% 목표 (명세서 P0). ⚠ = 미입력 항목 있음
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* v3.34: ■ 4-5 활동 → 수주 ROI (명세 P2) */}
+          {(() => {
+            const ao = monthlyReportData.activityOutcomeData;
+            if (!ao || ao.totalTagged === 0) return null;
+            return (
+              <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--accent)' }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span>■ 4-5. 활동 → 수주 ROI</span>
+                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>— 이번 달 outcome 태깅 활동 {ao.totalTagged}건 (명세 P2)</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>활동 유형별 ROI (WON 비율)</div>
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      {Object.entries(ao.roiByType).sort((a, b) => b[1].roi - a[1].roi).map(([type, r]) => (
+                        <div key={type} style={{ fontSize: 11, display: 'flex', justifyContent: 'space-between', padding: '2px 6px', background: 'var(--bg2)', borderRadius: 3 }}>
+                          <span>{type}</span>
+                          <span>WON {r.won}/{r.total} = <strong style={{ color: r.roi >= 30 ? 'var(--green, #16a34a)' : r.roi >= 10 ? '#d97706' : 'var(--red)' }}>{r.roi}%</strong></span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>담당자별 활동 ROI</div>
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      {Object.entries(ao.byRep).sort((a, b) => b[1].roi - a[1].roi).map(([rep, r]) => (
+                        <div key={rep} style={{ fontSize: 11, display: 'flex', justifyContent: 'space-between', padding: '2px 6px', background: 'var(--bg2)', borderRadius: 3 }}>
+                          <span>{rep}</span>
+                          <span>WON {r.won}/{r.total} = <strong style={{ color: r.roi >= 30 ? 'var(--green, #16a34a)' : r.roi >= 10 ? '#d97706' : 'var(--red)' }}>{r.roi}%</strong></span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>
+                  ※ 고객카드 → Activity 탭에서 활동 추가 시 "활동 결과(outcome)" 선택하면 자동 집계
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ══ Page 4 — Next Month Actions ══ */}
           <ChapterHeader
             page={4}
@@ -7593,6 +7728,20 @@ export default function Report() {
                 ※ 신뢰도 (FCST 80% / 사업계획 60% / 크로스셀링 = 확률 가중 / 계약분할 90% / GAP 회복계획 70%)<br />
                 ※ 가중액 부족 시 영업 추가 활동 필요 — 신규 발굴/기존 고객 확대/계약 가속화
               </div>
+              {/* v3.34: 담당자별 FCST 정확도 (명세 P0 ② — 80% 일괄 가중치 보정 참고) */}
+              {monthlyReportData.fcstAccuracyData && monthlyReportData.fcstAccuracyData.totalEvaluable > 0 && (
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6, padding: '6px 10px', background: 'rgba(37,99,235,0.05)', borderRadius: 4, border: '1px solid rgba(37,99,235,0.15)' }}>
+                  <strong style={{ color: '#1d4ed8' }}>🔮 담당자별 FCST 정확도 (최근 6개월 실측, 평가 {monthlyReportData.fcstAccuracyData.totalEvaluable}건)</strong>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+                    {Object.values(monthlyReportData.fcstAccuracyData.repAccuracy).sort((a, b) => b.avgAccuracy - a.avgAccuracy).map(r => (
+                      <span key={r.rep} style={{ color: r.avgAccuracy >= 80 ? 'var(--green, #16a34a)' : r.avgAccuracy >= 60 ? '#d97706' : 'var(--red)', fontWeight: 600 }}>
+                        {r.rep} {r.avgAccuracy}% ({r.count}건)
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 3, color: 'var(--text3)' }}>※ 정확도 낮은 담당자의 FCST는 보수적 해석 권장 (예: 60% → 실제 가중치 하향)</div>
+                </div>
+              )}
             </div>
           )}
 

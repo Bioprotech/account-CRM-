@@ -8,6 +8,7 @@ import { computeScore } from '../lib/scoring';
 import { filterValidOrders } from '../lib/aggregation';
 import { aggregateConversionByRep } from '../lib/contractConversion';
 import { getValidSalesReps } from '../lib/salesReps';
+import { analyzeLossReasons, analyzeActivityOutcomes, analyzeForecastAccuracy, aggregateHealthScores } from '../lib/reportInsights';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -31,6 +32,180 @@ function pctColor(p) {
   if (p >= 70) return 'yellow';
   return 'red';
 }
+
+/**
+ * v3.34 — 📊 보고서 인사이트 카드 (Loss Reason / Activity ROI / FCST 정확도 / Health Score)
+ *   영업본부 명세서(CRM_보완_개발_명세_v1.md) P0~P2 항목을 한 카드에 통합
+ */
+function ReportInsightsCard({ accounts, businessPlans, ordersAll, activityLogs, forecasts, setEditingAccount, isAdmin }) {
+  const lossReason = useMemo(() => analyzeLossReasons(accounts, businessPlans, ordersAll), [accounts, businessPlans, ordersAll]);
+  const currentMonth = useMemo(() => new Date().toISOString().slice(0, 7), []);
+  const actOutcomes = useMemo(() => analyzeActivityOutcomes(activityLogs, currentMonth), [activityLogs, currentMonth]);
+  const fcstAcc = useMemo(() => analyzeForecastAccuracy(forecasts, ordersAll, accounts, 6), [forecasts, ordersAll, accounts]);
+  const health = useMemo(() => aggregateHealthScores(accounts, ordersAll, activityLogs, forecasts), [accounts, ordersAll, activityLogs, forecasts]);
+
+  const [expanded, setExpanded] = useState(null);
+
+  // 안 보일 케이스: 데이터 거의 없으면 skip
+  if (lossReason.totalUnder === 0 && actOutcomes.totalTagged === 0 && fcstAcc.totalEvaluable === 0 && health.results.length === 0) return null;
+
+  const lossColor = lossReason.inputRate >= 80 ? 'var(--green, #16a34a)' : lossReason.inputRate >= 50 ? '#d97706' : 'var(--red)';
+
+  return (
+    <div className="card" style={{ marginBottom: 12, borderLeft: '4px solid #6d28d9', padding: 12, background: 'linear-gradient(135deg, rgba(109,40,217,0.04), rgba(46,125,50,0.03))' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+        <strong style={{ fontSize: 14, color: '#6d28d9' }}>📊 보고서 인사이트 (Loss Reason · Activity ROI · FCST 정확도 · Health Score)</strong>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>월간 보고서 분석용 — 본부 KPI</span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+        {/* ① Loss Reason 입력률 */}
+        <div style={kpiCardStyle('rgba(220,38,38,0.05)')}>
+          <div style={kpiHeaderStyle}>🔴 Loss Reason 입력률</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 28, fontWeight: 800, color: lossColor }}>{lossReason.inputRate}%</span>
+            <span style={{ fontSize: 11, color: 'var(--text2)' }}>{lossReason.filled} / {lossReason.totalUnder} 미달 고객</span>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+            80% 미달 고객의 원인+회복가능성 입력 완료 비율
+          </div>
+          {lossReason.totalUnder - lossReason.filled > 0 && (
+            <button onClick={() => setExpanded(expanded === 'loss' ? null : 'loss')} style={smBtn}>
+              {expanded === 'loss' ? '▲ 닫기' : `▼ 미입력 ${lossReason.totalUnder - lossReason.filled}건 보기`}
+            </button>
+          )}
+        </div>
+
+        {/* ⑥ Activity ROI (이번 달) */}
+        <div style={kpiCardStyle('rgba(46,125,50,0.05)')}>
+          <div style={kpiHeaderStyle}>🎯 Activity ROI (이번 달)</div>
+          {actOutcomes.totalTagged === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>활동에 outcome 태그가 없음<br />→ Activity 추가 시 outcome 선택</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+                태깅 활동 <strong>{actOutcomes.totalTagged}</strong>건
+              </div>
+              <div style={{ display: 'grid', gap: 2, marginTop: 4 }}>
+                {Object.entries(actOutcomes.byRep).slice(0, 4).map(([rep, r]) => (
+                  <div key={rep} style={{ fontSize: 10, display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{rep}</span>
+                    <span style={{ fontWeight: 600, color: r.roi >= 30 ? 'var(--green, #16a34a)' : r.roi >= 10 ? '#d97706' : 'var(--red)' }}>
+                      WON {r.won}/{r.total} = <strong>{r.roi}%</strong>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ② Forecast Accuracy (담당자별) */}
+        <div style={kpiCardStyle('rgba(37,99,235,0.05)')}>
+          <div style={kpiHeaderStyle}>🔮 FCST 정확도 (6개월 평균)</div>
+          {fcstAcc.totalEvaluable === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>과거 6개월 평가 가능한 FCST 없음</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--text2)' }}>평가 {fcstAcc.totalEvaluable}건</div>
+              <div style={{ display: 'grid', gap: 2, marginTop: 4 }}>
+                {Object.values(fcstAcc.repAccuracy).sort((a, b) => b.avgAccuracy - a.avgAccuracy).slice(0, 5).map(r => (
+                  <div key={r.rep} style={{ fontSize: 10, display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{r.rep} ({r.count}건)</span>
+                    <span style={{ fontWeight: 600, color: r.avgAccuracy >= 80 ? 'var(--green, #16a34a)' : r.avgAccuracy >= 60 ? '#d97706' : 'var(--red)' }}>
+                      {r.avgAccuracy}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 4 }}>※ 3개월 예측 가중치에 자동 반영 예정</div>
+            </>
+          )}
+        </div>
+
+        {/* ⑦ Customer Health Score */}
+        <div style={kpiCardStyle('rgba(217,119,6,0.05)')}>
+          <div style={kpiHeaderStyle}>❤️ Health Score 분포</div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+            <span style={gradeChip('var(--green, #16a34a)')}>A {health.dist.A}</span>
+            <span style={gradeChip('#2563eb')}>B {health.dist.B}</span>
+            <span style={gradeChip('#d97706')}>C {health.dist.C}</span>
+            <span style={gradeChip('var(--red)')}>D {health.dist.D}</span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text2)' }}>
+            ⚠ 위험(C/D): <strong>{health.atRisk.length}</strong>사
+          </div>
+          {health.atRisk.length > 0 && (
+            <button onClick={() => setExpanded(expanded === 'health' ? null : 'health')} style={smBtn}>
+              {expanded === 'health' ? '▲ 닫기' : `▼ 위험 ${health.atRisk.length}사 보기`}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 펼침: Loss Reason 미입력 고객 */}
+      {expanded === 'loss' && (
+        <div style={{ marginTop: 10, padding: 10, background: 'var(--bg2)', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>Loss Reason 미입력 미달 고객 ({lossReason.totalUnder - lossReason.filled}건)</div>
+          <div style={{ display: 'grid', gap: 3, maxHeight: 220, overflow: 'auto' }}>
+            {lossReason.underTargetAccounts.filter(x => !x.fullyFilled).map(x => {
+              const missing = [];
+              if (x.causes.length === 0) missing.push('원인');
+              if (!x.cause_detail) missing.push('상세');
+              if (!x.recoverability) missing.push('회복가능성');
+              if (x.causes.includes('competition') && !x.competitor_name) missing.push('경쟁사명');
+              return (
+                <div key={x.account.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 6px', background: 'var(--bg)', borderRadius: 3 }}>
+                  <a href="#" onClick={(e) => { e.preventDefault(); setEditingAccount(x.account); }} style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', minWidth: 160 }}>
+                    {x.account.company_name}
+                  </a>
+                  <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 600 }}>달성률 {Math.round(x.achieveRate * 100)}%</span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)' }}>담당: {x.account.sales_rep || '미배정'}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--red)' }}>누락: {missing.join(', ')}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 펼침: Health 위험 고객 */}
+      {expanded === 'health' && (
+        <div style={{ marginTop: 10, padding: 10, background: 'var(--bg2)', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>Health Score 위험 고객 (C/D 등급)</div>
+          <div style={{ display: 'grid', gap: 3, maxHeight: 240, overflow: 'auto' }}>
+            {health.atRisk.slice(0, 20).map(x => (
+              <div key={x.account.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 6px', background: 'var(--bg)', borderRadius: 3 }}>
+                <span style={gradeChip(x.health.grade === 'C' ? '#d97706' : 'var(--red)')}>{x.health.grade}</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)' }}>{x.health.normalizedScore}점</span>
+                <a href="#" onClick={(e) => { e.preventDefault(); setEditingAccount(x.account); }} style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', minWidth: 160 }}>
+                  {x.account.company_name}
+                </a>
+                <span style={{ fontSize: 10, color: 'var(--text3)' }}>{x.account.sales_rep || '미배정'}</span>
+                {x.health.alerts.length > 0 && (
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--red)' }}>{x.health.alerts.join(' · ')}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const kpiCardStyle = (bg) => ({
+  background: bg, padding: 10, borderRadius: 6, border: '1px solid var(--border)',
+});
+const kpiHeaderStyle = {
+  fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
+};
+const smBtn = {
+  marginTop: 4, padding: '2px 8px', fontSize: 10, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer',
+};
+const gradeChip = (color) => ({
+  fontSize: 10, padding: '2px 8px', borderRadius: 10, background: color, color: '#fff', fontWeight: 700,
+});
 
 /**
  * v3.32 — 🎯 계약전환율 KPI 카드 (Dashboard 상단, 사이드바 메뉴 대체)
@@ -1006,6 +1181,19 @@ export default function Dashboard() {
         saveAccount={saveAccount}
         t={t}
       />
+
+      {/* v3.34: 📊 보고서 인사이트 카드 (Loss Reason / Activity ROI / FCST 정확도 / Health Score) */}
+      {isAdmin && (
+        <ReportInsightsCard
+          accounts={accounts}
+          businessPlans={businessPlans}
+          ordersAll={ordersAll}
+          activityLogs={activityLogs}
+          forecasts={forecasts}
+          setEditingAccount={setEditingAccount}
+          isAdmin={isAdmin}
+        />
+      )}
 
 
       {/* v3.21: 담당자 활동 점수 — 월 선택 드롭다운 (월단위 비교 가능) */}
