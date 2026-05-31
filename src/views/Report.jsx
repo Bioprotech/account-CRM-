@@ -734,6 +734,8 @@ export default function Report() {
   const [nextMonthPlan, setNextMonthPlan] = useState({ overseas: '', domestic: '', support: '' });
   // v3.20: 주간 보고 — 수주/매출 예측액 (담당자 직접 입력, 주차별 Firestore 저장)
   const [weeklyForecast, setWeeklyForecast] = useState({ orders: {}, sales: {} });
+  // v3.36: 주간 보고 — 다음 달 수주/매출 예상 (월말·월초 시점, 월별 Firestore 저장)
+  const [nextMonthForecast, setNextMonthForecast] = useState({ orders: {}, sales: {} });
   // v3.21: Auto Executive Summary 사용자 override (월별 Firestore 저장)
   const [autoSummaryOverride, setAutoSummaryOverride] = useState({ lines: ['', '', '', ''], enabled: false });
   // 담당자별 실적 드릴다운 토글 (신규/기타 고객 리스트 펼침)
@@ -3790,6 +3792,43 @@ export default function Report() {
     }, 600);
   };
 
+  /* ── v3.36: 다음 달 수주/매출 예상 — 월별 Firestore 저장 (월말·월초 시점 주간보고 포함) ── */
+  // key는 다음 달 기준 (예: 5월 말 주간보고 → next_month_forecast_2026-06)
+  const nmForecastYM = (() => {
+    const m = sectionAData.wkMonth; const y = sectionAData.wkYear;
+    const nm = m === 12 ? 1 : m + 1; const ny = m === 12 ? y + 1 : y;
+    return `${ny}-${String(nm).padStart(2, '0')}`;
+  })();
+  const nmForecastKey = `next_month_forecast_${nmForecastYM}`;
+  useEffect(() => {
+    const saved = appSettings?.[nmForecastKey];
+    setNextMonthForecast(saved && typeof saved === 'object'
+      ? { orders: saved.orders || {}, sales: saved.sales || {} }
+      : { orders: {}, sales: {} });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nmForecastKey, appSettings[nmForecastKey]]);
+
+  const nmSaveTimer = useRef(null);
+  const updateNextMonthForecast = (type, team, value) => {
+    const next = {
+      orders: { ...(nextMonthForecast.orders || {}) },
+      sales: { ...(nextMonthForecast.sales || {}) },
+    };
+    next[type][team] = value;
+    setNextMonthForecast(next);
+    if (nmSaveTimer.current) clearTimeout(nmSaveTimer.current);
+    nmSaveTimer.current = setTimeout(() => {
+      if (saveAppSetting) saveAppSetting(nmForecastKey, next);
+    }, 600);
+  };
+  // 표시 조건: 이번 주 시작일이 15일 이상(월 후반) OR 이미 입력된 데이터가 있으면 표시
+  const showNextMonthForecast = (() => {
+    const day = parseInt((sectionAData.wkStart || '').slice(8, 10), 10) || 0;
+    const hasData = Object.values(nextMonthForecast.orders || {}).some(v => v) ||
+                    Object.values(nextMonthForecast.sales || {}).some(v => v);
+    return day >= 15 || hasData;
+  })();
+
   /* ══════════════════════════════
      MONTHLY DATA
      ══════════════════════════════ */
@@ -5286,6 +5325,115 @@ export default function Report() {
               </div>
             );
           })()}
+
+          {/* v3.36: ■ 1-5. 다음 달 수주/매출 예상 — 월말·월초 시점 주간보고 포함 */}
+          {hasPlan && showNextMonthForecast && (
+            <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid #7c3aed' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span>■ 1-5. {nmForecastYM.slice(5, 7)}월 수주/매출 예상</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+                  [월별 자동 저장 · 팀별 직접 입력 · 단위: 자유 입력(억원 등)]
+                </span>
+              </div>
+              <div className="table-wrap">
+                <table className="data-table" style={{ fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 100 }}>구분</th>
+                      <th style={{ textAlign: 'right', minWidth: 110 }}>수주 예상 ✏️</th>
+                      <th style={{ textAlign: 'right', minWidth: 110 }}>매출 예상 ✏️</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* 수주팀(해외영업/영업지원/국내영업) & 매출사업부(해외/BPU/국내) 병렬 표시 */}
+                    {(() => {
+                      const orderTeams = sectionAData.displayTeams || [];
+                      const salesTeams = sectionAData.displaySalesTeams || [];
+                      const maxLen = Math.max(orderTeams.length, salesTeams.length);
+                      const rows = [];
+                      for (let i = 0; i < maxLen; i++) {
+                        const ot = orderTeams[i];
+                        const st = salesTeams[i];
+                        rows.push(
+                          <tr key={`nm-${i}`}>
+                            <td style={{ fontWeight: 600, color: 'var(--text2)', fontSize: 11 }}>
+                              {ot ? (TEAM_DISPLAY[ot] || ot) : ''}
+                              {ot && st ? <span style={{ color: 'var(--border)', margin: '0 4px' }}>/</span> : null}
+                              {st ? (SALES_TEAM_DISPLAY[st] || st) : ''}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              {ot ? (
+                                <input
+                                  type="text"
+                                  value={nextMonthForecast.orders?.[ot] || ''}
+                                  onChange={(e) => updateNextMonthForecast('orders', ot, e.target.value)}
+                                  placeholder="-"
+                                  style={{
+                                    width: 90, textAlign: 'right', fontSize: 12,
+                                    padding: '2px 6px', border: '1px solid #c4b5fd',
+                                    borderRadius: 4, background: 'var(--bg)', color: 'var(--text)',
+                                  }}
+                                />
+                              ) : '-'}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              {st ? (
+                                <input
+                                  type="text"
+                                  value={nextMonthForecast.sales?.[st] || ''}
+                                  onChange={(e) => updateNextMonthForecast('sales', st, e.target.value)}
+                                  placeholder="-"
+                                  style={{
+                                    width: 90, textAlign: 'right', fontSize: 12,
+                                    padding: '2px 6px', border: '1px solid #93c5fd',
+                                    borderRadius: 4, background: 'var(--bg)', color: 'var(--text)',
+                                  }}
+                                />
+                              ) : '-'}
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return rows;
+                    })()}
+                    {/* 합계 행 */}
+                    <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
+                      <td>합계</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <input
+                          type="text"
+                          value={nextMonthForecast.orders?.total || ''}
+                          onChange={(e) => updateNextMonthForecast('orders', 'total', e.target.value)}
+                          placeholder="-"
+                          style={{
+                            width: 90, textAlign: 'right', fontSize: 12, fontWeight: 700,
+                            padding: '2px 6px', border: '1px solid #c4b5fd',
+                            borderRadius: 4, background: 'var(--bg)', color: 'var(--text)',
+                          }}
+                        />
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <input
+                          type="text"
+                          value={nextMonthForecast.sales?.total || ''}
+                          onChange={(e) => updateNextMonthForecast('sales', 'total', e.target.value)}
+                          placeholder="-"
+                          style={{
+                            width: 90, textAlign: 'right', fontSize: 12, fontWeight: 700,
+                            padding: '2px 6px', border: '1px solid #93c5fd',
+                            borderRadius: 4, background: 'var(--bg)', color: 'var(--text)',
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                ※ 월이 넘어가는 시점 주간보고에 포함 · 15일 이상 주차에 자동 표시 · {nmForecastYM} 기준 저장 (다른 주차에서도 동일 값 유지)
+              </div>
+            </div>
+          )}
 
           {/* v3.31: 📢 유관부서 공유 사항 (consolidated — team_activities + team_projects.updates 공유 항목) */}
           {(() => {
