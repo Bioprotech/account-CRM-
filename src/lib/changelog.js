@@ -1,5 +1,24 @@
 export const CHANGELOG = [
   {
+    version: 'v3.35',
+    date: '2026-05-31',
+    title: '🐛 Import 중복 방지 — onSnapshot 경쟁 조건 근본 해결',
+    items: [
+      '🚨 **재발 문제**: 매출·수주 재import 시 전주 데이터와 중복 표시 (지속적)',
+      '  ↳ v3.22에서 Firestore 레벨 중복(delete 실패 → 2배 저장)은 해결했으나',
+      '  ↳ React state 레벨 중복이 잔존: onSnapshot이 전체 상태를 교체한 뒤',
+      '  ↳ importOrders/importSales의 setOrders(prev => [...prev, ...newOrders])가',
+      '  ↳ 이미 들어간 레코드를 한 번 더 append → 2배 표시',
+      '',
+      '🛠 **근본 수정 (AccountContext.jsx)**',
+      '  ↳ importOrders: setOrders에서 ID Set 기반 dedup 적용',
+      '  ↳ importSales: setSales에서 ID Set 기반 dedup 적용',
+      '  ↳ onSnapshot이 먼저 상태를 교체했으면 toAdd = [] → no-op',
+      '  ↳ onSnapshot이 아직 안 왔으면 optimistic update 그대로 동작',
+      '  ↳ 어느 쪽 타이밍이어도 중복 불가능',
+    ],
+  },
+  {
     version: 'v3.34',
     date: '2026-05-28',
     title: '📊 보고서 인사이트 — Loss Reason / Activity ROI / FCST 정확도 / Health Score',

@@ -383,8 +383,13 @@ export default function AccountProvider({ children }) {
       // 3) 새 데이터 저장 (batch)
       try {
         await batchSaveOrders(newOrders);
-        // React state에 새 데이터 추가 (구독 onSnapshot이 곧 동기화하지만 즉시 반영 위해)
-        setOrders(prev => [...prev, ...newOrders]);
+        // v3.35 bugfix: onSnapshot이 이미 상태를 교체한 뒤 추가하면 2배 중복 발생
+        // → ID 기반 dedup으로 이미 있는 레코드는 건너뜀 (onSnapshot vs 수동 state 경쟁 조건 해소)
+        setOrders(prev => {
+          const ids = new Set(prev.map(o => o.id));
+          const toAdd = newOrders.filter(o => !ids.has(o.id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+        });
       } catch (e) {
         console.error('수주 batch 저장 실패:', e);
         showToast('수주 import 실패: ' + e.message, 'error');
@@ -438,7 +443,12 @@ export default function AccountProvider({ children }) {
       setSales(prev => prev.filter(s => s.source !== replaceSource));
       try {
         await batchSaveSales(newSales);
-        setSales(prev => [...prev, ...newSales]);
+        // v3.35 bugfix: onSnapshot 경쟁 조건 해소 — ID dedup
+        setSales(prev => {
+          const ids = new Set(prev.map(s => s.id));
+          const toAdd = newSales.filter(s => !ids.has(s.id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+        });
       } catch (e) {
         console.error('매출 batch 저장 실패:', e);
         showToast('매출 import 실패: ' + e.message, 'error');
