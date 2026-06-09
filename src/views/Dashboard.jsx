@@ -617,6 +617,219 @@ function YtdProgressBadge({ ytdTarget, ytdActual, shortage, surplus, progressPct
   );
 }
 
+/**
+ * v3.37 — 📊 수주현황 분석 (Excel 수주현황_분석 형태)
+ * 고객별 연간계획 / YTD계획 / YTD실적 / 전년YTD / 계획대비 / 전년대비
+ * 섹션: 해외 계획고객 / 해외신규기타 / 국내 계획고객 / 국내기타신규 / BPU
+ */
+function OrderAnalysisCard({ accounts, businessPlans, orders }) {
+  const CUR_YEAR = new Date().getFullYear();
+  const CUR_MONTH = new Date().getMonth() + 1;
+  const [openSections, setOpenSections] = useState({});
+  const toggleSec = (k) => setOpenSections(p => ({ ...p, [k]: !p[k] }));
+
+  // 연간/YTD 사업계획 조회
+  const customerPlansAll = useMemo(() =>
+    businessPlans.filter(p => p.year === CUR_YEAR && (p.type === 'customer' || !p.type)),
+    [businessPlans, CUR_YEAR]
+  );
+
+  const ytdPlanFor = (plan) => {
+    if (!plan?.targets) return 0;
+    let s = 0;
+    for (let m = 1; m <= CUR_MONTH; m++) s += (plan.targets[String(m).padStart(2, '0')] || 0);
+    return s;
+  };
+
+  const curOrders = useMemo(() => orders.filter(o => (o.order_date || '').startsWith(String(CUR_YEAR))), [orders, CUR_YEAR]);
+  const prevOrders = useMemo(() => orders.filter(o => (o.order_date || '').startsWith(String(CUR_YEAR - 1))), [orders, CUR_YEAR]);
+
+  // 계획 인덱스
+  const planByAccId = useMemo(() => { const m = {}; customerPlansAll.forEach(p => { if (p.account_id) m[p.account_id] = p; }); return m; }, [customerPlansAll]);
+  const planByName = useMemo(() => { const m = {}; customerPlansAll.forEach(p => { if (p.customer_name) m[p.customer_name.toLowerCase().trim()] = p; }); return m; }, [customerPlansAll]);
+
+  // 수주 집계 (account_id 기준, 없으면 customer_name)
+  const sumOrders = (orderList, accountId, customerName) => {
+    let s = 0;
+    orderList.forEach(o => {
+      const mm = parseInt((o.order_date || '').slice(5, 7), 10);
+      if (mm < 1 || mm > CUR_MONTH) return;
+      if ((accountId && o.account_id === accountId) ||
+          (!accountId && customerName && (o.customer_name || '').toLowerCase().trim() === customerName.toLowerCase().trim())) {
+        s += (o.order_amount || 0);
+      }
+    });
+    return s;
+  };
+
+  // 분석 데이터 산출
+  const data = useMemo(() => {
+    const sections = { '해외계획': [], '해외신규기타': [], '국내계획': [], '국내기타신규': [], 'BPU': [] };
+    const processedIds = new Set();
+
+    // 사업계획 고객 처리
+    customerPlansAll.forEach(plan => {
+      const accId = plan.account_id;
+      const accName = plan.customer_name || '';
+      const acc = accId ? accounts.find(a => a.id === accId) : accounts.find(a => (a.company_name || '').toLowerCase().trim() === accName.toLowerCase().trim());
+      if (acc) processedIds.add(acc.id);
+
+      const annualPlan = plan.annual_target || 0;
+      const ytdPlan = ytdPlanFor(plan);
+      const ytdActual = sumOrders(curOrders, accId, accName);
+      const priorYtd = sumOrders(prevOrders, accId, accName);
+      const cat = acc?.customer_category || '';
+      const isBPU = accName.toUpperCase().includes('BPU') || (cat || '').toUpperCase().includes('BPU');
+      const isOverseas = cat.startsWith('해외') || (!cat && acc && !/[가-힣]/.test(acc.company_name || ''));
+      const displayName = acc?.company_name || accName;
+
+      const item = { name: displayName, annualPlan, ytdPlan, ytdActual, priorYtd, gapPlan: ytdActual - ytdPlan, gapPrior: ytdActual - priorYtd };
+
+      if (isBPU) sections['BPU'].push(item);
+      else if (isOverseas) sections['해외계획'].push(item);
+      else sections['국내계획'].push(item);
+    });
+
+    // 계획 없는 고객 (수주 발생)
+    const unplanned = {};
+    [...curOrders, ...prevOrders].forEach(o => {
+      const acc = accounts.find(a => a.id === o.account_id);
+      if (acc && processedIds.has(acc.id)) return;
+      const name = o.customer_name || acc?.company_name || '';
+      if (!name) return;
+      if (!unplanned[name]) {
+        const cat = acc?.customer_category || '';
+        unplanned[name] = {
+          name, accId: acc?.id, cat,
+          isBPU: name.toUpperCase().includes('BPU') || cat.toUpperCase().includes('BPU'),
+          isOverseas: cat.startsWith('해외') || (!cat && acc && !/[가-힣]/.test(name)),
+        };
+      }
+    });
+
+    Object.values(unplanned).forEach(u => {
+      const ytdActual = sumOrders(curOrders, u.accId, u.name);
+      const priorYtd = sumOrders(prevOrders, u.accId, u.name);
+      if (ytdActual === 0 && priorYtd === 0) return;
+      const item = { name: u.name, annualPlan: 0, ytdPlan: 0, ytdActual, priorYtd, gapPlan: ytdActual, gapPrior: ytdActual - priorYtd };
+      if (u.isBPU) sections['BPU'].push(item);
+      else if (u.isOverseas) sections['해외신규기타'].push(item);
+      else sections['국내기타신규'].push(item);
+    });
+
+    // 정렬 + 소계
+    const labels = { '해외계획': '▶ 해외 계획고객', '해외신규기타': '▶ 해외신규/기타', '국내계획': '▶ 국내 계획고객', '국내기타신규': '▶ 국내 기타/신규', 'BPU': '▶ BPU' };
+    const result = [];
+    let grand = { annualPlan: 0, ytdPlan: 0, ytdActual: 0, priorYtd: 0, gapPlan: 0, gapPrior: 0 };
+
+    Object.entries(sections).forEach(([key, items]) => {
+      if (items.length === 0) return;
+      items.sort((a, b) => (b.annualPlan || b.ytdActual) - (a.annualPlan || a.ytdActual));
+      const sub = items.reduce((acc, it) => ({
+        annualPlan: acc.annualPlan + it.annualPlan, ytdPlan: acc.ytdPlan + it.ytdPlan,
+        ytdActual: acc.ytdActual + it.ytdActual, priorYtd: acc.priorYtd + it.priorYtd,
+        gapPlan: acc.gapPlan + it.gapPlan, gapPrior: acc.gapPrior + it.gapPrior,
+      }), { annualPlan: 0, ytdPlan: 0, ytdActual: 0, priorYtd: 0, gapPlan: 0, gapPrior: 0 });
+      result.push({ key, label: labels[key], items, sub });
+      Object.keys(grand).forEach(k => { grand[k] += sub[k]; });
+    });
+
+    return { result, grand };
+  }, [accounts, customerPlansAll, curOrders, prevOrders, CUR_MONTH]);
+
+  const fmtB = (n) => {
+    if (!n && n !== 0) return '-';
+    const abs = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (abs >= 1e9) return sign + (abs / 1e9).toFixed(1) + 'B';
+    if (abs >= 1e8) return sign + (abs / 1e8).toFixed(1) + '억';
+    if (abs >= 1e4) return sign + Math.round(abs / 1e4).toLocaleString() + '만';
+    return n.toLocaleString();
+  };
+  const gapStyle = (v) => ({ color: v >= 0 ? 'var(--green,#16a34a)' : 'var(--red)', fontWeight: 600 });
+  const pctStyle = (a, b) => {
+    if (!b) return { color: 'var(--text3)' };
+    const p = Math.round((a / b) * 100);
+    return { color: p >= 100 ? 'var(--green,#16a34a)' : p >= 80 ? '#d97706' : 'var(--red)', fontWeight: 600 };
+  };
+  const pctLabel = (a, b) => b ? Math.round((a / b) * 100) + '%' : '-';
+
+  if (data.result.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>📊 수주현황 분석 (YTD ~{CUR_MONTH}월)</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+          연간계획 / YTD계획({CUR_MONTH}월까지) / YTD실적 / 전년YTD / 계획대비 · 단위: 억원
+        </span>
+      </div>
+      <div className="table-wrap">
+        <table className="data-table" style={{ fontSize: 11 }}>
+          <thead>
+            <tr>
+              <th style={{ minWidth: 180, position: 'sticky', left: 0, background: 'var(--bg2)', zIndex: 1 }}>고객명</th>
+              <th style={{ textAlign: 'right', minWidth: 80 }}>연간계획</th>
+              <th style={{ textAlign: 'right', minWidth: 75 }}>YTD계획</th>
+              <th style={{ textAlign: 'right', minWidth: 75 }}>YTD실적</th>
+              <th style={{ textAlign: 'right', minWidth: 60 }}>달성률</th>
+              <th style={{ textAlign: 'right', minWidth: 75 }}>전년YTD</th>
+              <th style={{ textAlign: 'right', minWidth: 75 }}>계획대비</th>
+              <th style={{ textAlign: 'right', minWidth: 75 }}>전년대비</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.result.map(({ key, label, items, sub }) => (
+              <>
+                {/* 섹션 헤더 행 (소계 포함) */}
+                <tr key={`sec-${key}`} style={{ background: 'var(--bg2)', cursor: 'pointer' }} onClick={() => toggleSec(key)}>
+                  <td style={{ fontWeight: 700, color: 'var(--accent)', position: 'sticky', left: 0, background: 'var(--bg2)', zIndex: 1 }}>
+                    {openSections[key] ? '▼' : '▶'} {label.replace('▶ ', '')} ({items.length}사)
+                  </td>
+                  <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtB(sub.annualPlan)}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtB(sub.ytdPlan)}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmtB(sub.ytdActual)}</td>
+                  <td style={{ textAlign: 'right', ...pctStyle(sub.ytdActual, sub.ytdPlan) }}>{pctLabel(sub.ytdActual, sub.ytdPlan)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text3)', fontWeight: 600 }}>{fmtB(sub.priorYtd)}</td>
+                  <td style={{ textAlign: 'right', ...gapStyle(sub.gapPlan) }}>{sub.gapPlan >= 0 ? '+' : ''}{fmtB(sub.gapPlan)}</td>
+                  <td style={{ textAlign: 'right', ...gapStyle(sub.gapPrior) }}>{sub.gapPrior >= 0 ? '+' : ''}{fmtB(sub.gapPrior)}</td>
+                </tr>
+                {/* 펼침: 고객별 행 */}
+                {openSections[key] && items.map((it, idx) => (
+                  <tr key={`${key}-${idx}`} style={{ fontSize: 10 }}>
+                    <td style={{ paddingLeft: 20, color: 'var(--text2)', position: 'sticky', left: 0, background: 'var(--bg)', zIndex: 1 }}>{it.name}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmtB(it.annualPlan)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmtB(it.ytdPlan)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtB(it.ytdActual)}</td>
+                    <td style={{ textAlign: 'right', ...pctStyle(it.ytdActual, it.ytdPlan) }}>{pctLabel(it.ytdActual, it.ytdPlan)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmtB(it.priorYtd)}</td>
+                    <td style={{ textAlign: 'right', ...gapStyle(it.gapPlan) }}>{it.gapPlan >= 0 ? '+' : ''}{fmtB(it.gapPlan)}</td>
+                    <td style={{ textAlign: 'right', ...gapStyle(it.gapPrior) }}>{it.gapPrior >= 0 ? '+' : ''}{fmtB(it.gapPrior)}</td>
+                  </tr>
+                ))}
+              </>
+            ))}
+            {/* 전체 합계 */}
+            <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700, background: 'rgba(46,125,50,0.06)', fontSize: 12 }}>
+              <td style={{ fontWeight: 800, position: 'sticky', left: 0, background: 'rgba(46,125,50,0.06)', zIndex: 1 }}>▶ 전체 합계</td>
+              <td style={{ textAlign: 'right' }}>{fmtB(data.grand.annualPlan)}</td>
+              <td style={{ textAlign: 'right' }}>{fmtB(data.grand.ytdPlan)}</td>
+              <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmtB(data.grand.ytdActual)}</td>
+              <td style={{ textAlign: 'right', ...pctStyle(data.grand.ytdActual, data.grand.ytdPlan) }}>{pctLabel(data.grand.ytdActual, data.grand.ytdPlan)}</td>
+              <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmtB(data.grand.priorYtd)}</td>
+              <td style={{ textAlign: 'right', ...gapStyle(data.grand.gapPlan) }}>{data.grand.gapPlan >= 0 ? '+' : ''}{fmtB(data.grand.gapPlan)}</td>
+              <td style={{ textAlign: 'right', ...gapStyle(data.grand.gapPrior) }}>{data.grand.gapPrior >= 0 ? '+' : ''}{fmtB(data.grand.gapPrior)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 6 }}>
+        ※ 섹션 클릭 → 고객별 상세 펼침 · 계획=사업계획 YTD목표(1~{CUR_MONTH}월) · 전년=전년도 동기간 · ProMES 수주 기준
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const accountCtx = useAccount();
   const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders: ordersAll, businessPlans, forecasts, contracts, saveAccount, showToast, appSettings, teamMembers, t } = accountCtx;
@@ -1180,6 +1393,13 @@ export default function Dashboard() {
         setEditingAccount={setEditingAccount}
         saveAccount={saveAccount}
         t={t}
+      />
+
+      {/* v3.37: 📊 수주현황 분석 (Excel 형태 — 고객별 YTD 계획대비/전년대비) */}
+      <OrderAnalysisCard
+        accounts={accounts}
+        businessPlans={businessPlans}
+        orders={orders}
       />
 
       {/* v3.34: 📊 보고서 인사이트 카드 (Loss Reason / Activity ROI / FCST 정확도 / Health Score) */}

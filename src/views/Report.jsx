@@ -743,6 +743,9 @@ export default function Report() {
   const toggleRepDrill = (key) => setRepDrillOpen(prev => ({ ...prev, [key]: !prev[key] }));
   // v3.17 Phase C6: GAP Top 10 외 전체 펼치기
   const [gapExpanded, setGapExpanded] = useState({ shortfall: false, surplus: false });
+  // v3.37: Page 2 섹션별 접힘 상태 (담당자별/품목별/대륙별 기본값: 접힘)
+  const [collapsedSections, setCollapsedSections] = useState({ rep: true, product: true, region: true });
+  const toggleSection = (key) => setCollapsedSections(p => ({ ...p, [key]: !p[key] }));
 
   /* ── Base data ── */
   // ⚠️ customer plan만 명시적으로 (team_sales와 product 제외)
@@ -5916,6 +5919,74 @@ export default function Report() {
             color="#2e7d32"
           />
 
+          {/* ══ v3.37: 결론 헤드라인 배너 — 가장 먼저 눈에 들어오는 핵심 메시지 ══ */}
+          {(() => {
+            const statusIcon = execSummary.status || monthlyReportData.autoExecSummary.autoStatus || '🟡';
+            const isGreen = statusIcon.includes('🟢');
+            const isRed = statusIcon.includes('🔴');
+            const borderColor = isGreen ? 'rgba(22,163,74,0.5)' : isRed ? 'rgba(220,38,38,0.5)' : 'rgba(217,119,6,0.5)';
+            const bgColor = isGreen
+              ? 'linear-gradient(135deg, rgba(22,163,74,0.1), rgba(22,163,74,0.03))'
+              : isRed
+              ? 'linear-gradient(135deg, rgba(220,38,38,0.1), rgba(220,38,38,0.03))'
+              : 'linear-gradient(135deg, rgba(217,119,6,0.1), rgba(217,119,6,0.03))';
+            const msgs = [execSummary.msg1, execSummary.msg2, execSummary.msg3].filter(Boolean);
+            const autoLines = monthlyReportData.autoExecSummary.lines || [];
+            return (
+              <div style={{ background: bgColor, border: `2px solid ${borderColor}`, borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+                  {/* 상태 아이콘 */}
+                  <div style={{ fontSize: 48, lineHeight: 1, minWidth: 52 }}>{statusIcon.split(' ')[0]}</div>
+                  {/* 핵심 메시지 */}
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>
+                      {monthlyReportData.monthLabel} 영업 현황 — 핵심 메시지
+                    </div>
+                    {msgs.length > 0 ? msgs.map((msg, i) => (
+                      <div key={i} style={{ fontSize: i === 0 ? 14 : 12, fontWeight: i === 0 ? 700 : 400, color: 'var(--text)', marginBottom: 4, lineHeight: 1.5 }}>
+                        {['①', '②', '③'][i]} {msg}
+                      </div>
+                    )) : (
+                      <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
+                        {autoLines[0] && <div>{autoLines[0]}</div>}
+                        {autoLines[2] && <div style={{ marginTop: 2, color: 'var(--text3)' }}>{autoLines[2]}</div>}
+                      </div>
+                    )}
+                    {execSummary.nextMonthFocus && (
+                      <div style={{ marginTop: 8, padding: '4px 10px', background: 'rgba(255,255,255,0.5)', borderRadius: 4, fontSize: 11, borderLeft: '3px solid var(--accent)' }}>
+                        🎯 다음 달 집중: {execSummary.nextMonthFocus}
+                      </div>
+                    )}
+                  </div>
+                  {/* 빠른 KPI 3종 */}
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    {[
+                      { label: '수주 MTD', val: monthlyReportData.kpi.order.mtdPct },
+                      { label: '수주 YTD', val: monthlyReportData.kpi.order.ytdPct },
+                      { label: '매출 YTD', val: monthlyReportData.kpi.sales.ytdPct },
+                    ].map(({ label, val }) => {
+                      const c = val >= 100 ? 'var(--green,#16a34a)' : val >= 80 ? '#d97706' : 'var(--red)';
+                      return (
+                        <div key={label} style={{ textAlign: 'center', padding: '8px 12px', background: 'rgba(255,255,255,0.55)', borderRadius: 8, minWidth: 68, border: '1px solid rgba(0,0,0,0.06)' }}>
+                          <div style={{ fontSize: 9, color: 'var(--text3)', marginBottom: 2 }}>{label}</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: c, lineHeight: 1 }}>{val}%</div>
+                          <div style={{ fontSize: 9, color: c, marginTop: 2 }}>
+                            {val >= 100 ? '🟢 달성' : val >= 80 ? '🟡 근접' : '🔴 미달'}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {msgs.length === 0 && (
+                  <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 6 }}>
+                    ※ ■ 0. 이번 달 핵심 요약에서 메시지를 입력하면 위에 크게 표시됩니다
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* ══ KPI 카드 — 당월 + YTD, 수주 + 매출 ══ */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
             {/* 수주 MTD */}
@@ -6467,8 +6538,11 @@ export default function Report() {
                   <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
                     (사업계획 매칭 담당자만 · 단위: 백만원 · 버킷(국내/해외 기타·신규)은 ■4-2 고객별로 이동)
                   </span>
+                  <button onClick={() => toggleSection('rep')} style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    {collapsedSections.rep ? '▶ 펼치기' : '▼ 접기'}
+                  </button>
                 </div>
-                <div className="table-wrap">
+                <div className="table-wrap" style={{ display: collapsedSections.rep ? 'none' : undefined }}>
                   <table className="data-table" style={{ fontSize: 12 }}>
                     <thead>
                       <tr>
@@ -6533,8 +6607,11 @@ export default function Report() {
                 <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
                   — 사업계획 product 목표 vs 실제 수주 (단위: 백만원)
                 </span>
+                <button onClick={() => toggleSection('product')} style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  {collapsedSections.product ? '▶ 펼치기' : '▼ 접기'}
+                </button>
               </div>
-              <div className="table-wrap">
+              <div className="table-wrap" style={{ display: collapsedSections.product ? 'none' : undefined }}>
                 <table className="data-table" style={{ fontSize: 11 }}>
                   <thead>
                     <tr>
@@ -6792,8 +6869,11 @@ export default function Report() {
                 <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
                   — 7개 대륙 (북미/유럽/중남미/아시아/중동/아프리카/CIS) + 한국, 단위: 백만원
                 </span>
+                <button onClick={() => toggleSection('region')} style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  {collapsedSections.region ? '▶ 펼치기' : '▼ 접기'}
+                </button>
               </div>
-              <div className="table-wrap">
+              <div className="table-wrap" style={{ display: collapsedSections.region ? 'none' : undefined }}>
                 <table className="data-table" style={{ fontSize: 11 }}>
                   <thead>
                     <tr>
