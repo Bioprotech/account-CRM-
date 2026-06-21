@@ -3,16 +3,15 @@ import { CURRENT_VERSION } from '../lib/changelog';
 
 // v3.33: label은 i18n 키 — 렌더 시점에 t(item.labelKey)로 변환
 const NAV_ITEMS = [
-  { key: 'dashboard',    icon: '📊',  labelKey: 'menu.dashboard' },
-  { key: 'report',       icon: '📋',  labelKey: 'menu.report' },
-  { key: 'myTasks',      icon: '🗒️', labelKey: 'menu.myTasks' },
-  { key: 'teamCommon',   icon: '👥',  labelKey: 'menu.teamCommon' },
-  { key: 'accounts',     icon: '🏢',  labelKey: 'menu.accounts' },
-  { key: 'orderReport',  icon: '📈',  labelKey: 'menu.orderReport' },
-  { key: 'progress',     icon: '📈',  labelKey: 'menu.progress' },
-  { key: 'typeguide',    icon: '📖',  labelKey: 'menu.typeguide' },
-  { key: 'settings',     icon: '⚙️', labelKey: 'menu.settings', adminOnly: true },
-  { key: 'changelog',    icon: '📝',  labelKey: 'menu.changelog' },
+  { key: 'dashboard',  icon: '📊',  labelKey: 'menu.dashboard' },
+  { key: 'report',     icon: '📋',  labelKey: 'menu.report' },
+  { key: 'myTasks',    icon: '🗒️', labelKey: 'menu.myTasks' },
+  { key: 'accounts',   icon: '🏢',  labelKey: 'menu.accounts' },
+  { key: 'progress',   icon: '📈',  labelKey: 'menu.progress' },
+  { key: 'teamCommon', icon: '👥',  labelKey: 'menu.teamCommon' },
+  { key: 'typeguide',  icon: '📖',  labelKey: 'menu.typeguide' },
+  { key: 'changelog',  icon: '📝',  labelKey: 'menu.changelog' },
+  { key: 'settings',   icon: '⚙️', labelKey: 'menu.settings', adminOnly: true },
 ];
 
 export default function Sidebar() {

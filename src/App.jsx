@@ -7,7 +7,6 @@ import Dashboard from './views/Dashboard';
 import AccountList from './views/AccountList';
 import Settings from './views/Settings';
 import Report from './views/Report';
-import OrderReport from './views/OrderReport';
 import Progress from './views/Progress';
 import MyTasks from './views/MyTasks';
 import TeamCommon from './views/TeamCommon';
@@ -185,7 +184,6 @@ function AppContent() {
     switch (currentTab) {
       case 'dashboard': return <Dashboard />;
       case 'accounts': return <AccountList />;
-      case 'orderReport': return <OrderReport />;
       case 'report': return <Report />;
       case 'progress': return <Progress />;
       case 'myTasks': return <MyTasks />;

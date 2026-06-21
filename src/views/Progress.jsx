@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { filterValidOrders } from '../lib/aggregation';
+import OrderReport from './OrderReport';
+import ProductReport from './ProductReport';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
@@ -27,6 +29,7 @@ function fmtKRW(n) {
 
 export default function Progress() {
   const { businessPlans, orders: ordersAll, accounts: accountsAll, setEditingAccount, t } = useAccount();
+  const [mainTab, setMainTab] = useState('progress');
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
@@ -190,17 +193,50 @@ export default function Progress() {
 
   const maxMonthly = Math.max(1, ...overallStats.monthlyData.map(m => Math.max(m.target, m.actual)));
 
-  if (customerPlans.length === 0) {
+  const tabNav = (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: '2px solid var(--border)', paddingBottom: 12 }}>
+      {[
+        { key: 'progress', label: '📊 진도관리' },
+        { key: 'order',    label: '🎯 수주목표' },
+        { key: 'product',  label: '📦 품목별 현황' },
+      ].map(tab => (
+        <button
+          key={tab.key}
+          onClick={() => setMainTab(tab.key)}
+          style={{
+            padding: '6px 18px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+            fontWeight: mainTab === tab.key ? 700 : 400,
+            background: mainTab === tab.key ? 'var(--accent)' : 'transparent',
+            color: mainTab === tab.key ? '#fff' : 'var(--text2)',
+            border: `1px solid ${mainTab === tab.key ? 'var(--accent)' : 'var(--border)'}`,
+            transition: 'all .15s',
+          }}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (mainTab !== 'progress' || customerPlans.length === 0) {
     return (
-      <div className="empty-state">
-        <div className="icon">📊</div>
-        <p>사업계획 데이터가 없습니다.<br />설정 → 사업계획 Import에서 엑셀 파일을 업로드해주세요.</p>
+      <div>
+        {tabNav}
+        {mainTab === 'order'   && <OrderReport />}
+        {mainTab === 'product' && <ProductReport />}
+        {mainTab === 'progress' && (
+          <div className="empty-state">
+            <div className="icon">📊</div>
+            <p>사업계획 데이터가 없습니다.<br />설정 → 사업계획 Import에서 엑셀 파일을 업로드해주세요.</p>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div>
+      {tabNav}
       <div className="report-section-title">{CURRENT_YEAR}년 사업계획 진도관리 ({CURRENT_MONTH}월 기준)</div>
 
       {/* 전체 KPI */}
