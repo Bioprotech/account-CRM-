@@ -25,6 +25,7 @@ export const PRODUCTS = [
   'EEG',
   'EMG',
   'Laparo',
+  'Plate P',
   'Accessory',
 ];
 

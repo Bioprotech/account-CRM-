@@ -1,5 +1,21 @@
 export const CHANGELOG = [
   {
+    version: 'v3.38',
+    date: '2026-06-21',
+    title: '✏️ 주간보고 비고란 + FCST 수정 + Plate P 품목 추가',
+    items: [
+      '📋 **[Report.jsx] 주간보고 비고란 추가** (■1 수주현황 / ■1-2 매출현황 / ■1-5 다음달 예상)',
+      '  ↳ 팀별·합계 행에 이슈 메모 입력 칸 추가 (Firestore 자동 저장, 주차/월별 유지)',
+      '  ↳ orders_notes / sales_notes / notes 키로 기존 예측값과 동일한 스토리지 구조',
+      '',
+      '🔧 **[ForecastTrend.jsx] FCST 수정 기능**',
+      '  ↳ 상세 항목 테이블에 [수정] 버튼 추가 → 기존 값 폼 자동 로드',
+      '  ↳ 저장 시 동일 ID로 upsert · 수정 모드 취소 버튼 지원',
+      '',
+      '➕ **[constants.js] Cross-selling 품목 Plate P 추가**',
+    ],
+  },
+  {
     version: 'v3.37',
     date: '2026-06-09',
     title: '🎯 월간보고 개선 — 결론 헤드라인 배너 + 섹션 접기 · 대시보드 수주현황 분석',

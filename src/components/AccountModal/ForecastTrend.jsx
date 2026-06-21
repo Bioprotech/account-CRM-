@@ -21,6 +21,7 @@ export default function ForecastTrend({ accountId }) {
   const allOrders = getOrdersForAccount(accountId);
 
   const [showForm, setShowForm] = useState(false);
+  const [editingFcstId, setEditingFcstId] = useState(null);
   const [newFcst, setNewFcst] = useState({
     year: CURRENT_YEAR,
     month: 1,
@@ -137,7 +138,7 @@ export default function ForecastTrend({ accountId }) {
   const handleAddFcst = () => {
     if (!newFcst.product_category || !newFcst.forecast_amount) return;
     saveForecast({
-      id: genId('fcst'),
+      id: editingFcstId || genId('fcst'),
       account_id: accountId,
       year: parseInt(newFcst.year),
       month: parseInt(newFcst.month),
@@ -148,7 +149,24 @@ export default function ForecastTrend({ accountId }) {
       notes: newFcst.notes || '',
       created_at: today(),
     });
-    setNewFcst({ year: CURRENT_YEAR, month: parseInt(newFcst.month) < 12 ? parseInt(newFcst.month) + 1 : 1, product_category: newFcst.product_category, forecast_amount: '', currency: newFcst.currency, notes: '' });
+    setEditingFcstId(null);
+    setShowForm(false);
+    if (!editingFcstId) {
+      setNewFcst({ year: CURRENT_YEAR, month: parseInt(newFcst.month) < 12 ? parseInt(newFcst.month) + 1 : 1, product_category: newFcst.product_category, forecast_amount: '', currency: newFcst.currency, notes: '' });
+    }
+  };
+
+  const handleEditFcst = (f) => {
+    setNewFcst({
+      year: f.year || CURRENT_YEAR,
+      month: f.month || 1,
+      product_category: f.product_category || '',
+      forecast_amount: f.forecast_amount != null ? String(f.forecast_amount) : '',
+      currency: f.currency || 'KRW',
+      notes: f.notes || '',
+    });
+    setEditingFcstId(f.id);
+    setShowForm(true);
   };
 
   // 월별 요약 테이블 (연도별 그룹)
@@ -261,7 +279,10 @@ export default function ForecastTrend({ accountId }) {
                         </span>
                       </td>
                       <td style={{ fontSize: 11, color: 'var(--text3)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.notes || ''}</td>
-                      <td><button className="btn btn-danger btn-sm" onClick={() => removeForecast(f.id)}>삭제</button></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn btn-ghost btn-sm" style={{ marginRight: 4 }} onClick={() => handleEditFcst(f)}>수정</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => removeForecast(f.id)}>삭제</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -350,9 +371,16 @@ export default function ForecastTrend({ accountId }) {
       {/* FCST 입력 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>Forecast 데이터 ({allForecasts.length}건)</span>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
-          {showForm ? '닫기' : '+ Forecast 입력'}
-        </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(showForm || editingFcstId) && (
+            <button className="btn btn-ghost btn-sm" onClick={() => { setShowForm(false); setEditingFcstId(null); setNewFcst({ year: CURRENT_YEAR, month: 1, product_category: '', forecast_amount: '', currency: 'KRW', notes: '' }); }}>
+              취소
+            </button>
+          )}
+          <button className="btn btn-primary btn-sm" onClick={() => { setEditingFcstId(null); setShowForm(!showForm); }}>
+            {showForm && !editingFcstId ? '닫기' : '+ Forecast 입력'}
+          </button>
+        </div>
       </div>
 
       {showForm && (
@@ -402,7 +430,9 @@ export default function ForecastTrend({ accountId }) {
             </div>
           </div>
           <div style={{ textAlign: 'right', marginTop: 8 }}>
-            <button className="btn btn-primary" onClick={handleAddFcst} disabled={!newFcst.product_category || !newFcst.forecast_amount}>추가</button>
+            <button className="btn btn-primary" onClick={handleAddFcst} disabled={!newFcst.product_category || !newFcst.forecast_amount}>
+              {editingFcstId ? '수정 저장' : '추가'}
+            </button>
           </div>
         </div>
       )}

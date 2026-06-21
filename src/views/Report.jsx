@@ -733,9 +733,9 @@ export default function Report() {
   // 다음 달 사업 계획 (수동 입력, localStorage)
   const [nextMonthPlan, setNextMonthPlan] = useState({ overseas: '', domestic: '', support: '' });
   // v3.20: 주간 보고 — 수주/매출 예측액 (담당자 직접 입력, 주차별 Firestore 저장)
-  const [weeklyForecast, setWeeklyForecast] = useState({ orders: {}, sales: {} });
+  const [weeklyForecast, setWeeklyForecast] = useState({ orders: {}, sales: {}, orders_notes: {}, sales_notes: {} });
   // v3.36: 주간 보고 — 다음 달 수주/매출 예상 (월말·월초 시점, 월별 Firestore 저장)
-  const [nextMonthForecast, setNextMonthForecast] = useState({ orders: {}, sales: {} });
+  const [nextMonthForecast, setNextMonthForecast] = useState({ orders: {}, sales: {}, notes: {} });
   // v3.21: Auto Executive Summary 사용자 override (월별 Firestore 저장)
   const [autoSummaryOverride, setAutoSummaryOverride] = useState({ lines: ['', '', '', ''], enabled: false });
   // 담당자별 실적 드릴다운 토글 (신규/기타 고객 리스트 펼침)
@@ -3751,8 +3751,8 @@ export default function Report() {
   useEffect(() => {
     const saved = appSettings?.[weeklyForecastKey];
     setWeeklyForecast(saved && typeof saved === 'object'
-      ? { orders: saved.orders || {}, sales: saved.sales || {} }
-      : { orders: {}, sales: {} });
+      ? { orders: saved.orders || {}, sales: saved.sales || {}, orders_notes: saved.orders_notes || {}, sales_notes: saved.sales_notes || {} }
+      : { orders: {}, sales: {}, orders_notes: {}, sales_notes: {} });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weeklyData.weekStart, appSettings[weeklyForecastKey]]);
 
@@ -3782,10 +3782,12 @@ export default function Report() {
 
   const wfSaveTimer = useRef(null);
   const updateWeeklyForecast = (type, team, value) => {
-    // type: 'orders' | 'sales'; team: 팀 키; value: 사용자 입력 문자열
+    // type: 'orders' | 'sales' | 'orders_notes' | 'sales_notes'; team: 팀 키; value: 사용자 입력 문자열
     const next = {
       orders: { ...(weeklyForecast.orders || {}) },
       sales: { ...(weeklyForecast.sales || {}) },
+      orders_notes: { ...(weeklyForecast.orders_notes || {}) },
+      sales_notes: { ...(weeklyForecast.sales_notes || {}) },
     };
     next[type][team] = value;
     setWeeklyForecast(next);
@@ -3806,8 +3808,8 @@ export default function Report() {
   useEffect(() => {
     const saved = appSettings?.[nmForecastKey];
     setNextMonthForecast(saved && typeof saved === 'object'
-      ? { orders: saved.orders || {}, sales: saved.sales || {} }
-      : { orders: {}, sales: {} });
+      ? { orders: saved.orders || {}, sales: saved.sales || {}, notes: saved.notes || {} }
+      : { orders: {}, sales: {}, notes: {} });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nmForecastKey, appSettings[nmForecastKey]]);
 
@@ -3816,6 +3818,7 @@ export default function Report() {
     const next = {
       orders: { ...(nextMonthForecast.orders || {}) },
       sales: { ...(nextMonthForecast.sales || {}) },
+      notes: { ...(nextMonthForecast.notes || {}) },
     };
     next[type][team] = value;
     setNextMonthForecast(next);
@@ -4942,6 +4945,7 @@ export default function Report() {
                       <th style={{ textAlign: 'right' }}>당월 목표</th>
                       <th style={{ textAlign: 'right' }}>달성률</th>
                       <th style={{ textAlign: 'right', minWidth: 100 }}>수주 예측 ✏️</th>
+                      <th style={{ minWidth: 140 }}>비고 ✏️</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4968,6 +4972,19 @@ export default function Report() {
                               title="해당 월 예측 수주액 — 본부장 직접 입력 (Firestore 자동 저장, 주차별)"
                             />
                           </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={weeklyForecast.orders_notes?.[team] || ''}
+                              onChange={(e) => updateWeeklyForecast('orders_notes', team, e.target.value)}
+                              placeholder="이슈 메모"
+                              style={{
+                                width: '100%', minWidth: 130, fontSize: 12,
+                                padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4,
+                                background: 'var(--bg)', color: 'var(--text)',
+                              }}
+                            />
+                          </td>
                         </tr>
                       );
                     })}
@@ -4991,6 +5008,19 @@ export default function Report() {
                             background: 'var(--bg)', color: 'var(--text)',
                           }}
                           title="합계 예측 수주액 — 직접 입력"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={weeklyForecast.orders_notes?.total || ''}
+                          onChange={(e) => updateWeeklyForecast('orders_notes', 'total', e.target.value)}
+                          placeholder="이슈 메모"
+                          style={{
+                            width: '100%', minWidth: 130, fontSize: 12,
+                            padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4,
+                            background: 'var(--bg)', color: 'var(--text)',
+                          }}
                         />
                       </td>
                     </tr>
@@ -5019,6 +5049,7 @@ export default function Report() {
                       <th style={{ textAlign: 'right' }}>당월 목표</th>
                       <th style={{ textAlign: 'right' }}>달성률</th>
                       <th style={{ textAlign: 'right', minWidth: 100 }}>매출 예측 ✏️</th>
+                      <th style={{ minWidth: 140 }}>비고 ✏️</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5045,6 +5076,19 @@ export default function Report() {
                               title="해당 월 예측 매출액 — 직접 입력"
                             />
                           </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={weeklyForecast.sales_notes?.[team] || ''}
+                              onChange={(e) => updateWeeklyForecast('sales_notes', team, e.target.value)}
+                              placeholder="이슈 메모"
+                              style={{
+                                width: '100%', minWidth: 130, fontSize: 12,
+                                padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4,
+                                background: 'var(--bg)', color: 'var(--text)',
+                              }}
+                            />
+                          </td>
                         </tr>
                       );
                     })}
@@ -5068,6 +5112,19 @@ export default function Report() {
                             background: 'var(--bg)', color: 'var(--text)',
                           }}
                           title="합계 예측 매출액 — 직접 입력"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={weeklyForecast.sales_notes?.total || ''}
+                          onChange={(e) => updateWeeklyForecast('sales_notes', 'total', e.target.value)}
+                          placeholder="이슈 메모"
+                          style={{
+                            width: '100%', minWidth: 130, fontSize: 12,
+                            padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4,
+                            background: 'var(--bg)', color: 'var(--text)',
+                          }}
                         />
                       </td>
                     </tr>
@@ -5345,6 +5402,7 @@ export default function Report() {
                       <th style={{ minWidth: 100 }}>구분</th>
                       <th style={{ textAlign: 'right', minWidth: 110 }}>수주 예상 ✏️</th>
                       <th style={{ textAlign: 'right', minWidth: 110 }}>매출 예상 ✏️</th>
+                      <th style={{ minWidth: 140 }}>비고 ✏️</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5394,6 +5452,19 @@ export default function Report() {
                                 />
                               ) : '-'}
                             </td>
+                            <td>
+                              <input
+                                type="text"
+                                value={nextMonthForecast.notes?.[i] || ''}
+                                onChange={(e) => updateNextMonthForecast('notes', i, e.target.value)}
+                                placeholder="이슈 메모"
+                                style={{
+                                  width: '100%', minWidth: 130, fontSize: 12,
+                                  padding: '2px 6px', border: '1px solid var(--border)',
+                                  borderRadius: 4, background: 'var(--bg)', color: 'var(--text)',
+                                }}
+                              />
+                            </td>
                           </tr>
                         );
                       }
@@ -5424,6 +5495,19 @@ export default function Report() {
                           style={{
                             width: 90, textAlign: 'right', fontSize: 12, fontWeight: 700,
                             padding: '2px 6px', border: '1px solid #93c5fd',
+                            borderRadius: 4, background: 'var(--bg)', color: 'var(--text)',
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={nextMonthForecast.notes?.total || ''}
+                          onChange={(e) => updateNextMonthForecast('notes', 'total', e.target.value)}
+                          placeholder="이슈 메모"
+                          style={{
+                            width: '100%', minWidth: 130, fontSize: 12,
+                            padding: '2px 6px', border: '1px solid var(--border)',
                             borderRadius: 4, background: 'var(--bg)', color: 'var(--text)',
                           }}
                         />
