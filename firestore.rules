@@ -4,5 +4,9 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if true;
     }
+    // v3.41: 경쟁사 가격 컬렉션 명시적 허용
+    match /competitors/{id} {
+      allow read, write: if true;
+    }
   }
 }

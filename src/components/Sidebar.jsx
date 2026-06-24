@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { key: 'accounts',   icon: '🏢',  labelKey: 'menu.accounts' },
   { key: 'progress',   icon: '📈',  labelKey: 'menu.progress' },
   { key: 'teamCommon', icon: '👥',  labelKey: 'menu.teamCommon' },
+  { key: 'competitors', icon: '🏷',  labelKey: 'menu.competitors' },
   { key: 'typeguide',  icon: '📖',  labelKey: 'menu.typeguide' },
   { key: 'changelog',  icon: '📝',  labelKey: 'menu.changelog' },
   { key: 'settings',   icon: '⚙️', labelKey: 'menu.settings', adminOnly: true },

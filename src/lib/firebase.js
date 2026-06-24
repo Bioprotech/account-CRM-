@@ -32,6 +32,7 @@ const PLANS_COL = 'business_plans';
 const TASKS_COL = 'team_tasks';            // Phase C v3.2 — 팀별 TASK
 const PIPELINE_COL = 'customers';          // Phase C v3.2 — Pipeline CRM 하이브리드 (read-only)
 const AUDIT_LOG_COL = 'import_audit_logs'; // v3.18 — Import 시점 raw 합계 불변 원장
+const COMPETITORS_COL = 'competitors';     // v3.41 — 경쟁사 가격 정보
 const TEAM_ACTIVITIES_COL = 'team_activities'; // v3.31 — 팀 공통 활동/이슈 (고객 단위 X)
 const TEAM_PROJECTS_COL = 'team_projects';     // v3.31 — 공통 프로젝트 (고객 가로지르는 지속성 PJT + KPI)
 
@@ -457,6 +458,26 @@ export async function saveSetting(key, value) {
   if (!FIREBASE_ENABLED) return;
   const ref = doc(db, SETTINGS_COLLECTION, SETTINGS_DOC);
   await setDoc(ref, { [key]: value }, { merge: true });
+}
+
+// ── 경쟁사 가격 (v3.41) ──────────────────────────────────────────────────────
+export function subscribeCompetitors(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  return onSnapshot(
+    collection(db, COMPETITORS_COL),
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] competitors onSnapshot 오류:', err)
+  );
+}
+
+export async function saveCompetitor(data) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, COMPETITORS_COL, data.id), data);
+}
+
+export async function deleteCompetitor(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, COMPETITORS_COL, id));
 }
 
 /**

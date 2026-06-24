@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource, subscribeImportAuditLogs, saveImportAuditLog as fbSaveAuditLog, deleteImportAuditLog as fbDeleteAuditLog, subscribeTeamActivities, saveTeamActivity as fbSaveTeamActivity, deleteTeamActivity as fbDeleteTeamActivity, subscribeTeamProjects, saveTeamProject as fbSaveTeamProject, deleteTeamProject as fbDeleteTeamProject } from '../lib/firebase';
+import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource, subscribeImportAuditLogs, saveImportAuditLog as fbSaveAuditLog, deleteImportAuditLog as fbDeleteAuditLog, subscribeTeamActivities, saveTeamActivity as fbSaveTeamActivity, deleteTeamActivity as fbDeleteTeamActivity, subscribeTeamProjects, saveTeamProject as fbSaveTeamProject, deleteTeamProject as fbDeleteTeamProject,
+  subscribeCompetitors, saveCompetitor as fbSaveCompetitor, deleteCompetitor as fbDeleteCompetitor } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -108,6 +109,7 @@ export default function AccountProvider({ children }) {
   const [teamActivities, setTeamActivities] = useState([]);    // v3.31 — 팀 공통 활동/이슈
   const [teamProjects, setTeamProjects] = useState([]);        // v3.31 — 공통 프로젝트
   const [importAuditLogs, setImportAuditLogs] = useState([]);  // v3.18 — Import 시점 raw 합계 원장
+  const [competitors, setCompetitors] = useState([]);          // v3.41 — 경쟁사 가격 정보
   const [pipelineCustomers, setPipelineCustomers] = useState([]);  // Phase C v3.2 (read-only)
   const [fbStatus, setFbStatus] = useState(FIREBASE_ENABLED ? 'connecting' : 'disabled');
 
@@ -141,8 +143,9 @@ export default function AccountProvider({ children }) {
     const unsub10 = subscribeImportAuditLogs((data) => setImportAuditLogs(data));
     const unsub11 = subscribeTeamActivities((data) => setTeamActivities(data));
     const unsub12 = subscribeTeamProjects((data) => setTeamProjects(data));
+    const unsub13 = subscribeCompetitors((data) => setCompetitors(data));
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); };
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); };
   }, []);
 
   // v3.4: 대용량 localStorage 백업 완전 제거 — Firebase가 원본 소스로 충분
@@ -687,6 +690,29 @@ export default function AccountProvider({ children }) {
     showToast('삭제 완료', 'success');
   }, []);
 
+  /* ── 경쟁사 가격 (v3.41) ── */
+  const saveCompetitorItem = useCallback(async (item) => {
+    setCompetitors(prev => {
+      const idx = prev.findIndex(x => x.id === item.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = item; return next; }
+      return [...prev, item];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveCompetitor(item); }
+      catch (e) { console.error('경쟁사 저장 실패:', e); showToast('저장 실패', 'error'); }
+    }
+    showToast('저장 완료', 'success');
+  }, []);
+
+  const removeCompetitor = useCallback(async (id) => {
+    setCompetitors(prev => prev.filter(x => x.id !== id));
+    if (FIREBASE_ENABLED) {
+      try { await fbDeleteCompetitor(id); }
+      catch (e) { console.error('경쟁사 삭제 실패:', e); }
+    }
+    showToast('삭제 완료', 'success');
+  }, []);
+
   /* ── Import Audit Logs (v3.18) ── */
   const saveImportAuditLog = useCallback(async (log) => {
     setImportAuditLogs(prev => {
@@ -1044,6 +1070,7 @@ export default function AccountProvider({ children }) {
     accounts, filteredAccounts, visibleAccounts,
     activityLogs, openIssues,
     orders, sales, contracts, forecasts, businessPlans, teamTasks, teamActivities, teamProjects, pipelineCustomers, alarms, importAuditLogs,
+    competitors, saveCompetitorItem, removeCompetitor,
     filters, setFilters,
     currentTab, setCurrentTab,
     editingAccount, setEditingAccount,

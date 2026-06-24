@@ -8,6 +8,7 @@ import AccountList from './views/AccountList';
 import Settings from './views/Settings';
 import Report from './views/Report';
 import Progress from './views/Progress';
+import CompetitorView from './views/CompetitorView';
 import MyTasks from './views/MyTasks';
 import TeamCommon from './views/TeamCommon';
 import TypeGuideView from './views/TypeGuideView';
@@ -186,6 +187,7 @@ function AppContent() {
       case 'accounts': return <AccountList />;
       case 'report': return <Report />;
       case 'progress': return <Progress />;
+      case 'competitors': return <CompetitorView />;
       case 'myTasks': return <MyTasks />;
       case 'teamCommon': return <TeamCommon />;
       case 'typeguide': return <TypeGuideView />;

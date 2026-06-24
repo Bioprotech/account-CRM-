@@ -3,20 +3,37 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 작업 규칙은 `CLAUDE.md`, 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-05-31 (v3.35 빌드 완료 — Import 중복 경쟁조건 해결 / 배포는 사용자 컨펌 후)
+**최종 갱신**: 2026-06-09 (v3.37 배포 완료 — 월간보고 개선 + 수주현황 분석 대시보드)
 
 ---
 
 ## 🎯 현재 상태
 
-- **운영 버전(라이브)**: v3.34 (index-C-s_PkW2.js) — v3.35는 아직 배포 전
-- **로컬 빌드**: v3.35 (index-DXirhGou.js) — 배포 컨펌 대기
-- **GitHub**: https://github.com/Bioprotech/account-CRM-.git (v3.35 커밋 후 push 필요)
+- **운영 버전(라이브)**: v3.37 (index-BKELPT08.js) ✅ 배포 완료
+- **GitHub**: https://github.com/Bioprotech/account-CRM-.git (cb3e56d)
 - **Firebase 프로젝트**: bioprotech-crm (Pipeline CRM과 공유)
 
 ---
 
-## 🆕 v3.35 변경 (2026-05-31 — Import 중복 재발 근본 해결)
+## 🆕 v3.37 변경 (2026-06-09 — 보고서 개선 + 수주현황 분석)
+
+**사용자 요청**: "내용은 쓸데없이 많은데 정작 무슨 얘기를 하고자 하는 것인지 불명확" 지적 대응
+
+- **[Report.jsx] 결론 헤드라인 배너** (Page 1 최상단)
+  - 상태 아이콘(🟢🟡🔴) + ■0 핵심 메시지(미입력 시 자동 요약) + KPI 3종
+  - 회의 시 첫 화면에서 결론 즉시 파악
+- **[Report.jsx] Page 2 섹션 접기/펼치기**
+  - ■2-3 담당자별 / ■8 품목별 / ■9 대륙별 — 기본값: 접힘
+- **[Dashboard.jsx] OrderAnalysisCard** (전 담당자 열람 가능)
+  - 해외 계획고객 / 해외신규기타 / 국내 계획고객 / 국내기타신규 / BPU
+  - 연간계획 / YTD계획 / YTD실적 / 달성률 / 전년YTD / 계획대비 / 전년대비
+
+---
+
+## 🆕 v3.35~36 이전 변경 요약
+
+- **v3.36** (2026-05-31) — 주간보고 ■1-5 다음달 수주/매출 예상
+- **v3.35** (2026-05-31 — Import 중복 재발 근본 해결
 
 **v3.22에서 Firestore 레벨 중복(delete 실패 → 2배 저장)을 차단했으나 React state 레벨 중복이 잔존:**
 
@@ -30,7 +47,9 @@
 
 ## 📌 직전 주요 버전 흐름 (계정 이관 후 신규 세션 작업분)
 
-- **v3.35** (2026-05-31) — Import React state 중복 경쟁조건 해결 (이번)
+- **v3.37** (2026-06-09) — 월간보고 개선 + 수주현황 분석 대시보드 (이번)
+- **v3.36** (2026-05-31) — 주간보고 ■1-5 다음달 수주/매출 예상
+- **v3.35** (2026-05-31) — Import React state 중복 경쟁조건 해결
 - **v3.34** (2026-05-28) — 보고서 인사이트: Loss Reason / Activity ROI / FCST 정확도 / Health Score
 - **v3.33** (2026-05-26) — i18n: KO/EN 토글, AM 운영 메뉴 영문화 (중국 법인 지원)
 - **v3.32** (2026-05-26) — 계약전환율 KPI (Dashboard) + 거래종료(inactive) 고객 분류
@@ -62,8 +81,8 @@
 
 ## 🚀 다음 작업 후보
 
-- **v3.35 배포** — 사용자 컨펌 후 `npx firebase deploy --only hosting`
 - **CRM 보완 명세서 잔여**: ⑤ 마진/공헌이익 (ERP/BOM source 결정 필요), ③④는 Pipeline CRM 영역
+- **수주현황 분석 고도화**: Dashboard OrderAnalysisCard — BPU 분류 정확도 확인 (실제 데이터로 검토)
 - **i18n 잔여**: AccountModal inline placeholder / alert 메시지 (선택)
 - **거래종료 고객 시각적 구분** in AccountList (선택)
 
