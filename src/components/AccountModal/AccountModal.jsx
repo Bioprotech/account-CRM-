@@ -35,7 +35,7 @@ function fmtAmount(n) {
 
 export default function AccountModal() {
   const { editingAccount, setEditingAccount, saveAccount, removeAccount, isAdmin, currentUser,
-    getLogsForAccount, getOrdersForAccount, getContractsForAccount, getForecastsForAccount, getPlansForAccount, t } = useAccount();
+    getLogsForAccount, getOrdersForAccount, getSalesForAccount, getContractsForAccount, getForecastsForAccount, getPlansForAccount, t } = useAccount();
   const [draft, setDraft] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
   const [showDelete, setShowDelete] = useState(false);
@@ -88,12 +88,15 @@ export default function AccountModal() {
         ['지역', draft.region || ''],
         ['사업형태', draft.business_type || ''],
         ['고객유형', draft.customer_type || ''],
+        ['고객분류', draft.customer_category || ''],
+        ['전략등급', draft.strategic_tier || ''],
         ['담당자', draft.sales_rep || ''],
         ['제품군', (draft.products || []).join(', ')],
         ['거래 시작일', draft.trade_start_date || ''],
         ['계약 상태', draft.contract_status || ''],
         ['최근 컨택일', draft.last_contact_date || ''],
         ['Intelligence Score', `${score}%`],
+        ['메모(Context)', draft.context_memo || ''],
         [],
         ['[Key Contacts]'],
         ['이름', '직책', '이메일', '전화', '결정권자'],
@@ -126,11 +129,17 @@ export default function AccountModal() {
       const logRows = [
         ['활동 로그', `${logs.length}건`],
         [],
-        ['날짜', '유형', '담당자', '상태', '내용', '다음액션', '기한'],
-        ...logs.map(l => [l.date || '', l.issue_type || '', l.sales_rep || '', l.status || '', l.content || '', l.next_action || '', l.due_date || '']),
+        ['날짜', '유형', '중요도', '담당자', '내용', '다음액션', '기한', '예상금액', '제품군', '대상품목', '수주세부유형', '회복계획일', '회복금액', '회복메모', '타부서공유', '결과'],
+        ...logs.map(l => [
+          l.date || '', l.issue_type || '', l.priority || '', l.sales_rep || '',
+          l.content || '', l.next_action || '', l.due_date || '',
+          l.expected_amount || '', l.product_category || '', l.target_product || '',
+          l.order_sub_type || '', l.recovery_plan_date || '', l.recovery_plan_amount || '',
+          l.recovery_plan_note || '', l.cross_dept_share ? 'Y' : '', l.outcome || '',
+        ]),
       ];
       const ws3 = XLSX.utils.aoa_to_sheet(logRows);
-      ws3['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 40 }, { wch: 25 }, { wch: 12 }];
+      ws3['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 40 }, { wch: 25 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 25 }, { wch: 10 }, { wch: 14 }];
       XLSX.utils.book_append_sheet(wb, ws3, '활동로그');
 
       // Sheet 4: 수주이력
@@ -148,7 +157,22 @@ export default function AccountModal() {
       ws4['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, ws4, '수주이력');
 
-      // Sheet 5: GAP 분석
+      // Sheet 5: 매출이력
+      const sales = getSalesForAccount(draft.id);
+      if (sales.length > 0) {
+        const saleRows = [
+          ['매출이력', `${sales.length}건`],
+          [],
+          ['매출일(B/L)', '제품군', '매출금액', '담당자', '비고'],
+          ...sales.map(s => [s.sale_date || '', s.product_category || '', s.sale_amount || 0, s.sales_rep || '', s.notes || '']),
+        ];
+        saleRows.push([], ['합계', '', sales.reduce((sum, s) => sum + (s.sale_amount || 0), 0)]);
+        const ws5b = XLSX.utils.aoa_to_sheet(saleRows);
+        ws5b['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 30 }];
+        XLSX.utils.book_append_sheet(wb, ws5b, '매출이력');
+      }
+
+      // Sheet 6: GAP 분석
       const gap = draft.gap_analysis || {};
       const gapRows = [['GAP 분석'], []];
       // Causes
@@ -226,6 +250,40 @@ export default function AccountModal() {
         ws8['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 25 }];
         XLSX.utils.book_append_sheet(wb, ws8, '크로스셀링');
       }
+
+      // Sheet: Insight
+      const ci = draft.customer_insight || {};
+      const supplier = ci.supplier || {};
+      const decision = ci.decision || {};
+      const bizHealth = ci.biz_health || {};
+      const insightRows = [
+        ['고객 인사이트'],
+        [],
+        ['[공급자·경쟁 포지션]'],
+        ['우리 공급 포지션', supplier.position || ''],
+        ['대안 탐색 여부', supplier.substitute_search || ''],
+        ['전략 품목', (supplier.strategic_products || []).join(', ')],
+        [],
+        ['경쟁사', '가격수준', '비고'],
+        ...(supplier.competitors || []).map(c => [c.name || '', c.price_level || '', c.notes || '']),
+        [],
+        ['[의사결정]'],
+        ['핵심 의사결정자', decision.key_decision_maker || ''],
+        ['관계 온도', decision.relationship_temp || ''],
+        ['챔피언 유무', decision.has_champion !== undefined && decision.has_champion !== '' ? (decision.has_champion ? 'Y' : 'N') : ''],
+        [],
+        ['인플루언서', '역할', '온도', '비고'],
+        ...(decision.influencers || []).map(inf => [inf.name || '', inf.role || '', inf.temp || '', inf.notes || '']),
+        [],
+        ['[사업 건전성]'],
+        ['성장 트렌드', bizHealth.growth_trend || ''],
+        ['재무 건전성', bizHealth.financial_health || ''],
+        ['전략 부합도', bizHealth.strategic_fit || ''],
+        ['추가 메모', bizHealth.notes || ''],
+      ];
+      const wsInsight = XLSX.utils.aoa_to_sheet(insightRows);
+      wsInsight['!cols'] = [{ wch: 22 }, { wch: 25 }, { wch: 30 }, { wch: 20 }];
+      XLSX.utils.book_append_sheet(wb, wsInsight, 'Insight');
 
       XLSX.writeFile(wb, `${name}_고객카드_${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch (err) {
