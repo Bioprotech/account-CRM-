@@ -235,6 +235,27 @@ export default function BasicInfo({ draft, update }) {
         </div>
       </div>
 
+      {/* v3.45: 공동 담당자 */}
+      {teamMembers.filter(m => m !== draft.sales_rep).length > 0 && (
+        <div className="form-group" style={{ marginBottom: 14 }}>
+          <label>공동 담당자</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+            {teamMembers.filter(m => m !== draft.sales_rep).map(m => {
+              const checked = (draft.co_reps || []).includes(m);
+              return (
+                <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', padding: '3px 8px', borderRadius: 4, border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`, background: checked ? 'rgba(46,125,50,.08)' : 'var(--bg2)' }}>
+                  <input type="checkbox" checked={checked} onChange={e => {
+                    const curr = draft.co_reps || [];
+                    update({ co_reps: e.target.checked ? [...curr, m] : curr.filter(x => x !== m) });
+                  }} style={{ accentColor: 'var(--accent)' }} />
+                  {m}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* v3.32: 계약 상태 가이드 박스 (기존 contract_status 필드 활용 — 전환율 지표) */}
       <div style={{ marginBottom: 14, padding: 10, background: 'rgba(46,125,50,0.04)', border: '1px solid rgba(46,125,50,0.2)', borderRadius: 6 }}>
         <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: 'var(--accent)' }}>

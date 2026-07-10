@@ -745,7 +745,9 @@ export default function AccountProvider({ children }) {
     const effectiveAdmin = isAdmin && !viewAsRep;
     const effectiveUser = viewAsRep || currentUser;
     if (effectiveAdmin || !effectiveUser) return filteredAccounts;
-    return filteredAccounts.filter(a => !a.sales_rep || a.sales_rep === effectiveUser);
+    return filteredAccounts.filter(a =>
+      !a.sales_rep || a.sales_rep === effectiveUser || (a.co_reps || []).includes(effectiveUser)
+    );
   }, [filteredAccounts, currentUser, isAdmin, viewAsRep]);
 
   /* ── Tab & Modal ── */

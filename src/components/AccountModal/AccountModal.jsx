@@ -68,7 +68,7 @@ export default function AccountModal() {
     setShowDelete(false);
   };
 
-  const canEdit = isAdmin || !draft.sales_rep || draft.sales_rep === currentUser;
+  const canEdit = isAdmin || !draft.sales_rep || draft.sales_rep === currentUser || (draft.co_reps || []).includes(currentUser);
   const isNew = !editingAccount?.company_name;
   const score = draft.intelligence?.total_score ?? 0;
 
