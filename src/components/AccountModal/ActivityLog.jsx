@@ -18,6 +18,7 @@ const FIELD_LABELS = {
   issue_type: '이슈 유형',
   priority: '중요도',
   content: '내용',
+  next_actions: '다음 액션플랜',
   next_action: '다음 액션',
   due_date: '다음 액션 기한',
   order_sub_type: '수주 세부 유형',
@@ -31,8 +32,7 @@ const INITIAL_LOG = {
   date: '',                // v3.5: 활동 발생일 (사용자 입력, 기본: 오늘)
   issue_type: '일반컨택',
   content: '',
-  next_action: '',
-  due_date: '',
+  next_actions: [{ text: '', date: '' }],  // v3.46: 복수 액션플랜 (필수)
   priority: DEFAULT_PRIORITY,
   order_sub_type: '',
   expected_amount: '',
@@ -227,6 +227,11 @@ export default function ActivityLog({ accountId, draft }) {
 
   const handleAdd = () => {
     if (!newLog.content.trim()) return;
+    const validActions = newLog.next_actions.filter(a => a.text.trim() && a.date);
+    if (validActions.length === 0) {
+      alert('다음 액션플랜을 최소 1개 이상 입력해야 합니다.\n(내용 + 기한 모두 필수)');
+      return;
+    }
 
     const nowIso = new Date().toISOString();
     // v3.17.3: sales_rep은 그 고객의 담당자로 자동 설정 (본부장이 입력해도 담당자 이름으로 집계)
@@ -242,8 +247,9 @@ export default function ActivityLog({ accountId, draft }) {
       sales_rep: repForActivity,
       content: newLog.content.trim(),
       status: 'Open',
-      next_action: newLog.next_action.trim(),
-      due_date: newLog.due_date,
+      next_actions: newLog.next_actions.filter(a => a.text.trim() && a.date),
+      next_action: newLog.next_actions.find(a => a.text.trim())?.text || '',
+      due_date: newLog.next_actions.find(a => a.text.trim())?.date || '',
       attachment_url: '',
       closed_at: '',
       closed_by: '',
@@ -325,13 +331,15 @@ export default function ActivityLog({ accountId, draft }) {
      ══════════════════════════════════════════════════════ */
   const startEdit = (log) => {
     setEditingLogId(log.id);
+    const next_actions = log.next_actions?.length
+      ? log.next_actions
+      : (log.next_action ? [{ text: log.next_action, date: log.due_date || '' }] : [{ text: '', date: '' }]);
     setEditForm({
       date: log.date || today(),
       issue_type: log.issue_type || '일반컨택',
       priority: log.priority ?? DEFAULT_PRIORITY,
       content: log.content || '',
-      next_action: log.next_action || '',
-      due_date: log.due_date || '',
+      next_actions,
       order_sub_type: log.order_sub_type || '',
       expected_amount: log.expected_amount || '',
       related_order_no: log.related_order_no || '',
@@ -354,7 +362,7 @@ export default function ActivityLog({ accountId, draft }) {
     const changedFields = [];
     const fromValues = {};
     const toValues = {};
-    const compareKeys = ['date', 'issue_type', 'priority', 'content', 'next_action', 'due_date', 'order_sub_type', 'expected_amount', 'related_order_no', 'product_category', 'target_product'];
+    const compareKeys = ['date', 'issue_type', 'priority', 'content', 'order_sub_type', 'expected_amount', 'related_order_no', 'product_category', 'target_product'];
     compareKeys.forEach(k => {
       const oldV = log[k] ?? '';
       const newV = editForm[k] ?? '';
@@ -364,6 +372,13 @@ export default function ActivityLog({ accountId, draft }) {
         toValues[k] = newV;
       }
     });
+    const oldActionsStr = JSON.stringify(log.next_actions || (log.next_action ? [{ text: log.next_action, date: log.due_date || '' }] : []));
+    const newActionsStr = JSON.stringify((editForm.next_actions || []).filter(a => a.text.trim()));
+    if (oldActionsStr !== newActionsStr) {
+      changedFields.push('next_actions');
+      fromValues['next_actions'] = oldActionsStr;
+      toValues['next_actions'] = newActionsStr;
+    }
 
     if (changedFields.length === 0) {
       cancelEdit();
@@ -385,8 +400,9 @@ export default function ActivityLog({ accountId, draft }) {
       issue_type: editForm.issue_type,
       priority: Number(editForm.priority) || DEFAULT_PRIORITY,
       content: editForm.content.trim(),
-      next_action: editForm.next_action?.trim() || '',
-      due_date: editForm.due_date || '',
+      next_actions: (editForm.next_actions || []).filter(a => a.text.trim()),
+      next_action: (editForm.next_actions || []).find(a => a.text.trim())?.text || '',
+      due_date: (editForm.next_actions || []).find(a => a.text.trim())?.date || '',
       order_sub_type: editForm.order_sub_type || '',
       expected_amount: Number(editForm.expected_amount) || 0,
       related_order_no: editForm.related_order_no?.trim() || '',
@@ -586,17 +602,37 @@ export default function ActivityLog({ accountId, draft }) {
             </div>
           </div>
 
-          {/* v3.5: 하단 행 — 다음 액션 / 다음 액션 기한 (짝으로 묶음) */}
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 2 }}>
-              <label>{t('act.nextAction')}</label>
-              <input type="text" value={newLog.next_action} onChange={e => setNewLog(p => ({ ...p, next_action: e.target.value }))} placeholder="다음 단계 액션" />
-            </div>
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>
-                다음 액션 기한 <span style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 400 }}>(due date)</span>
+          {/* v3.46: 다음 액션플랜 (복수, 필수) */}
+          <div className="form-row full">
+            <div className="form-group">
+              <label style={{ color: 'var(--red, #dc2626)', fontWeight: 700 }}>
+                📋 다음 액션플랜 * <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>— 최소 1개 필수 (내용 + 기한)</span>
               </label>
-              <input type="date" value={newLog.due_date} onChange={e => setNewLog(p => ({ ...p, due_date: e.target.value }))} />
+              {newLog.next_actions.map((a, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    style={{ flex: 2, fontSize: 12, padding: '4px 8px', border: `1px solid ${!a.text.trim() ? 'var(--red, #dc2626)' : 'var(--border)'}`, borderRadius: 4, background: 'var(--bg2)', color: 'var(--text1)' }}
+                    value={a.text}
+                    onChange={e => setNewLog(p => { const na = [...p.next_actions]; na[i] = { ...na[i], text: e.target.value }; return { ...p, next_actions: na }; })}
+                    placeholder="액션 내용을 입력하세요" />
+                  <input
+                    type="date"
+                    style={{ flex: 1, fontSize: 12, padding: '4px 6px', border: `1px solid ${!a.date ? 'var(--red, #dc2626)' : 'var(--border)'}`, borderRadius: 4, background: 'var(--bg2)', color: 'var(--text1)' }}
+                    value={a.date}
+                    onChange={e => setNewLog(p => { const na = [...p.next_actions]; na[i] = { ...na[i], date: e.target.value }; return { ...p, next_actions: na }; })} />
+                  {newLog.next_actions.length > 1 && (
+                    <button
+                      style={{ padding: '3px 7px', fontSize: 11, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text3)' }}
+                      onClick={() => setNewLog(p => ({ ...p, next_actions: p.next_actions.filter((_, j) => j !== i) }))}>✕</button>
+                  )}
+                </div>
+              ))}
+              <button
+                style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: '1px dashed var(--border)', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', marginTop: 2 }}
+                onClick={() => setNewLog(p => ({ ...p, next_actions: [...p.next_actions, { text: '', date: '' }] }))}>
+                + 액션 추가
+              </button>
             </div>
           </div>
 
@@ -675,7 +711,7 @@ export default function ActivityLog({ accountId, draft }) {
           </details>
 
           <div style={{ textAlign: 'right', marginTop: 8 }}>
-            <button className="btn btn-primary" onClick={handleAdd} disabled={!newLog.content.trim()}>로그 추가</button>
+            <button className="btn btn-primary" onClick={handleAdd} disabled={!newLog.content.trim() || newLog.next_actions.filter(a => a.text.trim() && a.date).length === 0}>로그 추가</button>
           </div>
         </div>
       )}
@@ -774,14 +810,28 @@ export default function ActivityLog({ accountId, draft }) {
                       <textarea value={editForm.content} onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
                     </div>
                   </div>
-                  <div className="form-row">
-                    <div className="form-group" style={{ flex: 2 }}>
-                      <label>{t('act.nextAction')}</label>
-                      <input type="text" value={editForm.next_action} onChange={e => setEditForm(p => ({ ...p, next_action: e.target.value }))} />
-                    </div>
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>다음 액션 기한</label>
-                      <input type="date" value={editForm.due_date} onChange={e => setEditForm(p => ({ ...p, due_date: e.target.value }))} />
+                  <div className="form-row full">
+                    <div className="form-group">
+                      <label style={{ fontWeight: 700 }}>📋 다음 액션플랜</label>
+                      {(editForm.next_actions || []).map((a, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
+                          <input type="text"
+                            style={{ flex: 2, fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg2)', color: 'var(--text1)' }}
+                            value={a.text}
+                            onChange={e => setEditForm(p => { const na = [...(p.next_actions || [])]; na[i] = { ...na[i], text: e.target.value }; return { ...p, next_actions: na }; })}
+                            placeholder="액션 내용" />
+                          <input type="date"
+                            style={{ flex: 1, fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg2)', color: 'var(--text1)' }}
+                            value={a.date}
+                            onChange={e => setEditForm(p => { const na = [...(p.next_actions || [])]; na[i] = { ...na[i], date: e.target.value }; return { ...p, next_actions: na }; })} />
+                          {(editForm.next_actions || []).length > 1 && (
+                            <button style={{ padding: '2px 6px', fontSize: 10, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text3)' }}
+                              onClick={() => setEditForm(p => ({ ...p, next_actions: (p.next_actions || []).filter((_, j) => j !== i) }))}>✕</button>
+                          )}
+                        </div>
+                      ))}
+                      <button style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: '1px dashed var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}
+                        onClick={() => setEditForm(p => ({ ...p, next_actions: [...(p.next_actions || []), { text: '', date: '' }] }))}>+ 액션 추가</button>
                     </div>
                   </div>
 
@@ -861,12 +911,23 @@ export default function ActivityLog({ accountId, draft }) {
                   </div>
                 )}
 
-                {(log.next_action || log.due_date) && (
-                  <div className="timeline-meta">
-                    {log.next_action && <span>다음: {log.next_action}</span>}
-                    {log.due_date && <span>기한: {fmtDate(log.due_date)}</span>}
-                  </div>
-                )}
+                {(() => {
+                  const actions = log.next_actions?.length
+                    ? log.next_actions
+                    : (log.next_action ? [{ text: log.next_action, date: log.due_date || '' }] : []);
+                  if (actions.length === 0) return null;
+                  return (
+                    <div className="timeline-meta" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                      {actions.map((a, i) => (
+                        <span key={i}>
+                          {actions.length > 1 && <strong style={{ marginRight: 3 }}>{i + 1}.</strong>}
+                          {a.text && <>다음: {a.text}</>}
+                          {a.date && <> · 기한: {fmtDate(a.date)}</>}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {/* v3.5: 처리 결과 (완료된 이슈) */}
                 {log.status === 'Closed' && log.resolution && (

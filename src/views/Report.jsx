@@ -1724,22 +1724,41 @@ export default function Report() {
       if (l.status === 'Closed') return;
       const team = getTeamForAccount(l.account_id);
       if (!blocks[team]) return;
-      const inNextWeek = l.next_action && l.due_date && l.due_date >= nStart && l.due_date <= nEnd;
-      const isThisWeekOpen = (l.date || '') >= wkStart && (l.date || '') <= wkEnd && !l.next_action;
-      const isOverdue = l.due_date && l.due_date <= wkEnd;
-      if (!inNextWeek && !isThisWeekOpen && !isOverdue) return;
-      if (actionsMap.has(l.id)) return;
       const acc = accounts.find(a => a.id === l.account_id);
-      actionsMap.set(l.id, {
-        team,
-        company: acc?.company_name || '?',
-        accountId: l.account_id,
-        action: l.next_action || `[${l.issue_type}] ${l.content || '-'}`,
-        dueDate: l.due_date || '-',
-        rep: resolveActivityRep(l, accounts),
-        isCarryover: !inNextWeek,
-        daysOpen: daysSince(l.date),
-        status: l.status,
+      // v3.46: next_actions 배열 + 구형 next_action/due_date 하위호환
+      const logActions = l.next_actions?.length
+        ? l.next_actions
+        : (l.next_action ? [{ text: l.next_action, date: l.due_date || '' }] : []);
+      if (logActions.length === 0) {
+        // 액션 없는 경우 — 금주 발생 Open 이슈만 이월로 표시
+        const isThisWeekOpen = (l.date || '') >= wkStart && (l.date || '') <= wkEnd;
+        if (!isThisWeekOpen) return;
+        const key = l.id + '_noaction';
+        if (!actionsMap.has(key)) {
+          actionsMap.set(key, {
+            team, company: acc?.company_name || '?', accountId: l.account_id,
+            action: `[${l.issue_type}] ${l.content || '-'}`,
+            dueDate: '-', rep: resolveActivityRep(l, accounts),
+            isCarryover: true, daysOpen: daysSince(l.date), status: l.status,
+          });
+        }
+        return;
+      }
+      logActions.forEach((a, idx) => {
+        const inNextWeek = a.text && a.date && a.date >= nStart && a.date <= nEnd;
+        const isOverdue = a.date && a.date <= wkEnd;
+        if (!inNextWeek && !isOverdue) return;
+        const key = l.id + '_' + idx;
+        if (actionsMap.has(key)) return;
+        actionsMap.set(key, {
+          team, company: acc?.company_name || '?', accountId: l.account_id,
+          action: a.text || `[${l.issue_type}] ${l.content || '-'}`,
+          dueDate: a.date || '-',
+          rep: resolveActivityRep(l, accounts),
+          isCarryover: !inNextWeek,
+          daysOpen: daysSince(l.date),
+          status: l.status,
+        });
       });
     });
     Array.from(actionsMap.values()).forEach(a => {
@@ -1753,29 +1772,33 @@ export default function Report() {
     });
 
     // ── v3.17 Phase B2: 전주 계획 이행 점검 ──
-    // 전주 (pStart ~ pEnd) 범위에 due_date가 있던 활동을 이행/미이행으로 분류
     activityLogs.forEach(l => {
-      if (!l.due_date || l.due_date < pStart || l.due_date > pEnd) return;
       const team = getTeamForAccount(l.account_id);
       if (!blocks[team]) return;
       const acc = accounts.find(a => a.id === l.account_id);
-      const entry = {
-        id: l.id,
-        company: acc?.company_name || '?',
-        accountId: l.account_id,
-        action: l.next_action || `[${l.issue_type}] ${l.content || '-'}`,
-        dueDate: l.due_date,
-        rep: resolveActivityRep(l, accounts),
-        status: l.status || 'Open',
-        resolutionDate: l.resolution_date || l.closed_at || '',
-        // 이행 = Closed 또는 처리완료 일자 있음
-        completed: l.status === 'Closed' || !!l.resolution_date,
-      };
-      if (entry.completed) {
-        blocks[team].prevWeekActions.completed.push(entry);
-      } else {
-        blocks[team].prevWeekActions.missed.push(entry);
-      }
+      // v3.46: next_actions 배열 + 구형 하위호환
+      const logActions = l.next_actions?.length
+        ? l.next_actions
+        : (l.next_action ? [{ text: l.next_action, date: l.due_date || '' }] : []);
+      logActions.forEach((a, idx) => {
+        if (!a.date || a.date < pStart || a.date > pEnd) return;
+        const entry = {
+          id: l.id + '_' + idx,
+          company: acc?.company_name || '?',
+          accountId: l.account_id,
+          action: a.text || `[${l.issue_type}] ${l.content || '-'}`,
+          dueDate: a.date,
+          rep: resolveActivityRep(l, accounts),
+          status: l.status || 'Open',
+          resolutionDate: l.resolution_date || l.closed_at || '',
+          completed: l.status === 'Closed' || !!l.resolution_date,
+        };
+        if (entry.completed) {
+          blocks[team].prevWeekActions.completed.push(entry);
+        } else {
+          blocks[team].prevWeekActions.missed.push(entry);
+        }
+      });
     });
     // 담당자별 이행률 계산
     Object.values(blocks).forEach(b => {

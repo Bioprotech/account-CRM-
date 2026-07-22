@@ -1,4 +1,4 @@
-import { REGIONS, PRODUCTS, BUSINESS_TYPES, CONTRACT_STATUSES, STRATEGIC_TIERS, CUSTOMER_CATEGORIES } from '../../lib/constants';
+import { REGIONS, PRODUCTS, BUSINESS_TYPES, CONTRACT_STATUSES, STRATEGIC_TIERS, CUSTOMER_CATEGORIES, CUSTOMER_ANALYSIS_FIELDS } from '../../lib/constants';
 import { useAccount } from '../../context/AccountContext';
 import { suggestCustomerCategory, loadPriorYearCustomers } from '../../lib/customerClassification';
 import { useMemo } from 'react';
@@ -321,6 +321,68 @@ export default function BasicInfo({ draft, update }) {
           ))}
         </div>
       </div>
+
+      {/* v3.46: 고객분석 섹션 */}
+      {(() => {
+        const ca = draft.intelligence_score?.customer_analysis?.items || {};
+        const filledCount = CUSTOMER_ANALYSIS_FIELDS.filter(f => ca[f.key] && ca[f.key] !== '').length;
+        const updateCA = (key, value) => update({
+          intelligence_score: {
+            ...draft.intelligence_score,
+            customer_analysis: { items: { ...ca, [key]: value } },
+          },
+        });
+        return (
+          <details style={{ marginBottom: 16 }} open={filledCount === 0}>
+            <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 700, color: 'var(--accent)', padding: '6px 0', userSelect: 'none' }}>
+              📊 고객분석
+              <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--text3)', fontSize: 10 }}>
+                {filledCount}/{CUSTOMER_ANALYSIS_FIELDS.length} 항목 완료
+              </span>
+              <span style={{ marginLeft: 6, display: 'inline-block', width: 80, height: 4, background: 'var(--border)', borderRadius: 2, verticalAlign: 'middle', overflow: 'hidden' }}>
+                <span style={{ display: 'block', width: `${Math.round(filledCount / CUSTOMER_ANALYSIS_FIELDS.length * 100)}%`, height: '100%', background: filledCount === CUSTOMER_ANALYSIS_FIELDS.length ? 'var(--accent)' : '#f59e0b', borderRadius: 2 }} />
+              </span>
+            </summary>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 12px', marginTop: 8 }}>
+              {CUSTOMER_ANALYSIS_FIELDS.map(f => (
+                <div key={f.key} className="form-group" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 10 }}>{f.label}</label>
+                  <select
+                    value={ca[f.key] || ''}
+                    onChange={e => updateCA(f.key, e.target.value)}
+                    style={{ fontSize: 11, padding: '3px 6px' }}
+                  >
+                    <option value="">-- 선택 --</option>
+                    {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 12px', marginTop: 8 }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: 10 }}>관심 내역</label>
+                <textarea
+                  value={draft.ca_interest || ''}
+                  onChange={e => update({ ca_interest: e.target.value })}
+                  rows={2}
+                  style={{ fontSize: 11, resize: 'vertical' }}
+                  placeholder="관심 분야, 관심 제품군 등"
+                />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: 10 }}>특이사항</label>
+                <textarea
+                  value={draft.ca_remark || ''}
+                  onChange={e => update({ ca_remark: e.target.value })}
+                  rows={2}
+                  style={{ fontSize: 11, resize: 'vertical' }}
+                  placeholder="주요 특이사항 메모"
+                />
+              </div>
+            </div>
+          </details>
+        );
+      })()}
 
       {/* Key Contacts */}
       <div>

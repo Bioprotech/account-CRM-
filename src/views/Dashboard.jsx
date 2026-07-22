@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAccount } from '../context/AccountContext';
 import { REGIONS, CUSTOMER_TYPE_GUIDE, STRATEGIC_TIERS } from '../lib/constants';
-import { daysSince, scoreColorClass } from '../lib/utils';
+import { daysSince, scoreColorClass, today } from '../lib/utils';
 import { classifyCustomers, classifyForRepView, loadPriorYearCustomers, syncPriorYearFromSettings } from '../lib/customerClassification';
 import { getSortedValidReps } from '../lib/salesReps';
 import { computeScore } from '../lib/scoring';
@@ -1281,6 +1281,36 @@ export default function Dashboard() {
     return map;
   }, [productPlans, yearOrders]);
 
+  // v3.46: 이번 주 + 기한초과 액션플랜
+  const pendingActions = useMemo(() => {
+    const todayStr = today();
+    const d = new Date();
+    const diffToMon = d.getDay() === 0 ? -6 : 1 - d.getDay();
+    const wkStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon).toISOString().slice(0, 10);
+    const wkEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon + 6).toISOString().slice(0, 10);
+    const result = [];
+    myOpenIssues.forEach(l => {
+      const acc = accounts.find(a => a.id === l.account_id);
+      const logActions = l.next_actions?.length
+        ? l.next_actions
+        : (l.next_action ? [{ text: l.next_action, date: l.due_date || '' }] : []);
+      logActions.forEach((a, idx) => {
+        if (!a.text || !a.date || a.date > wkEnd) return;
+        result.push({
+          key: l.id + '_' + idx,
+          company: acc?.company_name || '?',
+          action: a.text,
+          date: a.date,
+          rep: l.sales_rep,
+          account: acc,
+          isOverdue: a.date < wkStart,
+          isTodayOrSoon: a.date >= wkStart && a.date <= todayStr,
+        });
+      });
+    });
+    return result.sort((a, b) => a.date.localeCompare(b.date));
+  }, [myOpenIssues, accounts]);
+
   // Open 이슈
   const recentOpenIssues = useMemo(() => {
     return myOpenIssues
@@ -1692,6 +1722,39 @@ export default function Dashboard() {
                 )}
               </div>
             </details>
+          )}
+        </div>
+      )}
+
+      {/* v3.46: 이번 주 액션 마감 카드 */}
+      {pendingActions.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--red, #dc2626)' }}>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <span>📅 이번 주 액션 마감 ({pendingActions.length}건)</span>
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+              — 이번 주 기한 도래 + 기한 초과 액션플랜
+            </span>
+          </div>
+          <div className="issue-list">
+            {pendingActions.slice(0, 15).map(item => (
+              <div
+                key={item.key}
+                className="issue-row"
+                style={{ cursor: item.account ? 'pointer' : 'default', background: item.isOverdue ? 'rgba(220,38,38,0.04)' : undefined }}
+                onClick={() => item.account && setEditingAccount(item.account)}
+              >
+                <span style={{ fontSize: 13, marginRight: 4 }}>{item.isOverdue ? '🔴' : item.isTodayOrSoon ? '🟡' : '🟢'}</span>
+                <span className="issue-company">{item.company}</span>
+                <span style={{ fontSize: 11, color: 'var(--text2)', flex: 1 }}>{item.action}</span>
+                <span style={{ fontSize: 10, color: item.isOverdue ? 'var(--red, #dc2626)' : 'var(--text3)', fontWeight: item.isOverdue ? 700 : 400, marginLeft: 8 }}>
+                  {item.isOverdue ? '⚠ 기한초과 ' : ''}{item.date}
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 8 }}>{item.rep}</span>
+              </div>
+            ))}
+          </div>
+          {pendingActions.length > 15 && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center', marginTop: 6 }}>... 외 {pendingActions.length - 15}건 더</div>
           )}
         </div>
       )}

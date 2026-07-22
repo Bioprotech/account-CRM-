@@ -152,7 +152,7 @@ export const SCORE_CATEGORIES = [
   {
     key: 'basic_info',
     label: '기본정보 완성도',
-    weight: 0.10,
+    weight: 0.09,
     items: [
       { key: 'company_info', label: '회사 기본정보', inputType: 'textarea', placeholder: '설립연도, 직원수, 매출규모 등' },
       { key: 'key_contact', label: 'Key Contact', inputType: 'textarea', placeholder: '이름, 직책, 연락처' },
@@ -163,7 +163,7 @@ export const SCORE_CATEGORIES = [
   {
     key: 'market_understanding',
     label: '시장·채널 이해도',
-    weight: 0.15,
+    weight: 0.14,
     items: [
       { key: 'market_size', label: '시장 규모', inputType: 'text', placeholder: '국가/제품별 시장 규모' },
       { key: 'growth_rate', label: '시장 성장률', inputType: 'text', placeholder: '연간 성장률 (%)' },
@@ -175,7 +175,7 @@ export const SCORE_CATEGORIES = [
   {
     key: 'competitor_analysis',
     label: '경쟁사 파악',
-    weight: 0.20,
+    weight: 0.18,
     items: [
       { key: 'competitor_products', label: '경쟁 제품', inputType: 'textarea', placeholder: '현재 사용 경쟁 제품명/제조사' },
       { key: 'competitor_price', label: '경쟁사 가격대', inputType: 'text', placeholder: '주요 경쟁사 단가 범위' },
@@ -187,7 +187,7 @@ export const SCORE_CATEGORIES = [
   {
     key: 'pain_needs',
     label: 'Pain & Needs',
-    weight: 0.25,
+    weight: 0.23,
     items: [
       { key: 'pain_point', label: '핵심 Pain Point', inputType: 'textarea', placeholder: '고객의 핵심 문제/불만' },
       { key: 'unmet_needs', label: '미충족 니즈', inputType: 'textarea', placeholder: '아직 충족되지 않은 요구사항' },
@@ -199,7 +199,7 @@ export const SCORE_CATEGORIES = [
   {
     key: 'trade_conditions',
     label: '거래조건 파악',
-    weight: 0.20,
+    weight: 0.18,
     items: [
       { key: 'unit_price', label: '현재 적용 단가', inputType: 'text', placeholder: '주요 제품 단가' },
       { key: 'net_terms', label: '결제조건', inputType: 'select', options: ['선결제', 'NET 30', 'NET 60', 'NET 90', 'NET 120', 'LC', '기타'] },
@@ -211,7 +211,7 @@ export const SCORE_CATEGORIES = [
   {
     key: 'relationship_depth',
     label: '관계 깊이',
-    weight: 0.10,
+    weight: 0.09,
     items: [
       { key: 'dm_access', label: 'DM 접근', inputType: 'select', options: ['직접 가능', '간접 가능', '불가'] },
       { key: 'recent_visit', label: '최근 방문/미팅', inputType: 'text', placeholder: '최근 방문일/형태' },
@@ -219,6 +219,31 @@ export const SCORE_CATEGORIES = [
       { key: 'multi_channel', label: '다채널 관계', inputType: 'select', options: ['다부서 관계', '단일 창구', '미구축'] },
     ],
   },
+  {
+    key: 'customer_analysis',
+    label: '고객분석',
+    weight: 0.09,
+    items: [
+      { key: 'productFit', label: '주요제품군 적합도', inputType: 'select', options: ['매우 우수', '우수', '보통', '낮음', '전혀 없음'] },
+      { key: 'revenueScale', label: '고객매출 규모', inputType: 'select', options: ['100만불 미만', '500만불 이하', '1000만불 이하', '2000만불 이하', '5000만불 이상'] },
+      { key: 'orRevRatio', label: '수술실매출 비중', inputType: 'select', options: ['해당없음', '10% 미만', '20%대', '30~50%', '50% 이상'] },
+      { key: 'estRevenue', label: '예상 매출', inputType: 'select', options: ['5만불 이하', '10만불 이하', '50만불 이하', '100만불 이하', '100만불 이상'] },
+      { key: 'salesRatio', label: '영업조직/직원 비율', inputType: 'select', options: ['해당없음', '10% 이상', '20% 이상', '30% 이상', '50% 이상'] },
+      { key: 'bizType', label: '업태', inputType: 'select', options: ['미확인', '병원직납', '현 Sub대리점', '도소매', 'Wholesaler'] },
+      { key: 'hospitalCount', label: '종합병원 거래 수', inputType: 'select', options: ['0개', '1개', '3개 이상', '5개 이상', '10개 이상'] },
+    ],
+  },
+];
+
+/* ── v3.46: 고객분석 필드 정의 (BasicInfo 표시용) ── */
+export const CUSTOMER_ANALYSIS_FIELDS = [
+  { key: 'productFit', label: '주요제품군 적합도', options: ['매우 우수', '우수', '보통', '낮음', '전혀 없음'] },
+  { key: 'revenueScale', label: '고객매출 규모', options: ['100만불 미만', '500만불 이하', '1000만불 이하', '2000만불 이하', '5000만불 이상'] },
+  { key: 'orRevRatio', label: '수술실매출 비중', options: ['해당없음', '10% 미만', '20%대', '30~50%', '50% 이상'] },
+  { key: 'estRevenue', label: '예상 매출', options: ['5만불 이하', '10만불 이하', '50만불 이하', '100만불 이하', '100만불 이상'] },
+  { key: 'salesRatio', label: '영업조직/직원 비율', options: ['해당없음', '10% 이상', '20% 이상', '30% 이상', '50% 이상'] },
+  { key: 'bizType', label: '업태', options: ['미확인', '병원직납', '현 Sub대리점', '도소매', 'Wholesaler'] },
+  { key: 'hospitalCount', label: '종합병원 거래 수', options: ['0개', '1개', '3개 이상', '5개 이상', '10개 이상'] },
 ];
 
 /* ── GAP 분석: 수주 미달 원인 분류 ── */
