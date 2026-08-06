@@ -3,15 +3,28 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 작업 규칙은 `CLAUDE.md`, 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-06-09 (v3.37 배포 완료 — 월간보고 개선 + 수주현황 분석 대시보드)
+**최종 갱신**: 2026-08-06 (v3.47 빌드 완료 — GAP 분석 7종 개선, 배포 대기)
 
 ---
 
 ## 🎯 현재 상태
 
-- **운영 버전(라이브)**: v3.37 (index-BKELPT08.js) ✅ 배포 완료
-- **GitHub**: https://github.com/Bioprotech/account-CRM-.git (cb3e56d)
+- **운영 버전(라이브)**: v3.46 (배포 완료)
+- **빌드 완료(미배포)**: v3.47 (index-BViN8jxD.js) — 사용자 컨펌 후 배포
+- **GitHub**: https://github.com/Bioprotech/account-CRM-.git
 - **Firebase 프로젝트**: bioprotech-crm (Pipeline CRM과 공유)
+
+---
+
+## 🆕 v3.47 변경 (2026-08-06 — GAP 분석 7종 개선)
+
+- **[OrderReport.jsx] ① GAP 계산 개선** — FCST가 확정수주로 전환된 달은 GAP에서 FCST 제외. effectiveFcst 컬럼 추가.
+- **[BasicInfo.jsx / Dashboard.jsx] ② 담당자 복원 방지** — rep_locked 플래그. 관리자 직접 변경 시 잠금, 동기화 제외.
+- **[MyTasks.jsx] ③ 팀 필터 버그** — repTeam 다수결 방식(전체 계정 집계)으로 수정.
+- **[Dashboard.jsx] ④ 주간 활동 현황판** — 이번 주 완료 활동 + 차주 예정 액션 카드 추가.
+- **[Report.jsx] ⑤ 월간보고 4-3/4-4 재편** — 초과달성(4-3) / 미달(4-4) 분리 섹션.
+- **[GapAnalysis.jsx] ⑥ GAP 원인 이력 누적** — "이번 달 분석 저장" 버튼 + gap_cause_history 배열 + 이력 뷰.
+- **[Report.jsx] ⑦ 전체 F-up 활동 이력** — 월간보고에 ■3-1 사업부별 전체 고객 활동 이력 뷰 추가.
 
 ---
 

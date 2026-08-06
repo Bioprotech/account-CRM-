@@ -166,13 +166,16 @@ export default function OrderReport() {
 
   // ── 전체 합계 ──
   const totals = useMemo(() => {
-    const t = { targets: {}, actuals: {}, fcsts: {}, annualTarget: 0 };
+    const t = { targets: {}, actuals: {}, fcsts: {}, effectiveFcsts: {}, annualTarget: 0 };
     filteredData.forEach(d => {
       t.annualTarget += d.annualTarget;
       MONTHS.forEach(m => {
         t.targets[m] = (t.targets[m] || 0) + (d.targets[m] || 0);
         t.actuals[m] = (t.actuals[m] || 0) + (d.actuals[m] || 0);
         t.fcsts[m] = (t.fcsts[m] || 0) + (d.fcsts[m] || 0);
+        // 확정수주 있는 월의 FCST는 이미 수주에 반영됨 → GAP 계산에서 제외
+        const eff = (d.actuals[m] || 0) > 0 ? 0 : (d.fcsts[m] || 0);
+        t.effectiveFcsts[m] = (t.effectiveFcsts[m] || 0) + eff;
       });
     });
     return t;
@@ -323,6 +326,7 @@ export default function OrderReport() {
                 </th>
                 <th style={{ borderLeft: '2px solid var(--border)', textAlign: 'center' }}>연간목표</th>
                 <th style={{ textAlign: 'center' }}>연간실적</th>
+                <th style={{ textAlign: 'center', color: 'var(--accent)' }}>FCST</th>
                 <th style={{ textAlign: 'center' }}>GAP</th>
                 <th style={{ textAlign: 'center' }}>달성률</th>
               </tr>
@@ -338,6 +342,7 @@ export default function OrderReport() {
                 <th style={{ textAlign: 'right', color: 'var(--red)' }}>GAP</th>
                 <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', color: 'var(--text3)' }}>목표</th>
                 <th style={{ textAlign: 'right', color: 'var(--text3)' }}>확정</th>
+                <th style={{ textAlign: 'right', color: 'var(--accent)' }}>FCST</th>
                 <th style={{ textAlign: 'right', color: 'var(--red)' }}>GAP</th>
                 <th style={{ textAlign: 'right', color: 'var(--text3)' }}>%</th>
               </tr>
@@ -374,8 +379,13 @@ export default function OrderReport() {
                   <TotalCells key={m} month={m} totals={totals} />
                 ))}
                 {(() => {
-                  const qT = qSum(totals.targets, displayMonths), qA = qSum(totals.actuals, displayMonths), qF = qSum(totals.fcsts, displayMonths), qG = qT - qA - qF;
-                  const yrA = annualSum(totals.actuals), yrF = annualSum(totals.fcsts), yrG = totals.annualTarget - yrA - yrF;
+                  const qT = qSum(totals.targets, displayMonths), qA = qSum(totals.actuals, displayMonths);
+                  const qF = qSum(totals.fcsts, displayMonths);
+                  const qFeff = qSum(totals.effectiveFcsts, displayMonths);
+                  const qG = qT - qA - qFeff;
+                  const yrA = annualSum(totals.actuals);
+                  const yrFeff = MONTHS.reduce((s, m) => s + (totals.effectiveFcsts[m] || 0), 0);
+                  const yrG = totals.annualTarget - yrA - yrFeff;
                   return (<>
                     <td style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)', fontWeight: 700 }}>{fmtAmt(qT)}</td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtAmt(qA)}</td>
@@ -383,6 +393,7 @@ export default function OrderReport() {
                     <td style={{ textAlign: 'right', fontWeight: 700, color: qG > 0 ? 'var(--red)' : 'var(--green)' }}>{qG !== 0 ? fmtAmt(qG) : '-'}</td>
                     <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtAmt(totals.annualTarget)}</td>
                     <td style={{ textAlign: 'right' }}>{fmtAmt(yrA)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{yrFeff ? fmtAmt(yrFeff) : '-'}</td>
                     <td style={{ textAlign: 'right', fontWeight: 700, color: yrG > 0 ? 'var(--red)' : 'var(--green)' }}>{yrG !== 0 ? fmtAmt(yrG) : '-'}</td>
                     <td style={{ textAlign: 'right', color: cellColor(yrA, totals.annualTarget) }}>
                       {pct(yrA, totals.annualTarget)}%
@@ -431,7 +442,7 @@ function SubHeaders({ month }) {
 }
 
 function TotalCells({ month, totals }) {
-  const gap = (totals.targets[month] || 0) - (totals.actuals[month] || 0) - (totals.fcsts[month] || 0);
+  const gap = (totals.targets[month] || 0) - (totals.actuals[month] || 0) - (totals.effectiveFcsts?.[month] || 0);
   return (
     <>
       <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{fmtAmt(totals.targets[month] || 0)}</td>
@@ -486,28 +497,39 @@ function CustomerRow({ data: d, displayMonths, displayQ, editingCell, editValue,
       <td style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)', background: 'var(--accent-bg)', fontSize: 11 }}>{fmtAmt(qTarget)}</td>
       <td style={{ textAlign: 'right', background: 'var(--accent-bg)', fontSize: 11, fontWeight: 600 }}>{fmtAmt(qActual)}</td>
       <td style={{ textAlign: 'right', background: 'var(--accent-bg)', fontSize: 11, color: 'var(--accent)' }}>{fmtAmt(qFcst)}</td>
-      {(() => { const qGap = qTarget - qActual - qFcst; return (
-        <td style={{ textAlign: 'right', background: 'var(--accent-bg)', fontSize: 10, color: qTarget > 0 && qGap > 0 ? 'var(--red)' : qGap < 0 ? 'var(--green)' : 'var(--text4)', fontWeight: 600 }}>
-          {qTarget > 0 && qGap !== 0 ? fmtAmt(qGap) : '-'}
-        </td>
-      ); })()}
+      {(() => {
+        const qFcstEff = displayMonths.reduce((s, m) => s + ((d.actuals[m] || 0) > 0 ? 0 : (d.fcsts[m] || 0)), 0);
+        const qGap = qTarget - qActual - qFcstEff;
+        return (
+          <td style={{ textAlign: 'right', background: 'var(--accent-bg)', fontSize: 10, color: qTarget > 0 && qGap > 0 ? 'var(--red)' : qGap < 0 ? 'var(--green)' : 'var(--text4)', fontWeight: 600 }}>
+            {qTarget > 0 && qGap !== 0 ? fmtAmt(qGap) : '-'}
+          </td>
+        );
+      })()}
       {/* 연간 */}
-      {(() => { const yrFcst = annualSum(d.fcsts); const yrGap = d.annualTarget - yrActual - yrFcst; return (<>
-        <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', fontSize: 11 }}>{fmtAmt(d.annualTarget)}</td>
-        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtAmt(yrActual)}</td>
-        <td style={{ textAlign: 'right', fontSize: 10, color: d.annualTarget > 0 && yrGap > 0 ? 'var(--red)' : yrGap < 0 ? 'var(--green)' : 'var(--text4)', fontWeight: 600 }}>
-          {d.annualTarget > 0 && yrGap !== 0 ? fmtAmt(yrGap) : '-'}
-        </td>
-        <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: cellColor(yrActual, d.annualTarget) }}>
-          {d.annualTarget > 0 ? `${yrPct}%` : '-'}
-        </td>
-      </>); })()}
+      {(() => {
+        const yrFcst = MONTHS.reduce((s, m) => s + ((d.actuals[m] || 0) > 0 ? 0 : (d.fcsts[m] || 0)), 0);
+        const yrGap = d.annualTarget - yrActual - yrFcst;
+        return (<>
+          <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', fontSize: 11 }}>{fmtAmt(d.annualTarget)}</td>
+          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>{fmtAmt(yrActual)}</td>
+          <td style={{ textAlign: 'right', fontSize: 10, color: 'var(--accent)' }}>{yrFcst ? fmtAmt(yrFcst) : '-'}</td>
+          <td style={{ textAlign: 'right', fontSize: 10, color: d.annualTarget > 0 && yrGap > 0 ? 'var(--red)' : yrGap < 0 ? 'var(--green)' : 'var(--text4)', fontWeight: 600 }}>
+            {d.annualTarget > 0 && yrGap !== 0 ? fmtAmt(yrGap) : '-'}
+          </td>
+          <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: cellColor(yrActual, d.annualTarget) }}>
+            {d.annualTarget > 0 ? `${yrPct}%` : '-'}
+          </td>
+        </>);
+      })()}
     </tr>
   );
 }
 
 function MonthCells({ month, target, actual, fcst, isEditing, editValue, setEditValue, onCellClick, onCellSave, onCellKeyDown, isPast, isCurrent }) {
-  const gap = target - actual - fcst;
+  // 확정수주가 있는 달의 FCST는 이미 반영됨 → GAP에서 제외
+  const effectiveFcst = actual > 0 ? 0 : fcst;
+  const gap = target - actual - effectiveFcst;
   return (
     <>
       <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)', fontSize: 10, color: 'var(--text3)' }}>

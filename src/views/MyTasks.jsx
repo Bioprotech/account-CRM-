@@ -72,18 +72,24 @@ export default function MyTasks() {
     return new Set((accounts || []).filter(a => a.sales_rep === targetRep).map(a => a.id));
   }, [targetRep, accounts]);
 
-  // 담당자 → 팀 매핑 (account.team에서 가져오기, 또는 region에서)
+  // 담당자 → 팀 매핑 (전체 담당 계정의 다수결: 첫 번째 계정에 의존하던 버그 수정)
   const repTeam = useMemo(() => {
     if (!targetRep) return null;
-    const a = (accounts || []).find(a => a.sales_rep === targetRep);
-    if (!a) return null;
-    if (a.team) return a.team;
-    if (a.region) {
-      if (a.region.includes('국내') || a.region === 'Korea') return '국내영업';
-      if (a.region.includes('BPU')) return '영업지원';
-      return '해외영업';
-    }
-    return null;
+    const repAccounts = (accounts || []).filter(a => a.sales_rep === targetRep);
+    if (!repAccounts.length) return null;
+    const cnt = {};
+    repAccounts.forEach(a => {
+      let t = a.team;
+      if (!t && a.region) {
+        if (a.region.includes('국내') || a.region === 'Korea') t = '국내영업';
+        else if (a.region.includes('BPU')) t = '영업지원';
+        else t = '해외영업';
+      }
+      if (t) cnt[t] = (cnt[t] || 0) + 1;
+    });
+    const entries = Object.entries(cnt);
+    if (!entries.length) return null;
+    return entries.sort((a, b) => b[1] - a[1])[0][0];
   }, [targetRep, accounts]);
 
   // 필터

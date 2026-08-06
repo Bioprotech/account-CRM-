@@ -282,7 +282,83 @@ export default function GapAnalysis({ draft, update }) {
             </div>
           </div>
         )}
+
+        {/* ⑥ v3.47: 이번 달 분석 저장 버튼 */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              const ym = today().slice(0, 7);
+              const existing = gap.gap_cause_history || [];
+              const newEntry = {
+                year_month: ym,
+                causes: gap.causes || [],
+                cause_detail: gap.cause_detail || '',
+                countermeasure: gap.countermeasure || '',
+                saved_at: today(),
+              };
+              updateGap({ gap_cause_history: [...existing, newEntry] });
+            }}
+          >
+            💾 이번 달 분석 저장
+          </button>
+        </div>
       </div>
+
+      {/* ⑥ v3.47: GAP 원인 월별 이력 */}
+      {(gap.gap_cause_history || []).length > 0 && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>📅 GAP 원인 월별 이력</span>
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>{gap.gap_cause_history.length}건</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {[...gap.gap_cause_history].reverse().map((entry, i) => {
+              const realIdx = gap.gap_cause_history.length - 1 - i;
+              return (
+                <div key={realIdx} style={{ padding: 10, background: 'var(--bg3)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{entry.year_month}</span>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{ fontSize: 10, color: 'var(--text3)' }}>저장: {entry.saved_at}</span>
+                      <button
+                        className="btn btn-danger btn-sm"
+                        style={{ fontSize: 10, padding: '2px 6px' }}
+                        onClick={() => {
+                          const next = gap.gap_cause_history.filter((_, idx) => idx !== realIdx);
+                          updateGap({ gap_cause_history: next });
+                        }}
+                      >삭제</button>
+                    </div>
+                  </div>
+                  {(entry.causes || []).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
+                      {entry.causes.map(ck => {
+                        const causeInfo = GAP_CAUSES.find(c => c.key === ck);
+                        return (
+                          <span key={ck} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 10, background: 'rgba(46,125,50,.1)', color: 'var(--accent)', fontWeight: 600 }}>
+                            {causeInfo ? `${causeInfo.icon} ${te(causeInfo.label)}` : ck}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {entry.cause_detail && (
+                    <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 3 }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text3)' }}>원인: </span>{entry.cause_detail}
+                    </div>
+                  )}
+                  {entry.countermeasure && (
+                    <div style={{ fontSize: 11, color: 'var(--text2)' }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text3)' }}>대책: </span>{entry.countermeasure}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Section 3: 고객 예산/구매 사이클 ── */}
       <div className="card" style={{ marginBottom: 12 }}>

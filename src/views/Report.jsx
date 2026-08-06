@@ -2217,6 +2217,7 @@ export default function Report() {
         crossSellingList: [],
         openIssuesList: [],
         contactedList: [],
+        allLogs: [],
       };
     });
     monthLogs.forEach(l => {
@@ -2233,7 +2234,9 @@ export default function Report() {
         content: l.content || '',
         status: l.status || '',
         rep: l.sales_rep || acc?.sales_rep || '',
+        account: acc,
       };
+      teamActivity[team].allLogs.push(itemDetail);
       if (l.issue_type === '계약갱신') {
         teamActivity[team].newContract++;
         teamActivity[team].newContractList.push(itemDetail);
@@ -7258,15 +7261,80 @@ export default function Report() {
 
           {/* [v3.1 제거] 섹션 4 Top 10 거래처 (전월비교) — 시즌성 고객은 의미 없음, GAP 심층분석으로 통합 */}
 
+          {/* v3.47: ■ 3-1. 전체 F-up 활동 이력 (사업부별) */}
+          {(() => {
+            const hasAny = TEAM_ORDER.some(t => (monthlyReportData.teamActivity[t]?.allLogs || []).length > 0);
+            if (!hasAny) return null;
+            return (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                  <span>■ 3-1. 전체 F-up 활동 이력</span>
+                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>
+                    — {monthlyReportData.monthLabel} 사업부별 · 담당자별 전체 고객 접촉 이력
+                  </span>
+                </div>
+                {TEAM_ORDER.map(team => {
+                  const logs = monthlyReportData.teamActivity[team]?.allLogs || [];
+                  if (!logs.length) return null;
+                  // 담당자별 그룹핑
+                  const byRep = {};
+                  logs.forEach(l => {
+                    const r = l.rep || '미배정';
+                    if (!byRep[r]) byRep[r] = [];
+                    byRep[r].push(l);
+                  });
+                  const teamDisplay = monthlyReportData.teamActivity[team]?.display || team;
+                  return (
+                    <div key={team} style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid var(--accent)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>[{teamDisplay}]</span>
+                        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)' }}>총 {logs.length}건</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 10 }}>
+                        {Object.entries(byRep).sort((a, b) => b[1].length - a[1].length).map(([rep, repLogs]) => (
+                          <div key={rep} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg2)' }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span>{rep}</span>
+                              <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)' }}>{repLogs.length}건</span>
+                            </div>
+                            {repLogs.sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 20).map((l, i) => (
+                              <div key={i} style={{ fontSize: 10, padding: '3px 6px', borderLeft: '2px solid var(--border)', marginBottom: 3, cursor: 'pointer', background: 'var(--bg)', borderRadius: '0 3px 3px 0' }}
+                                onClick={() => { if (l.account) setEditingAccount(l.account); }}>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 700, color: 'var(--accent)' }}>{l.company}</span>
+                                  {l.type && <span style={{ fontSize: 9, padding: '0 3px', background: 'var(--bg3)', borderRadius: 2, color: 'var(--text3)' }}>{l.type}</span>}
+                                  <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 'auto' }}>{l.date}</span>
+                                  {l.status && l.status !== 'Closed' && <span style={{ fontSize: 9, color: 'var(--amber)', fontWeight: 600 }}>Open</span>}
+                                </div>
+                                {l.content && (
+                                  <div style={{ marginTop: 1, color: 'var(--text2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {l.content.slice(0, 60)}{l.content.length > 60 ? '…' : ''}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                            {repLogs.length > 20 && (
+                              <div style={{ fontSize: 9, color: 'var(--text3)', textAlign: 'center', marginTop: 4 }}>... 외 {repLogs.length - 20}건</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {/* v3.20: ■ 4-2 고객별 당월 수주 실적은 Page 2로 이동됨 */}
 
-          {/* ══ 섹션 4-3 — 고객별 GAP 심층 분석 (미달 + 초과) ══ */}
+          {/* ══ 섹션 4-3/4-4 — 초과달성 / 미달 고객 분석 (v3.47 재편) ══ */}
           {(monthlyReportData.gapDeepAnalysis.shortfall.length > 0 || monthlyReportData.gapDeepAnalysis.surplus.length > 0) && (
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>■ 4-3. 고객별 GAP 심층 분석</span>
+                <span>■ 4-3 / 4-4. 고객별 GAP 심층 분석</span>
                 <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
-                  (미달 {monthlyReportData.gapDeepAnalysis.shortfall.length}사 · 초과 {monthlyReportData.gapDeepAnalysis.surplus.length}사 · 고객카드 전체 맥락 통합)
+                  (4-3 초과달성 {monthlyReportData.gapDeepAnalysis.surplus.length}사 · 4-4 미달 {monthlyReportData.gapDeepAnalysis.shortfall.length}사 · 고객카드 전체 맥락 통합)
                 </span>
               </div>
 
@@ -7346,9 +7414,12 @@ export default function Report() {
                 );
               })()}
 
-              {/* 🔴 미달 고객 — v3.7: Top N 명시 · v3.17 Phase C6: 펼치기 토글 */}
+              {/* ■ 4-4. 미달 고객 분석 */}
               {monthlyReportData.gapDeepAnalysis.shortfall.length > 0 && (
                 <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--red)', marginBottom: 10, padding: '6px 10px', background: 'rgba(254,226,226,0.4)', borderRadius: 6, borderLeft: '4px solid var(--red)' }}>
+                    ■ 4-4. 미달 고객 분석 · 원인 및 대책
+                  </div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid rgba(220,38,38,.3)', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
                     <span>🔴 미달 고객 — 상세 분석 {gapExpanded.shortfall ? `전체 ${monthlyReportData.gapDeepAnalysis.allShortfallCount}사` : `Top ${monthlyReportData.gapDeepAnalysis.shortfall.length}`}</span>
                     <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text2)', marginLeft: 8 }}>
@@ -7505,9 +7576,13 @@ export default function Report() {
                 </div>
               )}
 
-              {/* 🟢 초과 고객 — v3.7: Top N 명시 · v3.20: 전체 펼침 토글 추가 */}
+              {/* ■ 4-3. 초과달성 고객 */}
               {monthlyReportData.gapDeepAnalysis.surplus.length > 0 && (
                 <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 10, marginTop: 4, padding: '6px 10px', background: 'rgba(220,252,231,0.3)', borderRadius: 6, borderLeft: '4px solid var(--green, #16a34a)' }}>
+                    ■ 4-3. 초과달성 고객 분석
+                  </div>
+                  <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--green, #16a34a)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid rgba(22,163,74,.3)', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
                     <span>🟢 초과 달성 고객 — 상세 분석 {gapExpanded.surplus ? `전체 ${monthlyReportData.gapDeepAnalysis.allSurplusCount}사` : `Top ${monthlyReportData.gapDeepAnalysis.surplus.length}`}</span>
                     <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text2)', marginLeft: 8 }}>
@@ -7602,6 +7677,7 @@ export default function Report() {
                     ))}
                   </div>
                 </div>
+              </div>
               )}
 
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 10, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 4 }}>

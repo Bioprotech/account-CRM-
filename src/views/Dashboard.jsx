@@ -1311,6 +1311,55 @@ export default function Dashboard() {
     return result.sort((a, b) => a.date.localeCompare(b.date));
   }, [myOpenIssues, accounts]);
 
+  // v3.47: 주간 활동 현황판 (이번 주 완료 + 차주 예정 액션)
+  const weeklyStatus = useMemo(() => {
+    const d = new Date();
+    const diffToMon = d.getDay() === 0 ? -6 : 1 - d.getDay();
+    const wkStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon).toISOString().slice(0, 10);
+    const wkEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon + 6).toISOString().slice(0, 10);
+    const nwkStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon + 7).toISOString().slice(0, 10);
+    const nwkEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon + 13).toISOString().slice(0, 10);
+
+    const thisWeekActs = (myActivityLogs || [])
+      .filter(l => l.date >= wkStart && l.date <= wkEnd)
+      .map(l => {
+        const acc = accounts.find(a => a.id === l.account_id);
+        return { ...l, company: acc?.company_name || '?', rep: acc?.sales_rep || l.sales_rep || '' };
+      })
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    const nextWeekActions = [];
+    (myActivityLogs || []).forEach(l => {
+      const acc = accounts.find(a => a.id === l.account_id);
+      const logActions = l.next_actions?.length
+        ? l.next_actions
+        : (l.next_action ? [{ text: l.next_action, date: l.due_date || '' }] : []);
+      logActions.forEach((a, idx) => {
+        if (!a.text || !a.date || a.date < nwkStart || a.date > nwkEnd) return;
+        nextWeekActions.push({
+          key: l.id + '_' + idx,
+          company: acc?.company_name || '?',
+          action: a.text,
+          date: a.date,
+          rep: acc?.sales_rep || l.sales_rep || '',
+          account: acc,
+        });
+      });
+    });
+    nextWeekActions.sort((a, b) => a.date.localeCompare(b.date));
+
+    // 담당자별 집계 (관리자용)
+    const byRep = {};
+    [...thisWeekActs, ...nextWeekActions.map(a => ({ ...a, _isAction: true }))].forEach(item => {
+      const r = item.rep || '미배정';
+      if (!byRep[r]) byRep[r] = { acts: [], actions: [] };
+      if (item._isAction) byRep[r].actions.push(item);
+      else byRep[r].acts.push(item);
+    });
+
+    return { thisWeekActs, nextWeekActions, byRep, wkStart, wkEnd, nwkStart, nwkEnd };
+  }, [myActivityLogs, accounts]);
+
   // Open 이슈
   const recentOpenIssues = useMemo(() => {
     return myOpenIssues
@@ -1348,8 +1397,9 @@ export default function Dashboard() {
       }
     });
 
-    const needSync = accounts.filter(a => repMap[a.id] && a.sales_rep !== repMap[a.id]);
-    return { repMap, needSync, total: Object.keys(repMap).length };
+    const needSync = accounts.filter(a => repMap[a.id] && a.sales_rep !== repMap[a.id] && !a.rep_locked);
+    const lockedCount = accounts.filter(a => repMap[a.id] && a.sales_rep !== repMap[a.id] && a.rep_locked).length;
+    return { repMap, needSync, lockedCount, total: Object.keys(repMap).length };
   }, [accounts, businessPlans]);
 
   const handleSync = async () => {
@@ -1374,6 +1424,9 @@ export default function Dashboard() {
           <span>⚠️</span>
           <div style={{ flex: 1 }}>
             <strong>{t('dashboard.syncNeeded')}:</strong> <strong style={{ color: 'var(--red)' }}>{syncInfo.needSync.length}</strong> — {t('dashboard.syncDesc')}
+            {syncInfo.lockedCount > 0 && (
+              <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--amber)' }}>🔒 {syncInfo.lockedCount}개 고객은 직접 지정 잠금 (동기화 제외)</span>
+            )}
             <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
               {t('dashboard.syncHint')}
             </div>
@@ -1756,6 +1809,97 @@ export default function Dashboard() {
           {pendingActions.length > 15 && (
             <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center', marginTop: 6 }}>... 외 {pendingActions.length - 15}건 더</div>
           )}
+        </div>
+      )}
+
+      {/* v3.47: 주간 활동 현황판 */}
+      {(weeklyStatus.thisWeekActs.length > 0 || weeklyStatus.nextWeekActions.length > 0) && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-title">📊 주간 활동 현황판</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            {/* 이번 주 완료 활동 */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>
+                이번 주 완료 활동 ({weeklyStatus.thisWeekActs.length}건)
+                <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)', marginLeft: 4 }}>{weeklyStatus.wkStart} ~ {weeklyStatus.wkEnd}</span>
+              </div>
+              {weeklyStatus.thisWeekActs.length === 0 ? (
+                <div style={{ fontSize: 11, color: 'var(--text3)', padding: '8px 0' }}>이번 주 활동 없음</div>
+              ) : isAdmin ? (
+                Object.entries(weeklyStatus.byRep).filter(([, v]) => v.acts.length > 0)
+                  .sort((a, b) => b[1].acts.length - a[1].acts.length)
+                  .map(([rep, v]) => (
+                    <div key={rep} style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', background: 'var(--bg3)', padding: '2px 6px', borderRadius: 4, marginBottom: 3 }}>
+                        {rep} <span style={{ fontWeight: 400, color: 'var(--accent)' }}>({v.acts.length}건)</span>
+                      </div>
+                      {v.acts.slice(0, 3).map(l => (
+                        <div key={l.id} className="issue-row" style={{ cursor: 'pointer', fontSize: 11 }}
+                          onClick={() => { const acc = accounts.find(a => a.id === l.account_id); if (acc) setEditingAccount(acc); }}>
+                          <span className="issue-company" style={{ minWidth: 60, maxWidth: 80 }}>{l.company}</span>
+                          <span style={{ fontSize: 10, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{(l.content || '내용 없음').slice(0, 30)}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)', flexShrink: 0 }}>{l.date}</span>
+                        </div>
+                      ))}
+                      {v.acts.length > 3 && <div style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>... 외 {v.acts.length - 3}건</div>}
+                    </div>
+                  ))
+              ) : (
+                <div className="issue-list">
+                  {weeklyStatus.thisWeekActs.slice(0, 8).map(l => (
+                    <div key={l.id} className="issue-row" style={{ cursor: 'pointer' }}
+                      onClick={() => { const acc = accounts.find(a => a.id === l.account_id); if (acc) setEditingAccount(acc); }}>
+                      <span className="issue-company">{l.company}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text3)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(l.content || '내용 없음').slice(0, 35)}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)', flexShrink: 0 }}>{l.date}</span>
+                    </div>
+                  ))}
+                  {weeklyStatus.thisWeekActs.length > 8 && <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', marginTop: 4 }}>... 외 {weeklyStatus.thisWeekActs.length - 8}건</div>}
+                </div>
+              )}
+            </div>
+            {/* 차주 예정 액션 */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: 'var(--text2)' }}>
+                차주 예정 액션 ({weeklyStatus.nextWeekActions.length}건)
+                <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text3)', marginLeft: 4 }}>{weeklyStatus.nwkStart} ~ {weeklyStatus.nwkEnd}</span>
+              </div>
+              {weeklyStatus.nextWeekActions.length === 0 ? (
+                <div style={{ fontSize: 11, color: 'var(--text3)', padding: '8px 0' }}>차주 예정 액션 없음</div>
+              ) : isAdmin ? (
+                Object.entries(weeklyStatus.byRep).filter(([, v]) => v.actions.length > 0)
+                  .sort((a, b) => b[1].actions.length - a[1].actions.length)
+                  .map(([rep, v]) => (
+                    <div key={rep} style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', background: 'var(--bg3)', padding: '2px 6px', borderRadius: 4, marginBottom: 3 }}>
+                        {rep} <span style={{ fontWeight: 400, color: 'var(--text3)' }}>({v.actions.length}건)</span>
+                      </div>
+                      {v.actions.slice(0, 3).map(a => (
+                        <div key={a.key} className="issue-row" style={{ cursor: 'pointer', fontSize: 11 }}
+                          onClick={() => a.account && setEditingAccount(a.account)}>
+                          <span className="issue-company" style={{ minWidth: 60, maxWidth: 80 }}>{a.company}</span>
+                          <span style={{ fontSize: 10, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{a.action.slice(0, 30)}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)', flexShrink: 0 }}>{a.date}</span>
+                        </div>
+                      ))}
+                      {v.actions.length > 3 && <div style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>... 외 {v.actions.length - 3}건</div>}
+                    </div>
+                  ))
+              ) : (
+                <div className="issue-list">
+                  {weeklyStatus.nextWeekActions.slice(0, 8).map(a => (
+                    <div key={a.key} className="issue-row" style={{ cursor: 'pointer' }}
+                      onClick={() => a.account && setEditingAccount(a.account)}>
+                      <span className="issue-company">{a.company}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text3)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.action.slice(0, 35)}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)', flexShrink: 0 }}>{a.date}</span>
+                    </div>
+                  ))}
+                  {weeklyStatus.nextWeekActions.length > 8 && <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', marginTop: 4 }}>... 외 {weeklyStatus.nextWeekActions.length - 8}건</div>}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

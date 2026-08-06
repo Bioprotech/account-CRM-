@@ -11,7 +11,7 @@ const TYPE_TRANSITIONS = {
 };
 
 export default function BasicInfo({ draft, update }) {
-  const { teamMembers, businessPlans, appSettings, contracts, t, te } = useAccount();
+  const { teamMembers, businessPlans, appSettings, contracts, isAdmin, t, te } = useAccount();
 
   // v3.32: 계약전환율 = contract_status === '활성' 기준 (기존 필드 그대로 활용)
   //   가이드 박스로 '활성' 판정 기준 안내. 계약 1건 이상이면 컨텍스트의
@@ -220,8 +220,19 @@ export default function BasicInfo({ draft, update }) {
 
       <div className="form-row">
         <div className="form-group">
-          <label>{t('basic.salesRep')}</label>
-          <select value={draft.sales_rep || ''} onChange={e => update({ sales_rep: e.target.value })}>
+          <label>
+            {t('basic.salesRep')}
+            {isAdmin && draft.rep_locked && (
+              <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--amber)', fontWeight: 600 }}>
+                🔒 자동동기화 제외
+                <button onClick={() => update({ rep_locked: false })}
+                  style={{ marginLeft: 4, fontSize: 9, padding: '1px 4px', borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg2)', cursor: 'pointer', color: 'var(--text2)' }}>
+                  해제
+                </button>
+              </span>
+            )}
+          </label>
+          <select value={draft.sales_rep || ''} onChange={e => update({ sales_rep: e.target.value, ...(isAdmin ? { rep_locked: true } : {}) })}>
             <option value="">{t('common.select')}</option>
             {teamMembers.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
