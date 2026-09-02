@@ -35,7 +35,8 @@ function fmtAmount(n) {
 
 export default function AccountModal() {
   const { editingAccount, setEditingAccount, saveAccount, removeAccount, isAdmin, currentUser,
-    getLogsForAccount, getOrdersForAccount, getSalesForAccount, getContractsForAccount, getForecastsForAccount, getPlansForAccount, t } = useAccount();
+    getLogsForAccount, getOrdersForAccount, getSalesForAccount, getContractsForAccount, getForecastsForAccount, getPlansForAccount, t,
+    editingAccountInitialTab } = useAccount();
   const [draft, setDraft] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
   const [showDelete, setShowDelete] = useState(false);
@@ -43,9 +44,9 @@ export default function AccountModal() {
   useEffect(() => {
     if (editingAccount) {
       setDraft({ ...editingAccount });
-      setActiveTab('basic');
+      setActiveTab(editingAccountInitialTab || 'basic');
     }
-  }, [editingAccount]);
+  }, [editingAccount, editingAccountInitialTab]);
 
   if (!draft) return null;
 

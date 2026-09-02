@@ -752,7 +752,15 @@ export default function AccountProvider({ children }) {
 
   /* ── Tab & Modal ── */
   const [currentTab, setCurrentTab] = useState('dashboard');
-  const [editingAccount, setEditingAccount] = useState(null);
+  const [_editingAccountState, _setEditingAccountState] = useState(null);
+  const editingAccount = _editingAccountState?.account ?? null;
+  const editingAccountInitialTab = _editingAccountState?.initialTab ?? 'basic';
+  const setEditingAccount = useCallback((account) => {
+    _setEditingAccountState(account ? { account, initialTab: 'basic' } : null);
+  }, []);
+  const openAccountToTab = useCallback((account, tab = 'basic') => {
+    _setEditingAccountState(account ? { account, initialTab: tab } : null);
+  }, []);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   /* ── Toast ── */
@@ -1076,6 +1084,7 @@ export default function AccountProvider({ children }) {
     filters, setFilters,
     currentTab, setCurrentTab,
     editingAccount, setEditingAccount,
+    editingAccountInitialTab, openAccountToTab,
     sidebarOpen, setSidebarOpen,
     saveAccount, removeAccount, mergeAccounts,
     saveLog, removeLog, getLogsForAccount,

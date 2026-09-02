@@ -3,14 +3,14 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 작업 규칙은 `CLAUDE.md`, 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-08-06 (v3.47 빌드 완료 — GAP 분석 7종 개선, 배포 대기)
+**최종 갱신**: 2026-09-02 (v3.48 빌드 완료 — FCST 관리 루프, 배포 대기)
 
 ---
 
 ## 🎯 현재 상태
 
-- **운영 버전(라이브)**: v3.46 (배포 완료)
-- **빌드 완료(미배포)**: v3.47 (index-BViN8jxD.js) — 사용자 컨펌 후 배포
+- **운영 버전(라이브)**: v3.47 (배포 완료)
+- **빌드 완료(미배포)**: v3.48 (index-BdEgqJHZ.js) — 사용자 컨펌 후 배포
 - **GitHub**: https://github.com/Bioprotech/account-CRM-.git
 - **Firebase 프로젝트**: bioprotech-crm (Pipeline CRM과 공유)
 

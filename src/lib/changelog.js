@@ -1,5 +1,19 @@
 export const CHANGELOG = [
   {
+    version: 'v3.48',
+    date: '2026-09-02',
+    title: '📊 FCST 관리 루프 — 입력→비교→미달감지→원인/F-up 바로가기→엑셀',
+    items: [
+      '🆕 **[OrderReport] 📊 FCST 관리 모드** — 현재달~+2달 롤링 3개월 뷰 토글. 분기 선택과 독립 전환.',
+      '🔍 **[OrderReport] 미달 감지** — 지난달 실적이 FCST 80% 미만인 고객 행을 연붉은 배경으로 강조.',
+      '🔗 **[OrderReport] 원인 기록 ▶ 버튼** — 미달 고객에만 표시. 클릭 시 해당 고객카드 GAP분석 탭으로 바로 이동.',
+      '🔗 **[OrderReport] F-up 추가 ▶ 버튼** — 전 고객에 표시. 클릭 시 ActivityLog 탭으로 바로 이동.',
+      '📅 **[OrderReport] 마지막 F-up 날짜** — FCST 관리 모드에서 각 고객의 최근 활동 기록 날짜 표시.',
+      '📥 **[OrderReport] FCST 엑셀 내보내기** — 3개월 목표/FCST/실적/달성률 + 연간 요약 xlsx 출력.',
+      '🔗 **[AccountContext/AccountModal] openAccountToTab()** — 고객카드를 특정 탭(gap/activity)으로 바로 여는 신규 함수. 기존 setEditingAccount는 항상 basic 탭.',
+    ],
+  },
+  {
     version: 'v3.47',
     date: '2026-08-06',
     title: '📊 GAP 분석 7종 개선 (수주목표·담당자잠금·팀필터·현황판·월간보고·이력·Activity)',

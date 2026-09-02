@@ -26,7 +26,7 @@ function pct(a, b) {
 }
 
 export default function OrderReport() {
-  const { accounts: accountsAll, orders: ordersAll, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts, t } = useAccount();
+  const { accounts: accountsAll, orders: ordersAll, businessPlans, forecasts, saveForecast, removeForecast, setEditingAccount, isAdmin, currentUser, appSettings, showToast, teamMembers, contracts, t, activityLogs, openAccountToTab } = useAccount();
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
@@ -39,6 +39,7 @@ export default function OrderReport() {
   const [editingCell, setEditingCell] = useState(null); // { accountId, month, product }
   const [editValue, setEditValue] = useState('');
   const [filterRep, setFilterRep] = useState('');
+  const [isFcstMode, setIsFcstMode] = useState(false);
 
   // ── 데이터 준비 ──
   const yearOrders = useMemo(() =>
@@ -181,6 +182,28 @@ export default function OrderReport() {
     return t;
   }, [filteredData]);
 
+  // ── FCST 관리 모드 — 현재달 + 다음 2달 롤링 ──
+  const fcstModeMonths = useMemo(() => {
+    const ms = [];
+    for (let i = 0; i <= 2; i++) {
+      const m = CURRENT_MONTH + i;
+      if (m <= 12) ms.push(m);
+    }
+    return ms;
+  }, []);
+
+  // ── 고객별 최근 F-up 날짜 맵 ──
+  const lastActivityMap = useMemo(() => {
+    const map = {};
+    activityLogs.forEach(log => {
+      if (!log.account_id || !log.date) return;
+      if (!map[log.account_id] || log.date > map[log.account_id]) {
+        map[log.account_id] = log.date;
+      }
+    });
+    return map;
+  }, [activityLogs]);
+
   // ── 분기 범위 표시 (현재 분기 + 인접) ──
   const currentQ = Math.ceil(CURRENT_MONTH / 3);
   const [displayQ, setDisplayQ] = useState(currentQ);
@@ -188,6 +211,8 @@ export default function OrderReport() {
     const start = (displayQ - 1) * 3 + 1;
     return [start, start + 1, start + 2];
   }, [displayQ]);
+
+  const activeMonths = isFcstMode ? fcstModeMonths : displayMonths;
 
   // ── 담당자 목록 (사업계획 + teamMembers, 중앙화된 규칙) ──
   const repList = useMemo(() => {
@@ -240,6 +265,61 @@ export default function OrderReport() {
     if (e.key === 'Escape') { setEditingCell(null); setEditValue(''); }
   };
 
+  const handleFcstExport = async () => {
+    try {
+      const XLSX = await import('xlsx');
+      const header = ['고객사', '담당'];
+      activeMonths.forEach(m => {
+        header.push(`${m}월 목표(만원)`, `${m}월 FCST(만원)`, `${m}월 실적(만원)`, `${m}월 달성률(%)`);
+      });
+      header.push('연간목표(만원)', 'YTD실적(만원)', 'YTD달성률(%)');
+      const dataRows = filteredData.map(d => {
+        const row = [d.name, d.salesRep];
+        activeMonths.forEach(m => {
+          const act = d.actuals[m] || 0;
+          const fcst = d.fcsts[m] || 0;
+          row.push(
+            Math.round((d.targets[m] || 0) / 10000),
+            Math.round(fcst / 10000),
+            Math.round(act / 10000),
+            fcst > 0 ? Math.round((act / fcst) * 100) : ''
+          );
+        });
+        const yrAct = annualSum(d.actuals);
+        row.push(
+          Math.round(d.annualTarget / 10000),
+          Math.round(yrAct / 10000),
+          d.annualTarget > 0 ? Math.round((yrAct / d.annualTarget) * 100) : ''
+        );
+        return row;
+      });
+      const sumRow = ['합계', ''];
+      activeMonths.forEach(m => {
+        const act = totals.actuals[m] || 0;
+        const fcst = totals.fcsts[m] || 0;
+        sumRow.push(
+          Math.round((totals.targets[m] || 0) / 10000),
+          Math.round(fcst / 10000),
+          Math.round(act / 10000),
+          fcst > 0 ? Math.round((act / fcst) * 100) : ''
+        );
+      });
+      const yrAct = annualSum(totals.actuals);
+      sumRow.push(
+        Math.round(totals.annualTarget / 10000),
+        Math.round(yrAct / 10000),
+        totals.annualTarget > 0 ? Math.round((yrAct / totals.annualTarget) * 100) : ''
+      );
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows, sumRow]);
+      ws['!cols'] = [{ wch: 24 }, { wch: 8 }, ...activeMonths.flatMap(() => [{ wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 8 }]), { wch: 12 }, { wch: 12 }, { wch: 8 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'FCST관리');
+      XLSX.writeFile(wb, `FCST관리_${viewYear}년_${String(CURRENT_MONTH).padStart(2, '0')}월.xlsx`);
+    } catch (e) {
+      showToast('엑셀 내보내기 실패: ' + e.message, 'error');
+    }
+  };
+
   const toggleRow = (id) => {
     setExpandedRows(prev => {
       const next = new Set(prev);
@@ -279,16 +359,34 @@ export default function OrderReport() {
               {repList.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           )}
-          {/* 분기 선택 */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {[1,2,3,4].map(q => (
-              <button key={q}
-                className={`btn btn-sm ${displayQ === q ? 'btn-primary' : ''}`}
-                onClick={() => setDisplayQ(q)}
-                style={{ minWidth: 36 }}
-              >Q{q}</button>
-            ))}
-          </div>
+          {/* FCST 관리 모드 */}
+          <button
+            className={`btn btn-sm ${isFcstMode ? 'btn-primary' : ''}`}
+            onClick={() => setIsFcstMode(f => !f)}
+            title="현재달~+2달 롤링 FCST 관리 · 미달 감지 · 원인/F-up 바로가기"
+          >📊 FCST 관리</button>
+          {isFcstMode && (
+            <>
+              <button className="btn btn-sm" onClick={handleFcstExport} title="3개월 FCST vs 실적 엑셀 출력">
+                📥 엑셀 내보내기
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                📅 {activeMonths.join('·')}월 롤링
+              </span>
+            </>
+          )}
+          {/* 분기 선택 (FCST 모드 아닐 때만) */}
+          {!isFcstMode && (
+            <div style={{ display: 'flex', gap: 4 }}>
+              {[1,2,3,4].map(q => (
+                <button key={q}
+                  className={`btn btn-sm ${displayQ === q ? 'btn-primary' : ''}`}
+                  onClick={() => setDisplayQ(q)}
+                  style={{ minWidth: 36 }}
+                >Q{q}</button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -316,14 +414,20 @@ export default function OrderReport() {
               <tr style={{ background: 'var(--bg3)' }}>
                 <th style={{ position: 'sticky', left: 0, background: 'var(--bg3)', zIndex: 2, minWidth: 140 }}>고객사</th>
                 <th style={{ minWidth: 50 }}>담당</th>
-                {displayMonths.map(m => (
+                {activeMonths.map(m => (
                   <th key={m} colSpan={4} style={{ textAlign: 'center', borderLeft: '2px solid var(--border)' }}>
                     {m}월 {m === CURRENT_MONTH && <span style={{ color: 'var(--accent)', fontSize: 9 }}>●</span>}
                   </th>
                 ))}
                 <th colSpan={4} style={{ textAlign: 'center', borderLeft: '2px solid var(--accent)', background: 'var(--accent-bg)' }}>
-                  Q{displayQ} 합계
+                  {isFcstMode ? `${activeMonths.length}M 합계` : `Q${displayQ} 합계`}
                 </th>
+                {isFcstMode && (
+                  <>
+                    <th style={{ minWidth: 70, textAlign: 'center', color: 'var(--text3)', fontSize: 10 }}>마지막 F-up</th>
+                    <th style={{ minWidth: 110, textAlign: 'center', color: 'var(--text3)', fontSize: 10 }}>액션</th>
+                  </>
+                )}
                 <th style={{ borderLeft: '2px solid var(--border)', textAlign: 'center' }}>연간목표</th>
                 <th style={{ textAlign: 'center' }}>연간실적</th>
                 <th style={{ textAlign: 'center', color: 'var(--accent)' }}>FCST</th>
@@ -333,7 +437,7 @@ export default function OrderReport() {
               <tr style={{ background: 'var(--bg2)', fontSize: 10 }}>
                 <th style={{ position: 'sticky', left: 0, background: 'var(--bg2)', zIndex: 2 }}></th>
                 <th></th>
-                {displayMonths.map(m => (
+                {activeMonths.map(m => (
                   <SubHeaders key={m} month={m} />
                 ))}
                 <th style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)', color: 'var(--text3)' }}>목표</th>
@@ -348,40 +452,49 @@ export default function OrderReport() {
               </tr>
             </thead>
             <tbody>
-              {filteredData.map(d => (
-                <CustomerRow
-                  key={d.accountId}
-                  data={d}
-                  displayMonths={displayMonths}
-                  displayQ={displayQ}
-                  editingCell={editingCell}
-                  editValue={editValue}
-                  setEditValue={setEditValue}
-                  onCellClick={handleCellClick}
-                  onCellSave={handleCellSave}
-                  onCellKeyDown={handleCellKeyDown}
-                  onNameClick={() => {
-                    const acc = accounts.find(a => a.id === d.accountId);
-                    if (acc) setEditingAccount(acc);
-                  }}
-                  qSum={qSum}
-                  annualSum={annualSum}
-                  cellColor={cellColor}
-                  currentMonth={CURRENT_MONTH}
-                />
-              ))}
+              {filteredData.map(d => {
+                const acc = accounts.find(a => a.id === d.accountId);
+                const hasGap = isFcstMode && fcstModeMonths.some(m => {
+                  if (m >= CURRENT_MONTH) return false;
+                  return (d.fcsts[m] || 0) > 0 && (d.actuals[m] || 0) < (d.fcsts[m] || 0) * 0.8;
+                });
+                return (
+                  <CustomerRow
+                    key={d.accountId}
+                    data={d}
+                    displayMonths={activeMonths}
+                    displayQ={displayQ}
+                    editingCell={editingCell}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    onCellClick={handleCellClick}
+                    onCellSave={handleCellSave}
+                    onCellKeyDown={handleCellKeyDown}
+                    onNameClick={() => { if (acc) setEditingAccount(acc); }}
+                    qSum={qSum}
+                    annualSum={annualSum}
+                    cellColor={cellColor}
+                    currentMonth={CURRENT_MONTH}
+                    isFcstMode={isFcstMode}
+                    lastActivityDate={lastActivityMap[d.accountId] || null}
+                    hasGap={hasGap}
+                    onOpenGap={() => acc && openAccountToTab(acc, 'gap')}
+                    onOpenActivity={() => acc && openAccountToTab(acc, 'activity')}
+                  />
+                );
+              })}
 
               {/* 합계 행 */}
               <tr style={{ fontWeight: 700, background: 'var(--bg3)', borderTop: '2px solid var(--accent)' }}>
                 <td style={{ position: 'sticky', left: 0, background: 'var(--bg3)', zIndex: 2 }}>합계 ({filteredData.length}개사)</td>
                 <td></td>
-                {displayMonths.map(m => (
+                {activeMonths.map(m => (
                   <TotalCells key={m} month={m} totals={totals} />
                 ))}
                 {(() => {
-                  const qT = qSum(totals.targets, displayMonths), qA = qSum(totals.actuals, displayMonths);
-                  const qF = qSum(totals.fcsts, displayMonths);
-                  const qFeff = qSum(totals.effectiveFcsts, displayMonths);
+                  const qT = qSum(totals.targets, activeMonths), qA = qSum(totals.actuals, activeMonths);
+                  const qF = qSum(totals.fcsts, activeMonths);
+                  const qFeff = qSum(totals.effectiveFcsts, activeMonths);
                   const qG = qT - qA - qFeff;
                   const yrA = annualSum(totals.actuals);
                   const yrFeff = MONTHS.reduce((s, m) => s + (totals.effectiveFcsts[m] || 0), 0);
@@ -400,6 +513,7 @@ export default function OrderReport() {
                     </td>
                   </>);
                 })()}
+                {isFcstMode && <><td></td><td></td></>}
               </tr>
             </tbody>
           </table>
@@ -453,7 +567,7 @@ function TotalCells({ month, totals }) {
   );
 }
 
-function CustomerRow({ data: d, displayMonths, displayQ, editingCell, editValue, setEditValue, onCellClick, onCellSave, onCellKeyDown, onNameClick, qSum, annualSum, cellColor, currentMonth }) {
+function CustomerRow({ data: d, displayMonths, displayQ, editingCell, editValue, setEditValue, onCellClick, onCellSave, onCellKeyDown, onNameClick, qSum, annualSum, cellColor, currentMonth, isFcstMode, lastActivityDate, hasGap, onOpenGap, onOpenActivity }) {
   const qTarget = qSum(d.targets, displayMonths);
   const qActual = qSum(d.actuals, displayMonths);
   const qFcst = qSum(d.fcsts, displayMonths);
@@ -461,7 +575,7 @@ function CustomerRow({ data: d, displayMonths, displayQ, editingCell, editValue,
   const yrPct = pct(yrActual, d.annualTarget);
 
   return (
-    <tr>
+    <tr style={hasGap ? { background: 'rgba(239,68,68,0.05)' } : undefined}>
       <td style={{ position: 'sticky', left: 0, background: 'var(--bg2)', zIndex: 1, cursor: 'pointer', fontWeight: 600, fontSize: 11 }}
         onClick={onNameClick}
         title="고객카드 열기"
@@ -522,6 +636,29 @@ function CustomerRow({ data: d, displayMonths, displayQ, editingCell, editValue,
           </td>
         </>);
       })()}
+      {isFcstMode && (
+        <>
+          <td style={{ textAlign: 'center', fontSize: 10, color: lastActivityDate ? 'var(--text2)' : 'var(--text4)' }}>
+            {lastActivityDate || '-'}
+          </td>
+          <td style={{ textAlign: 'center' }}>
+            <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+              {hasGap && (
+                <button
+                  className="btn btn-sm"
+                  style={{ fontSize: 10, padding: '2px 6px', color: 'var(--red)', borderColor: 'var(--red)' }}
+                  onClick={e => { e.stopPropagation(); onOpenGap(); }}
+                >원인 ▶</button>
+              )}
+              <button
+                className="btn btn-sm"
+                style={{ fontSize: 10, padding: '2px 6px' }}
+                onClick={e => { e.stopPropagation(); onOpenActivity(); }}
+              >F-up ▶</button>
+            </div>
+          </td>
+        </>
+      )}
     </tr>
   );
 }
