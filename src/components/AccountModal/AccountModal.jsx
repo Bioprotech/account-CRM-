@@ -373,7 +373,7 @@ export default function AccountModal() {
 
         {/* Footer */}
         <div className="modal-footer">
-          {!isNew && canEdit && (
+          {!isNew && isAdmin && (
             <button className="btn btn-danger" onClick={() => setShowDelete(true)} style={{ marginRight: 'auto' }}>삭제</button>
           )}
           {!isNew && (

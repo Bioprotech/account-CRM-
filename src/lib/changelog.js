@@ -1,5 +1,13 @@
 export const CHANGELOG = [
   {
+    version: 'v3.49',
+    date: '2026-09-16',
+    title: '🔒 고객 삭제 관리자 전용 제한',
+    items: [
+      '🔒 **[AccountModal] 고객 삭제 버튼** — 관리자(isAdmin)만 표시되도록 변경. 일반 담당자 화면에서 삭제 버튼 숨김.',
+    ],
+  },
+  {
     version: 'v3.48',
     date: '2026-09-02',
     title: '📊 FCST 관리 루프 — 입력→비교→미달감지→원인/F-up 바로가기→엑셀',
