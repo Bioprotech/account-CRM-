@@ -319,8 +319,8 @@ export default function AccountModal() {
   };
 
   return (
-    <div className="overlay" onClick={() => setEditingAccount(null)}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+    <div className="overlay">
+      <div className="modal">
         {/* Header */}
         <div className="modal-header">
           <div>

@@ -1599,6 +1599,7 @@ export default function Report() {
         majorIssues: [],         // 금주 발생 + priority ≥ 2 (주요/긴급)
         normalActivities: [],    // v3.14.1: 금주 일반 활동 (priority < 2) — UI 펼치기 토글용
         crossDeptIssues: [],     // v3.17 Phase B1: 금주 발생 + cross_dept_share=true (타부서 공유/협조 필요)
+        weeklyReportItems: [],   // v3.50: weekly_report=true 체크된 활동 (주간보고 자동 반영)
         openIssues: [],    // 누적 미해결, 우선순위별 그룹핑
         nextActions: [],   // 차주 예정 + 금주 미완료 이월
         prevWeekActions: { completed: [], missed: [] },  // v3.17 Phase B2: 전주 due_date 활동 이행 점검
@@ -1656,12 +1657,17 @@ export default function Report() {
       if (l.cross_dept_share) {
         blocks[team].crossDeptIssues.push(entry);
       }
+      // v3.50: 주간보고 포함 항목 별도 수집
+      if (l.weekly_report) {
+        blocks[team].weeklyReportItems.push(entry);
+      }
     });
     // 긴급 먼저
     Object.values(blocks).forEach(b => {
       b.majorIssues.sort((a, b2) => (b2.priority - a.priority) || (b2.date || '').localeCompare(a.date || ''));
       if (b.normalActivities) b.normalActivities.sort((a, b2) => (b2.date || '').localeCompare(a.date || ''));
       if (b.crossDeptIssues) b.crossDeptIssues.sort((a, b2) => (b2.priority - a.priority) || (b2.date || '').localeCompare(a.date || ''));
+      if (b.weeklyReportItems) b.weeklyReportItems.sort((a, b2) => (b2.date || '').localeCompare(a.date || ''));
     });
 
     // ── Open 이슈 (누적, 고객별 그룹핑 + 우선순위) ──
@@ -3391,8 +3397,12 @@ export default function Report() {
       const missingDetail = [];
 
       allShort.forEach(c => {
-        const causes = c.gap?.causes || [];
-        const detail = (c.gap?.cause_detail || '').trim();
+        // v3.50: gap_cause_history에서 보고 월 항목 우선 사용 (없으면 live 상태 fallback)
+        const ymKey = `${selYear}-${String(selMonth).padStart(2, '0')}`;
+        const histEntry = (c.gap?.gap_cause_history || []).findLast?.(h => h.year_month === ymKey) ||
+          (c.gap?.gap_cause_history || []).filter(h => h.year_month === ymKey).pop();
+        const causes = histEntry?.causes?.length ? histEntry.causes : (c.gap?.causes || []);
+        const detail = (histEntry?.cause_detail || c.gap?.cause_detail || '').trim();
         if (causes.length > 0 && !detail) {
           missingDetail.push({
             name: c.name || c.company_name,
@@ -5738,6 +5748,33 @@ export default function Report() {
                           {iss.priority >= 2 && <span style={{ marginLeft: 4, fontSize: 10, color: iss.priority === 3 ? 'var(--red)' : '#d97706' }}>{iss.priority === 3 ? '🔴긴급' : '🟡주요'}</span>}
                           <span style={{ marginLeft: 4 }}>{iss.content.length > 80 ? iss.content.slice(0, 80) + '...' : iss.content}</span>
                           <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>— {iss.rep}, {iss.status}, {iss.date}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── v3.50: 주간보고 포함 항목 ── */}
+                {(blk.weeklyReportItems || []).length > 0 && (
+                  <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(46,125,50,0.04)', border: '1px solid rgba(46,125,50,0.25)', borderRadius: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: 'var(--accent)' }}>
+                      📋 주간보고 포함 활동 ({blk.weeklyReportItems.length}건)
+                      <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+                        — 담당자가 직접 체크한 주요 보고 항목
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {blk.weeklyReportItems.map((iss, i) => (
+                        <div key={i} style={{ fontSize: 11, padding: '4px 8px', background: 'rgba(46,125,50,0.06)', borderLeft: '3px solid var(--accent)', borderRadius: 3 }}>
+                          <strong>
+                            {iss.accountId ? (
+                              <a href="#" onClick={(e) => { e.preventDefault(); const acc = accounts.find(a => a.id === iss.accountId); if (acc) setEditingAccount(acc); }}
+                                style={{ color: 'var(--accent)', textDecoration: 'none' }}>{iss.company}</a>
+                            ) : iss.company}
+                          </strong>
+                          <span style={{ marginLeft: 4, color: 'var(--text3)' }}>[{iss.issueType}]</span>
+                          <span style={{ marginLeft: 4 }}>{iss.content.length > 80 ? iss.content.slice(0, 80) + '...' : iss.content}</span>
+                          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>— {iss.rep}, {iss.date}</span>
                         </div>
                       ))}
                     </div>

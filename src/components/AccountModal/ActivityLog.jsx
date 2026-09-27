@@ -41,6 +41,8 @@ const INITIAL_LOG = {
   target_product: '',
   // v3.17 Phase A1: 타부서 공유 필요 여부 (issue_type과 별개)
   cross_dept_share: false,
+  // v3.50: 주간보고 포함 여부
+  weekly_report: false,
   // v3.17 Phase A2: 회복 계획 (GAP·지연을 메울 영업활동이 있는 경우)
   recovery_plan_date: '',
   recovery_plan_amount: '',
@@ -208,7 +210,7 @@ export default function ActivityLog({ accountId, draft }) {
   const [expandedHistory, setExpandedHistory] = useState({});
 
   /* ── 권한 체크: 본인 로그만 편집 가능, 관리자는 모든 로그 ── */
-  const canEditLog = (log) => isAdmin || log.sales_rep === currentUser;
+  const canEditLog = (log) => isAdmin || log.sales_rep === currentUser || log.created_by === currentUser;
 
   /* ── Summary stats ── */
   const summary = useMemo(() => {
@@ -280,6 +282,8 @@ export default function ActivityLog({ accountId, draft }) {
 
     // v3.17 Phase A1/A2: 타부서 공유 + 회복 계획
     logEntry.cross_dept_share = !!newLog.cross_dept_share;
+    // v3.50: 주간보고 포함
+    logEntry.weekly_report = !!newLog.weekly_report;
     if (newLog.recovery_plan_date || newLog.recovery_plan_amount || newLog.recovery_plan_note) {
       logEntry.recovery_plan_date = newLog.recovery_plan_date || '';
       logEntry.recovery_plan_amount = Number(newLog.recovery_plan_amount) || 0;
@@ -655,6 +659,25 @@ export default function ActivityLog({ accountId, draft }) {
             </div>
           </div>
 
+          {/* v3.50: 주간보고 포함 체크박스 */}
+          <div className="form-row full" style={{ background: 'rgba(46, 125, 50, 0.04)', padding: '8px 12px', borderRadius: 6, border: '1px solid rgba(46, 125, 50, 0.2)', marginTop: 4 }}>
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="weekly_report_new"
+                checked={!!newLog.weekly_report}
+                onChange={e => setNewLog(p => ({ ...p, weekly_report: e.target.checked }))}
+                style={{ width: 16, height: 16, cursor: 'pointer' }}
+              />
+              <label htmlFor="weekly_report_new" style={{ cursor: 'pointer', margin: 0, fontSize: 12, fontWeight: 600 }}>
+                📋 <span style={{ color: 'var(--accent)' }}>주간보고 포함</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+                  (체크 시 주간 보고서 ■3 팀별 활동에 별도 블록으로 자동 반영)
+                </span>
+              </label>
+            </div>
+          </div>
+
           {/* v3.34: 활동 outcome (활동→수주 전환율 측정 — 보고서 ROI 매트릭스 자동 반영) */}
           <div className="form-row full" style={{ marginTop: 6 }}>
             <div className="form-group">
@@ -740,7 +763,7 @@ export default function ActivityLog({ accountId, draft }) {
               return (
                 <div key={log.id} className={`timeline-item ${statusClass}`} style={{ border: '2px dashed var(--accent)', background: 'rgba(46,125,50,0.03)' }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>
-                    ✎ 편집 모드 — {log.sales_rep} · 원본 작성 {log.date}
+                    ✎ 편집 모드 — {log.created_by || log.sales_rep}{log.created_by && log.created_by !== log.sales_rep && log.sales_rep ? ` (담당: ${log.sales_rep})` : ''} · 원본 작성 {log.date}
                   </div>
 
                   {/* 상단 */}
@@ -863,7 +886,12 @@ export default function ActivityLog({ accountId, draft }) {
                     }}>{te(log.order_sub_type)}</span>
                   )}
                   <span className={`status-badge ${statusClass}`}>{te(log.status)}</span>
-                  <span style={{ fontSize: '10px', color: 'var(--text3)' }}>{log.sales_rep}</span>
+                  <span style={{ fontSize: '10px', color: 'var(--text3)' }}>
+                    {log.created_by || log.sales_rep}
+                    {log.created_by && log.created_by !== log.sales_rep && log.sales_rep && (
+                      <span style={{ marginLeft: 3, opacity: 0.7 }}>(담당: {log.sales_rep})</span>
+                    )}
+                  </span>
                   {editHistory.length > 0 && (
                     <button
                       onClick={() => setExpandedHistory(p => ({ ...p, [log.id]: !p[log.id] }))}

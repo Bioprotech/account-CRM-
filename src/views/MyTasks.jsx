@@ -51,6 +51,7 @@ export default function MyTasks() {
     accounts: accountsAll, activityLogs, openIssues, teamTasks, businessPlans,
     orders: ordersAll, saveTeamTask, removeTeamTask, setEditingAccount, setCurrentTab, showToast,
   } = ctx;
+  const [activitySearch, setActivitySearch] = useState('');
   const t = ctx.t;
   const te = ctx.te;
   // v3.32: 거래종료(inactive) 고객 — 내 업무에서 자동 제외
@@ -129,6 +130,32 @@ export default function MyTasks() {
       return (a.due_date || '9999').localeCompare(b.due_date || '9999');
     });
   }, [teamTasks, targetRep, repTeam, showCompleted, monthFilter, thisYM, nextYM]);
+
+  // ── ⓪ 일자별 활동 게시판 (v3.50) ──
+  const accountNameMap = useMemo(() => {
+    const m = {};
+    (accounts || []).forEach(a => { m[a.id] = a.company_name || a.customer_name || ''; });
+    return m;
+  }, [accounts]);
+
+  const activityBoard = useMemo(() => {
+    const logs = (activityLogs || []).filter(l => {
+      if (myAccountIds && !myAccountIds.has(l.account_id)) return false;
+      return true;
+    });
+    const q = activitySearch.trim().toLowerCase();
+    const filtered = q ? logs.filter(l => {
+      const name = (accountNameMap[l.account_id] || l.customer_name || '').toLowerCase();
+      const content = (l.content || l.note || '').toLowerCase();
+      const date = (l.activity_date || l.date || '').toLowerCase();
+      return name.includes(q) || content.includes(q) || date.includes(q);
+    }) : logs;
+    return filtered.sort((a, b) =>
+      (b.activity_date || b.date || b.created_at || '').localeCompare(
+        a.activity_date || a.date || a.created_at || ''
+      )
+    ).slice(0, 100);
+  }, [activityLogs, myAccountIds, accountNameMap, activitySearch]);
 
   // ── ② 내 Open 이슈 ──
   const myOpenIssues = useMemo(() => {
@@ -394,6 +421,73 @@ export default function MyTasks() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* ⓪ v3.50: 일자별 활동 게시판 */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <span>📅 일자별 활동 업데이트 ({activityBoard.length}건{activitySearch ? ' — 검색 중' : ''})</span>
+          <input
+            type="text"
+            value={activitySearch}
+            onChange={e => setActivitySearch(e.target.value)}
+            placeholder="거래처명 / 날짜 / 이슈 검색..."
+            style={{ fontSize: 11, padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 4, minWidth: 200 }}
+          />
+        </div>
+        {activityBoard.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text3)', padding: 12 }}>
+            {activitySearch ? '검색 결과가 없습니다.' : '활동 기록이 없습니다.'}
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg3)', fontSize: 11, color: 'var(--text3)' }}>
+                  <th style={{ padding: '5px 8px', textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 600 }}>날짜</th>
+                  <th style={{ padding: '5px 8px', textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 600 }}>거래처</th>
+                  <th style={{ padding: '5px 8px', textAlign: 'left', fontWeight: 600 }}>이슈 / 내용</th>
+                  <th style={{ padding: '5px 8px', textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 600 }}>유형</th>
+                  <th style={{ padding: '5px 8px', textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 600 }}>담당</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activityBoard.map((l, i) => {
+                  const name = accountNameMap[l.account_id] || l.customer_name || '-';
+                  const acc = (accounts || []).find(a => a.id === l.account_id);
+                  return (
+                    <tr key={l.id || i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--bg)' : 'var(--bg2)' }}>
+                      <td style={{ padding: '5px 8px', whiteSpace: 'nowrap', color: 'var(--text3)', fontSize: 11 }}>
+                        {l.activity_date || l.date || '-'}
+                      </td>
+                      <td style={{ padding: '5px 8px', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                        {acc ? (
+                          <a href="#" onClick={e => { e.preventDefault(); setEditingAccount(acc); }}
+                            style={{ color: 'var(--accent)', textDecoration: 'none' }}>{name}</a>
+                        ) : name}
+                      </td>
+                      <td style={{ padding: '5px 8px', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={l.content || l.note || ''}>
+                        {l.content || l.note || '-'}
+                      </td>
+                      <td style={{ padding: '5px 8px', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text3)' }}>
+                        {l.activity_type || l.issue_type || '-'}
+                      </td>
+                      <td style={{ padding: '5px 8px', whiteSpace: 'nowrap', fontSize: 11 }}>
+                        {l.sales_rep || '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {activityBoard.length >= 100 && (
+              <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'right', marginTop: 4 }}>
+                최신 100건만 표시 — 더 보려면 검색어로 필터링하세요
+              </div>
+            )}
           </div>
         )}
       </div>

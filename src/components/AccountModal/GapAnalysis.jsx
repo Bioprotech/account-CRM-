@@ -18,6 +18,7 @@ const PROB_OPTIONS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 export default function GapAnalysis({ draft, update }) {
   const { businessPlans, orders, t, te } = useAccount();
   const [oppForm, setOppForm] = useState(null);
+  const [histFilter, setHistFilter] = useState({ ym: '', cause: '' });
 
   const gap = draft.gap_analysis || {};
 
@@ -162,6 +163,84 @@ export default function GapAnalysis({ draft, update }) {
         </div>
       )}
 
+      {/* ⑥ v3.50: GAP 원인 월별 이력 — 테이블 형식, Section 1 바로 다음 */}
+      {(gap.gap_cause_history || []).length > 0 && (() => {
+        const allYms = [...new Set((gap.gap_cause_history).map(e => e.year_month))].sort().reverse();
+        const allCauses = [...new Set((gap.gap_cause_history).flatMap(e => e.causes || []))];
+        const filtered = [...gap.gap_cause_history]
+          .filter(e => (!histFilter.ym || e.year_month === histFilter.ym) &&
+            (!histFilter.cause || (e.causes || []).includes(histFilter.cause)))
+          .reverse();
+        return (
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>📅 GAP 원인 이력 ({filtered.length}건)</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select value={histFilter.ym} onChange={e => setHistFilter(p => ({ ...p, ym: e.target.value }))}
+                  style={{ fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                  <option value="">연도/월 전체</option>
+                  {allYms.map(ym => <option key={ym} value={ym}>{ym}</option>)}
+                </select>
+                <select value={histFilter.cause} onChange={e => setHistFilter(p => ({ ...p, cause: e.target.value }))}
+                  style={{ fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                  <option value="">원인 전체</option>
+                  {allCauses.map(ck => {
+                    const ci = GAP_CAUSES.find(c => c.key === ck);
+                    return <option key={ck} value={ck}>{ci ? `${ci.icon} ${te(ci.label)}` : ck}</option>;
+                  })}
+                </select>
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg3)', fontSize: 11, color: 'var(--text3)' }}>
+                    <th style={{ padding: '5px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>연/월</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'left' }}>주요 원인</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'left' }}>원인 분석</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'left' }}>대책 / Next Action Plan</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>삭제</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((entry, i) => {
+                    const origIdx = gap.gap_cause_history.findIndex(
+                      e => e.saved_at === entry.saved_at && e.year_month === entry.year_month
+                    );
+                    return (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--bg)' : 'var(--bg2)' }}>
+                        <td style={{ padding: '5px 8px', whiteSpace: 'nowrap', fontWeight: 700 }}>{entry.year_month}</td>
+                        <td style={{ padding: '5px 8px' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {(entry.causes || []).map(ck => {
+                              const ci = GAP_CAUSES.find(c => c.key === ck);
+                              return (
+                                <span key={ck} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(46,125,50,.1)', color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                  {ci ? `${ci.icon} ${te(ci.label)}` : ck}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </td>
+                        <td style={{ padding: '5px 8px', color: 'var(--text2)', maxWidth: 200 }}>{entry.cause_detail || '-'}</td>
+                        <td style={{ padding: '5px 8px', color: 'var(--text2)', maxWidth: 200 }}>{entry.countermeasure || '-'}</td>
+                        <td style={{ padding: '5px 8px', textAlign: 'center' }}>
+                          <button className="btn btn-danger btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                            onClick={() => {
+                              const next = gap.gap_cause_history.filter((_, idx) => idx !== origIdx);
+                              updateGap({ gap_cause_history: next });
+                            }}>삭제</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Section 2: Gap 원인 / 대책 ── */}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-title">
@@ -305,60 +384,83 @@ export default function GapAnalysis({ draft, update }) {
         </div>
       </div>
 
-      {/* ⑥ v3.47: GAP 원인 월별 이력 */}
-      {(gap.gap_cause_history || []).length > 0 && (
-        <div className="card" style={{ marginBottom: 12 }}>
-          <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>📅 GAP 원인 월별 이력</span>
-            <span style={{ fontSize: 10, color: 'var(--text3)' }}>{gap.gap_cause_history.length}건</span>
+      {/* ⑥ v3.50: GAP 원인 이력 테이블 — 상단 이동됨 (아래 Section 1-2 사이에 렌더) */}
+      {false && (() => {
+        const allYms = [...new Set((gap.gap_cause_history).map(e => e.year_month))].sort().reverse();
+        const allCauses = [...new Set((gap.gap_cause_history).flatMap(e => e.causes || []))];
+        const filtered = [...gap.gap_cause_history]
+          .filter(e => (!histFilter.ym || e.year_month === histFilter.ym) &&
+            (!histFilter.cause || (e.causes || []).includes(histFilter.cause)))
+          .reverse();
+        return (
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>📅 GAP 원인 이력 ({filtered.length}건)</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select value={histFilter.ym} onChange={e => setHistFilter(p => ({ ...p, ym: e.target.value }))}
+                  style={{ fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                  <option value="">연도/월 전체</option>
+                  {allYms.map(ym => <option key={ym} value={ym}>{ym}</option>)}
+                </select>
+                <select value={histFilter.cause} onChange={e => setHistFilter(p => ({ ...p, cause: e.target.value }))}
+                  style={{ fontSize: 11, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                  <option value="">원인 전체</option>
+                  {allCauses.map(ck => {
+                    const ci = GAP_CAUSES.find(c => c.key === ck);
+                    return <option key={ck} value={ck}>{ci ? `${ci.icon} ${te(ci.label)}` : ck}</option>;
+                  })}
+                </select>
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg3)', fontSize: 11, color: 'var(--text3)' }}>
+                    <th style={{ padding: '5px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>연/월</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'left' }}>주요 원인</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'left' }}>원인 분석</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'left' }}>대책 / Next Action Plan</th>
+                    <th style={{ padding: '5px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>삭제</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((entry, i) => {
+                    const realIdx = gap.gap_cause_history.indexOf(gap.gap_cause_history.find(
+                      e => e.saved_at === entry.saved_at && e.year_month === entry.year_month
+                    ));
+                    return (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--bg)' : 'var(--bg2)' }}>
+                        <td style={{ padding: '5px 8px', whiteSpace: 'nowrap', fontWeight: 700 }}>{entry.year_month}</td>
+                        <td style={{ padding: '5px 8px' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {(entry.causes || []).map(ck => {
+                              const ci = GAP_CAUSES.find(c => c.key === ck);
+                              return (
+                                <span key={ck} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(46,125,50,.1)', color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                  {ci ? `${ci.icon} ${te(ci.label)}` : ck}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </td>
+                        <td style={{ padding: '5px 8px', color: 'var(--text2)', maxWidth: 200 }}>{entry.cause_detail || '-'}</td>
+                        <td style={{ padding: '5px 8px', color: 'var(--text2)', maxWidth: 200 }}>{entry.countermeasure || '-'}</td>
+                        <td style={{ padding: '5px 8px', textAlign: 'center' }}>
+                          <button className="btn btn-danger btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                            onClick={() => {
+                              const next = gap.gap_cause_history.filter((_, idx) => idx !== realIdx);
+                              updateGap({ gap_cause_history: next });
+                            }}>삭제</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {[...gap.gap_cause_history].reverse().map((entry, i) => {
-              const realIdx = gap.gap_cause_history.length - 1 - i;
-              return (
-                <div key={realIdx} style={{ padding: 10, background: 'var(--bg3)', borderRadius: 6, border: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>{entry.year_month}</span>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <span style={{ fontSize: 10, color: 'var(--text3)' }}>저장: {entry.saved_at}</span>
-                      <button
-                        className="btn btn-danger btn-sm"
-                        style={{ fontSize: 10, padding: '2px 6px' }}
-                        onClick={() => {
-                          const next = gap.gap_cause_history.filter((_, idx) => idx !== realIdx);
-                          updateGap({ gap_cause_history: next });
-                        }}
-                      >삭제</button>
-                    </div>
-                  </div>
-                  {(entry.causes || []).length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
-                      {entry.causes.map(ck => {
-                        const causeInfo = GAP_CAUSES.find(c => c.key === ck);
-                        return (
-                          <span key={ck} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 10, background: 'rgba(46,125,50,.1)', color: 'var(--accent)', fontWeight: 600 }}>
-                            {causeInfo ? `${causeInfo.icon} ${te(causeInfo.label)}` : ck}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {entry.cause_detail && (
-                    <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 3 }}>
-                      <span style={{ fontWeight: 600, color: 'var(--text3)' }}>원인: </span>{entry.cause_detail}
-                    </div>
-                  )}
-                  {entry.countermeasure && (
-                    <div style={{ fontSize: 11, color: 'var(--text2)' }}>
-                      <span style={{ fontWeight: 600, color: 'var(--text3)' }}>대책: </span>{entry.countermeasure}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Section 3: 고객 예산/구매 사이클 ── */}
       <div className="card" style={{ marginBottom: 12 }}>
