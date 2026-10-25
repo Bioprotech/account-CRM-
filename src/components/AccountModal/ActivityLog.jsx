@@ -49,6 +49,9 @@ const INITIAL_LOG = {
   recovery_plan_note: '',
   // v3.34: 활동 outcome (활동→수주 전환율 측정용 — 명세 P2)
   outcome: '',  // NO_CHANGE / NEW_LEAD / QUALIFIED / PROPOSAL_SENT / WON / LOST
+  // E1: 입찰 태그
+  is_tender: false,
+  tender_info: { institution: '', product: '', quantity: '', unit_price: '', amount: '', announcement_date: '', status: '' },
 };
 
 /* ══════════════════════════════════════════════════════
@@ -291,6 +294,12 @@ export default function ActivityLog({ accountId, draft }) {
     }
     // v3.34: 활동 outcome (보고서 ROI 매트릭스용)
     if (newLog.outcome) logEntry.outcome = newLog.outcome;
+
+    // E1: 입찰 태그
+    if (newLog.is_tender) {
+      logEntry.is_tender = true;
+      logEntry.tender_info = { ...newLog.tender_info };
+    }
 
     saveLog(logEntry);
     setNewLog({ ...INITIAL_LOG, date: today() });
@@ -678,6 +687,76 @@ export default function ActivityLog({ accountId, draft }) {
             </div>
           </div>
 
+          {/* E1: 입찰 태그 */}
+          <div className="form-row full" style={{ background: 'rgba(245, 158, 11, 0.04)', padding: '8px 12px', borderRadius: 6, border: '1px solid rgba(245, 158, 11, 0.25)', marginTop: 4 }}>
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="is_tender_new"
+                checked={!!newLog.is_tender}
+                onChange={e => setNewLog(p => ({ ...p, is_tender: e.target.checked }))}
+                style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#d97706' }}
+              />
+              <label htmlFor="is_tender_new" style={{ cursor: 'pointer', margin: 0, fontSize: 12, fontWeight: 600 }}>
+                🏛️ <span style={{ color: '#d97706' }}>입찰 건</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, marginLeft: 6 }}>
+                  (체크 시 입찰 현황판에 자동 반영)
+                </span>
+              </label>
+            </div>
+            {newLog.is_tender && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>발주 기관</label>
+                  <input type="text" value={newLog.tender_info?.institution || ''}
+                    onChange={e => setNewLog(p => ({ ...p, tender_info: { ...p.tender_info, institution: e.target.value } }))}
+                    placeholder="예: ○○병원 / 조달청" />
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>품목</label>
+                  <input type="text" value={newLog.tender_info?.product || ''}
+                    onChange={e => setNewLog(p => ({ ...p, tender_info: { ...p.tender_info, product: e.target.value } }))}
+                    placeholder="입찰 품목명" />
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>수량</label>
+                  <input type="number" value={newLog.tender_info?.quantity || ''}
+                    onChange={e => setNewLog(p => ({ ...p, tender_info: { ...p.tender_info, quantity: e.target.value } }))}
+                    placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>단가 (KRW)</label>
+                  <input type="number" value={newLog.tender_info?.unit_price || ''}
+                    onChange={e => setNewLog(p => ({ ...p, tender_info: { ...p.tender_info, unit_price: e.target.value } }))}
+                    placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>금액 (KRW)</label>
+                  <input type="number" value={newLog.tender_info?.amount || ''}
+                    onChange={e => setNewLog(p => ({ ...p, tender_info: { ...p.tender_info, amount: e.target.value } }))}
+                    placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>결과발표일</label>
+                  <input type="date" value={newLog.tender_info?.announcement_date || ''}
+                    onChange={e => setNewLog(p => ({ ...p, tender_info: { ...p.tender_info, announcement_date: e.target.value } }))} />
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>입찰 상태</label>
+                  <select value={newLog.tender_info?.status || ''}
+                    onChange={e => setNewLog(p => ({ ...p, tender_info: { ...p.tender_info, status: e.target.value } }))}>
+                    <option value="">선택...</option>
+                    <option value="준비중">준비중</option>
+                    <option value="제출완료">제출완료</option>
+                    <option value="낙찰">낙찰</option>
+                    <option value="낙찰실패">낙찰실패</option>
+                    <option value="취소">취소</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* v3.34: 활동 outcome (활동→수주 전환율 측정 — 보고서 ROI 매트릭스 자동 반영) */}
           <div className="form-row full" style={{ marginTop: 6 }}>
             <div className="form-group">
@@ -751,6 +830,7 @@ export default function ActivityLog({ accountId, draft }) {
             const statusClass = log.status === 'Closed' ? 'closed' : log.status === 'In Progress' ? 'in-progress' : 'open';
             const isOrder = log.issue_type === '수주활동';
             const isCross = log.issue_type === '크로스셀링';
+            const isTender = !!log.is_tender;
 
             const priorityInfo = ISSUE_PRIORITIES.find(p => p.value === (log.priority ?? DEFAULT_PRIORITY)) || ISSUE_PRIORITIES[0];
             const editable = canEditLog(log);
@@ -885,6 +965,11 @@ export default function ActivityLog({ accountId, draft }) {
                       fontSize: '10px',
                     }}>{te(log.order_sub_type)}</span>
                   )}
+                  {isTender && (
+                    <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 10, fontWeight: 700, background: 'rgba(217,119,6,0.15)', color: '#d97706', border: '1px solid rgba(217,119,6,0.3)' }}>
+                      🏛️ 입찰
+                    </span>
+                  )}
                   <span className={`status-badge ${statusClass}`}>{te(log.status)}</span>
                   <span style={{ fontSize: '10px', color: 'var(--text3)' }}>
                     {log.created_by || log.sales_rep}
@@ -936,6 +1021,20 @@ export default function ActivityLog({ accountId, draft }) {
                         예상금액: {fmtAmount(log.expected_amount)}
                       </span>
                     )}
+                  </div>
+                )}
+
+                {/* E1: 입찰 세부정보 */}
+                {isTender && log.tender_info && (
+                  <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(217,119,6,0.06)', border: '1px solid rgba(217,119,6,0.2)', borderRadius: 5, fontSize: 11 }}>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', color: 'var(--text2)' }}>
+                      {log.tender_info.institution && <span>기관: <strong>{log.tender_info.institution}</strong></span>}
+                      {log.tender_info.product && <span>품목: <strong>{log.tender_info.product}</strong></span>}
+                      {log.tender_info.quantity && <span>수량: {Number(log.tender_info.quantity).toLocaleString()}</span>}
+                      {log.tender_info.amount && <span style={{ color: '#d97706', fontWeight: 600 }}>금액: {fmtAmount(log.tender_info.amount)}</span>}
+                      {log.tender_info.announcement_date && <span>결과발표: {log.tender_info.announcement_date}</span>}
+                      {log.tender_info.status && <span style={{ fontWeight: 700, color: log.tender_info.status === '낙찰' ? 'var(--green, #16a34a)' : log.tender_info.status === '낙찰실패' ? 'var(--red)' : '#d97706' }}>상태: {log.tender_info.status}</span>}
+                    </div>
                   </div>
                 )}
 

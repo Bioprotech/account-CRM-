@@ -37,6 +37,10 @@ function blankProject() {
     updates: [],
     related_accounts: [],
     share_with_teams: [],
+    // M6
+    mid_long_term_goal: '',
+    monthly_progress: {},
+    deliverables: [],
   };
 }
 
@@ -58,6 +62,8 @@ export default function TeamProjects() {
   const [newUpdate, setNewUpdate] = useState({ date: new Date().toISOString().slice(0, 10), content: '', share_with_teams: [] });
   // milestone 추가 임시 입력
   const [newMilestone, setNewMilestone] = useState({ date: '', label: '' });
+  // M6: deliverable 추가 임시 입력
+  const [newDeliverable, setNewDeliverable] = useState({ title: '', due_date: '' });
 
   const filtered = useMemo(() => {
     return (teamProjects || [])
@@ -71,6 +77,7 @@ export default function TeamProjects() {
     setAccSearch('');
     setNewUpdate({ date: new Date().toISOString().slice(0, 10), content: '', share_with_teams: [] });
     setNewMilestone({ date: '', label: '' });
+    setNewDeliverable({ title: '', due_date: '' });
   };
   const openEdit = (p) => {
     setEditing({
@@ -80,6 +87,9 @@ export default function TeamProjects() {
       updates: p.updates || [],
       related_accounts: p.related_accounts || [],
       share_with_teams: p.share_with_teams || [],
+      mid_long_term_goal: p.mid_long_term_goal || '',
+      monthly_progress: p.monthly_progress || {},
+      deliverables: p.deliverables || [],
     });
     setAccSearch('');
     setNewUpdate({ date: new Date().toISOString().slice(0, 10), content: '', share_with_teams: [] });
@@ -159,6 +169,43 @@ export default function TeamProjects() {
   };
   const removeMilestone = (mid) => {
     setEditing(prev => ({ ...prev, milestones: (prev.milestones || []).filter(m => m.id !== mid) }));
+  };
+
+  // M6: 월별 진도 ●/◎/X 순환
+  const PROGRESS_SYMBOLS = ['', '●', '◎', 'X'];
+  const cycleProgress = (ym) => {
+    setEditing(prev => {
+      const cur = prev.monthly_progress?.[ym] || '';
+      const idx = PROGRESS_SYMBOLS.indexOf(cur);
+      const next = PROGRESS_SYMBOLS[(idx + 1) % PROGRESS_SYMBOLS.length];
+      return { ...prev, monthly_progress: { ...prev.monthly_progress, [ym]: next } };
+    });
+  };
+
+  // M6: 산출물
+  const addDeliverable = () => {
+    if (!newDeliverable.title.trim()) { alert('산출물 내용 입력'); return; }
+    setEditing(prev => ({
+      ...prev,
+      deliverables: [...(prev.deliverables || []), {
+        id: `d_${Date.now()}`,
+        title: newDeliverable.title.trim(),
+        due_date: newDeliverable.due_date,
+        status: 'pending',
+      }],
+    }));
+    setNewDeliverable({ title: '', due_date: '' });
+  };
+  const toggleDeliverable = (did) => {
+    setEditing(prev => ({
+      ...prev,
+      deliverables: (prev.deliverables || []).map(d =>
+        d.id === did ? { ...d, status: d.status === 'done' ? 'pending' : 'done' } : d
+      ),
+    }));
+  };
+  const removeDeliverable = (did) => {
+    setEditing(prev => ({ ...prev, deliverables: (prev.deliverables || []).filter(d => d.id !== did) }));
   };
   const addAccount = (acc) => {
     setEditing(prev => {
@@ -480,6 +527,64 @@ export default function TeamProjects() {
                   })}
                 </div>
               )}
+            </div>
+
+            {/* M6: 중장기(3년) 목표 */}
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>🎯 중장기 목표 (3년)
+                <textarea
+                  value={editing.mid_long_term_goal || ''}
+                  onChange={e => setEditing({ ...editing, mid_long_term_goal: e.target.value })}
+                  rows={2}
+                  placeholder="3년 내 달성 목표 및 방향성을 입력하세요"
+                  style={{ width: '100%', padding: 8, marginTop: 3, fontSize: 12, fontFamily: 'inherit' }}
+                />
+              </label>
+            </div>
+
+            {/* M6: 월별 진도 (2026년) */}
+            <div style={{ marginBottom: 10, padding: 10, background: 'var(--bg2)', borderRadius: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>📅 2026 월별 진도 (클릭 → ●달성 / ◎부분달성 / X미달성)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
+                {Array.from({ length: 12 }, (_, i) => {
+                  const m = String(i + 1).padStart(2, '0');
+                  const ym = `2026-${m}`;
+                  const symbol = editing.monthly_progress?.[ym] || '';
+                  const symbolColor = symbol === '●' ? 'var(--green, #16a34a)' : symbol === '◎' ? '#d97706' : symbol === 'X' ? 'var(--red)' : 'var(--text3)';
+                  return (
+                    <button key={ym} onClick={() => cycleProgress(ym)} style={{
+                      padding: '6px 4px', border: `1px solid ${symbol ? symbolColor : 'var(--border)'}`,
+                      borderRadius: 4, cursor: 'pointer', background: symbol ? symbolColor + '15' : 'var(--bg)',
+                      fontSize: 11, textAlign: 'center',
+                    }}>
+                      <div style={{ color: 'var(--text3)', fontSize: 10 }}>{i + 1}월</div>
+                      <div style={{ color: symbolColor, fontWeight: 700, fontSize: 14 }}>{symbol || '—'}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* M6: 산출물/성과물 */}
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>📦 산출물 / 성과물 ({(editing.deliverables || []).length}건)</div>
+              {(editing.deliverables || []).length > 0 && (
+                <div style={{ display: 'grid', gap: 3, marginBottom: 6 }}>
+                  {editing.deliverables.map(d => (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '3px 6px', background: 'var(--bg2)', borderRadius: 3 }}>
+                      <input type="checkbox" checked={d.status === 'done'} onChange={() => toggleDeliverable(d.id)} />
+                      <span style={{ flex: 1, textDecoration: d.status === 'done' ? 'line-through' : 'none', color: d.status === 'done' ? 'var(--text3)' : 'inherit' }}>{d.title}</span>
+                      {d.due_date && <span style={{ color: 'var(--text3)' }}>{d.due_date}</span>}
+                      <button onClick={() => removeDeliverable(d.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 14 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input type="text" value={newDeliverable.title} onChange={e => setNewDeliverable({ ...newDeliverable, title: e.target.value })} placeholder="산출물 내용" style={{ flex: 1, padding: 4, fontSize: 11 }} />
+                <input type="date" value={newDeliverable.due_date} onChange={e => setNewDeliverable({ ...newDeliverable, due_date: e.target.value })} style={{ padding: 4, fontSize: 11 }} />
+                <button onClick={addDeliverable} style={{ padding: '4px 10px', fontSize: 11, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}>+ 추가</button>
+              </div>
             </div>
 
             {/* PJT 단위 공유 */}

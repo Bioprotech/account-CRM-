@@ -13,6 +13,7 @@ import MyTasks from './views/MyTasks';
 import TeamCommon from './views/TeamCommon';
 import TypeGuideView from './views/TypeGuideView';
 import AccountModal from './components/AccountModal/AccountModal';
+import TenderView from './views/TenderView';
 
 function UserSelectScreen() {
   const { login, teamMembers } = useAccount();
@@ -187,6 +188,7 @@ function AppContent() {
       case 'accounts': return <AccountList />;
       case 'report': return <Report />;
       case 'progress': return <Progress />;
+      case 'tenders': return <TenderView />;
       case 'competitors': return <CompetitorView />;
       case 'myTasks': return <MyTasks />;
       case 'teamCommon': return <TeamCommon />;

@@ -1,7 +1,73 @@
 # Account CRM 개발 이력
 
 > 이 문서는 Account CRM의 개발 과정을 자동으로 기록합니다.
-> 최종 업데이트: 2026-04-17
+> 최종 업데이트: 2026-10-25
+
+---
+
+## 2026-10-25 — v3.52 Phase 1: 신규 모듈 개발 (E1 · M6 · M2)
+
+> **상태**: ✅ 배포 완료 (`index-aSwYRHGy.js`) — 2026-10-25 라이브
+
+### E1: 입찰 태그 + 현황판
+
+| 파일 | 변경 |
+|---|---|
+| `ActivityLog.jsx` | INITIAL_LOG에 `is_tender: false`, `tender_info: {institution, product, quantity, unit_price, amount, announcement_date, status}` 추가 |
+| `ActivityLog.jsx` | 입찰 건 체크박스 클릭 시 Amber 테두리 3컬럼 서브필드 폼 표시 (발주기관/품목/수량/단가/금액/결과발표일/입찰상태) |
+| `ActivityLog.jsx` | 타임라인 헤더에 🏛️ 입찰 배지, 타임라인 본문에 입찰 세부정보 블록 (Amber 배경, 기관·품목·수량·금액·결과발표일·상태) |
+| `TenderView.jsx` | **신규 파일** — 전체 입찰 현황 대시보드. KPI 5종(전체/낙찰/진행중/총입찰금액/낙찰률), 상태·키워드 필터, 결과 테이블(날짜/고객사/기관/품목/수량/금액/결과발표일/상태/담당자) |
+| `Sidebar.jsx` | 🏛️ 입찰 현황 메뉴 추가 (경쟁사 가격 메뉴 위) |
+| `App.jsx` | TenderView 라우팅 추가 (`case 'tenders'`) |
+| `i18n.js` | `menu.tenders` 한/영 키 추가 (KO: '입찰 현황', EN: 'Tender Status') |
+
+**데이터 구조**: activity_logs 문서에 `is_tender: Boolean`, `tender_info: Object` 추가 — 입찰 정보가 F-up 로그와 함께 단일 문서로 저장되며 TenderView는 `activityLogs.filter(l => l.is_tender)`로 집계.
+
+**상태 색상**: 낙찰=green / 낙찰실패=red / 제출완료=blue / 준비중=amber
+
+---
+
+### M6: TeamProjects 보완 (중장기 목표 · 월별 진도 · 산출물)
+
+| 파일 | 변경 |
+|---|---|
+| `TeamProjects.jsx` | `blankProject()`에 `mid_long_term_goal: ''`, `monthly_progress: {}`, `deliverables: []` 필드 추가 |
+| `TeamProjects.jsx` | 모달에 **중장기(3년) 목표** textarea 추가 |
+| `TeamProjects.jsx` | 모달에 **2026년 월별 진도** 12버튼 그리드 추가 — 클릭마다 ●/◎/X/빈칸 순환 (●=green 완료/◎=amber 부분진행/X=red 미달) |
+| `TeamProjects.jsx` | 모달에 **산출물/성과물** 리스트 추가 — 제목+기한 입력폼, 체크박스 완료토글, 삭제버튼 |
+
+**신규 헬퍼**: `PROGRESS_SYMBOLS = ['', '●', '◎', 'X']`, `cycleProgress(ym)`, `addDeliverable()`, `toggleDeliverable(did)`, `removeDeliverable(did)`
+
+---
+
+### M2: 4단계 원인분석 컴포넌트 (CauseCountermeasure)
+
+| 파일 | 변경 |
+|---|---|
+| `CauseCountermeasure.jsx` | **신규 파일** — 재사용 가능 4단계 원인분석 UI 컴포넌트 |
+| `CauseCountermeasure.jsx` | ①현황(situationSummary 자동계산 읽기전용) → ②현황분석(causeDetail, 미입력 빨강 경고) → ③문제점/근본원인(rootCause, Amber) → ④대책(countermeasure, 목표미달 여부로 색상 분기) |
+| `CauseCountermeasure.jsx` | `isCCComplete(gap)` helper export — 3개 텍스트 필드 모두 입력 완료 여부 판단 |
+| `GapAnalysis.jsx` | CauseCountermeasure import + 기존 textarea 3개 대체 |
+| `GapAnalysis.jsx` | `root_cause` 신규 Firestore 필드 추가, 이번달 분석 저장 시 포함 |
+
+**하위호환**: 기존 `cause_detail`, `countermeasure` 필드 그대로 유지 — 기존 데이터 손실 없음.
+
+---
+
+### 빌드 검증 결과
+
+| 검증 항목 | 결과 |
+|---|---|
+| 입찰 현황 | ✅ 57회 (UTF-8 정상) |
+| 근본원인 | ✅ 2회 |
+| 낙찰률 | ✅ 3회 |
+| 중장기 목표 | ✅ 확인 |
+| 산출물 | ✅ 확인 |
+| is_tender | ✅ 확인 |
+| tender_info | ✅ 확인 |
+| CauseCountermeasure | ✅ 확인 |
+| isCCComplete | ✅ 확인 |
+| menu.tenders | ✅ 확인 |
 
 ---
 
@@ -510,3 +576,6 @@ account-crm/src/
 | 2026-06-21 | ✏️ v3.38 주간보고 비고란 + FCST 수정 + Plate P 품목 추가: (1) Report.jsx — ■1 수주현황 / ■1-2 매출현황 / ■1-5 다음달 예상 테이블에 비고 ✏️ 컬럼 추가. 팀별·합계 행에 이슈 메모 입력 칸 신규 (orders_notes / sales_notes / notes 키, 동일 Firestore 저장 구조). (2) ForecastTrend.jsx — FCST 상세 항목 테이블 [수정] 버튼 추가, 클릭 시 기존 값을 입력폼에 자동 로드, 동일 id로 upsert 저장, 취소 버튼 지원. (3) constants.js — PRODUCTS 배열에 'Plate P' 추가 (Cross-selling 품목 선택에 표시). |
 | 2026-06-09 | 🎯 v3.37 월간보고 개선 + 수주현황 분석 대시보드: 지적사항 대응 "내용은 많은데 무슨 얘기인지 모르겠다". (1) Report.jsx — Page 1 최상단에 결론 헤드라인 배너 추가: 상태 아이콘(🟢🟡🔴) 큰 글자 + ■0 핵심 메시지 3줄(미입력 시 자동 생성 요약) + 수주MTD/수주YTD/매출YTD 빠른 KPI 3종 — 회의 시 첫 화면에서 결론 즉시 파악 가능. (2) Report.jsx — Page 2 섹션 접기/펼치기: ■2-3 담당자별 / ■8 품목별 / ■9 대륙별 기본값 접힘(▶ 펼치기 버튼), 회의 시 필요한 섹션만 펼쳐 발표. (3) Dashboard.jsx — OrderAnalysisCard 신규: 엑셀 수주현황_분석 형태 테이블(해외계획고객/해외신규기타/국내계획고객/국내기타신규/BPU 섹션), 연간계획/YTD계획/YTD실적/달성률/전년YTD/계획대비/전년대비 7컬럼, 섹션 클릭→고객별 펼침, 전체 담당자 공통 열람 가능. |
 | 2026-05-31 | 📅 v3.36 주간보고 ■ 1-5 — 다음 달 수주/매출 예상 (월말·월초 시점): 사용자 요청 '월이 넘어가는 시점 주간보고에 다음 달 수주/매출 예상 포함'. 표시조건: 이번 주 시작일 ≥ 15일 OR 이미 입력 데이터 존재. ■1-4 고객별 수주목표 카드 다음에 ■1-5 카드 신규 — 팀별(해외/BPU/국내) 수주예상+매출예상 input + 합계 행. 저장 키 next_month_forecast_YYYY-MM (다음달 기준, 어느 주차든 동일 값 유지). 600ms debounce Firestore 자동 저장. 보라색 좌측 border 시각 구분. Report.jsx state nextMonthForecast + nmForecastKey + useEffect + updateNextMonthForecast 핸들러 + showNextMonthForecast 조건 추가. |
+| 2026-10-25 | 🏛️ v3.52 E1 입찰 태그·현황판 — ActivityLog.jsx INITIAL_LOG에 `is_tender: false` + `tender_info: {institution, product, quantity, unit_price, amount, announcement_date, status}` 추가. 입찰 체크박스 ON 시 Amber 테두리 3컬럼 서브필드 폼 표시. 타임라인 헤더 🏛️ 입찰 배지 + 본문 입찰 세부정보 블록(Amber 배경). TenderView.jsx 신규 — 전체 입찰 현황 사이드바 페이지: KPI 카드 5종(전체입찰/낙찰/진행중/총입찰금액/낙찰률), 상태·키워드 필터, 결과 테이블(날짜/고객사/발주기관/품목/수량/금액/결과발표일/입찰상태/담당자), 상태 색상(낙찰=green/낙찰실패=red/제출완료=blue/준비중=amber). Sidebar.jsx 🏛️ 입찰 현황 메뉴, App.jsx 라우팅, i18n.js menu.tenders KO/EN 추가. 빌드 dist/assets/index-aSwYRHGy.js. |
+| 2026-10-25 | 📊 v3.52 M6 TeamProjects 보완 — blankProject()에 mid_long_term_goal / monthly_progress / deliverables 필드 추가. 모달 신규 섹션: (1) 중장기(3년) 목표 textarea, (2) 2026년 월별 진도 12버튼 그리드 — 클릭마다 ●(완료/green)·◎(부분진행/amber)·X(미달/red)·빈칸 순환, PROGRESS_SYMBOLS 상수 + cycleProgress() 헬퍼, (3) 산출물/성과물 리스트 — 제목·기한 추가폼, 체크박스 완료토글(pending↔done), 삭제, addDeliverable/toggleDeliverable/removeDeliverable 헬퍼. openEdit/openNew 스프레드 업데이트 + newDeliverable state. |
+| 2026-10-25 | 🔍 v3.52 M2 4단계 원인분석 컴포넌트 신규 — CauseCountermeasure.jsx 신규 파일. ①현황(situationSummary — 목표/실적/GAP 자동계산 읽기전용 표시) → ②현황분석(causeDetail textarea, badge "②", 미입력+원인선택 시 빨강 경고) → ③문제점/근본원인(rootCause textarea, badge "③", Amber 색상) → ④대책(countermeasure textarea, badge "④", 목표미달/초과 여부로 색상 분기) 4단계 구조화 UI. isCCComplete(gap) helper export(causeDetail+rootCause+countermeasure 모두 입력 시 true). GapAnalysis.jsx에 import 통합 — 기존 textarea 2개(causeDetail·countermeasure)를 컴포넌트로 대체 + root_cause 신규 Firestore 필드 추가 + 이번달 분석 저장 시 root_cause 포함. 기존 cause_detail·countermeasure 하위호환 유지. 빌드 10개 검증 문자열 전수 ✅ (UTF-8 인코딩). |

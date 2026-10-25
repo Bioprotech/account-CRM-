@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useAccount } from '../../context/AccountContext';
 import { GAP_CAUSES, OPPORTUNITY_TYPES, BUDGET_CYCLES, PRODUCTS } from '../../lib/constants';
 import { today, genId } from '../../lib/utils';
+import CauseCountermeasure from '../CauseCountermeasure';
 
 /* ── 금액 포맷 ── */
 function fmtKRW(n) {
@@ -280,42 +281,22 @@ export default function GapAnalysis({ draft, update }) {
             );
           })}
         </div>
-        <div style={{ marginTop: 8 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: hasCauseButNoDetail ? 'var(--red)' : 'var(--text2)', display: 'block', marginBottom: 4 }}>
-            {planGap?.ytdGap >= 0 ? t('gap.detailLabelOver') : t('gap.detailLabelUnder')}
-            {(gap.causes || []).length > 0 && <span style={{ color: 'var(--red)', marginLeft: 4 }}>{t('gap.detailRequired')}</span>}
-          </label>
-          <textarea
-            value={gap.cause_detail || ''}
-            onChange={e => updateGap({ cause_detail: e.target.value })}
-            placeholder={planGap?.ytdGap >= 0
-              ? t('gap.detailPlaceholderOver')
-              : t('gap.detailPlaceholderUnder')}
-            style={{
-              minHeight: 60,
-              borderColor: hasCauseButNoDetail ? 'var(--red)' : undefined,
-              boxShadow: hasCauseButNoDetail ? '0 0 0 2px rgba(220,38,38,0.1)' : undefined,
-            }}
-          />
-          {hasCauseButNoDetail && (
-            <div style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600, marginTop: 4, padding: '6px 8px', background: 'rgba(220,38,38,0.06)', borderRadius: 4 }}>
-              {t('gap.warnEmptyDetail')}
-            </div>
-          )}
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: planGap?.ytdGap < 0 ? 'var(--red)' : 'var(--green)', display: 'block', marginBottom: 4 }}>
-            {planGap?.ytdGap < 0 ? t('gap.counterUnder') : t('gap.counterOver')}
-          </label>
-          <textarea
-            value={gap.countermeasure || ''}
-            onChange={e => updateGap({ countermeasure: e.target.value })}
-            placeholder={planGap?.ytdGap < 0
-              ? t('gap.counterPlaceholderUnder')
-              : t('gap.counterPlaceholderOver')}
-            style={{ minHeight: 60 }}
-          />
-        </div>
+        {/* M2: 4단계 원인분석/대책 */}
+        <CauseCountermeasure
+          situationSummary={planGap ? `목표 ${(planGap.ytdTarget / 100000000).toFixed(2)}억 · 실적 ${(planGap.ytdActual / 100000000).toFixed(2)}억 · GAP ${(planGap.ytdGap / 100000000).toFixed(2)}억` : null}
+          causeDetail={gap.cause_detail}
+          onCauseDetailChange={v => updateGap({ cause_detail: v })}
+          rootCause={gap.root_cause}
+          onRootCauseChange={v => updateGap({ root_cause: v })}
+          countermeasure={gap.countermeasure}
+          onCountermeasureChange={v => updateGap({ countermeasure: v })}
+          isUnderTarget={planGap?.ytdGap < 0}
+          hasCauseButNoDetail={hasCauseButNoDetail}
+          detailLabel={planGap?.ytdGap >= 0 ? t('gap.detailLabelOver') : t('gap.detailLabelUnder')}
+          counterLabel={planGap?.ytdGap < 0 ? t('gap.counterUnder') : t('gap.counterOver')}
+          detailPlaceholder={planGap?.ytdGap >= 0 ? t('gap.detailPlaceholderOver') : t('gap.detailPlaceholderUnder')}
+          counterPlaceholder={planGap?.ytdGap < 0 ? t('gap.counterPlaceholderUnder') : t('gap.counterPlaceholderOver')}
+        />
 
         {/* v3.34: Loss Reason 보강 — 회복 가능성 + 경쟁사명 (명세 P0) */}
         {(gap.causes || []).length > 0 && (
@@ -373,6 +354,7 @@ export default function GapAnalysis({ draft, update }) {
                 year_month: ym,
                 causes: gap.causes || [],
                 cause_detail: gap.cause_detail || '',
+                root_cause: gap.root_cause || '',
                 countermeasure: gap.countermeasure || '',
                 saved_at: today(),
               };
