@@ -33,6 +33,169 @@ function pctColor(p) {
   return 'red';
 }
 
+/* ── v3.53 M7: Cross-Selling 전사 현황 카드 ── */
+const CS_STATUSES = ['미접촉', '제안중', '샘플진행', '수주완료', '중단'];
+const CS_STATUS_COLOR = { '미접촉': '#888', '제안중': '#f59e0b', '샘플진행': '#3b82f6', '수주완료': '#22c55e', '중단': '#ef4444' };
+
+function CrossSellingOverviewCard({ accounts, csTargets }) {
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterRep, setFilterRep] = useState('');
+
+  const allItems = useMemo(() => {
+    const result = [];
+    (accounts || []).forEach(a => {
+      (a.cross_selling || []).forEach(cs => {
+        result.push({
+          ...cs,
+          account_id: a.id,
+          account_name: a.company_name,
+          sales_rep: a.sales_rep,
+          region: a.region,
+        });
+      });
+    });
+    return result;
+  }, [accounts]);
+
+  const filtered = useMemo(() => {
+    let r = allItems;
+    if (filterStatus) r = r.filter(x => x.status === filterStatus);
+    if (filterRep) r = r.filter(x => x.sales_rep === filterRep);
+    return r;
+  }, [allItems, filterStatus, filterRep]);
+
+  const byStatus = useMemo(() => {
+    const m = {};
+    CS_STATUSES.forEach(s => { m[s] = allItems.filter(x => x.status === s).length; });
+    return m;
+  }, [allItems]);
+
+  const byProduct = useMemo(() => {
+    const m = {};
+    allItems.forEach(x => {
+      const p = x.target_product || '미지정';
+      if (!m[p]) m[p] = { count: 0, potential: 0, actual: 0 };
+      m[p].count++;
+      m[p].potential += Number(x.potential_amount) || 0;
+      m[p].actual += Number(x.actual_amount) || 0;
+    });
+    return Object.entries(m).sort((a, b) => b[1].potential - a[1].potential);
+  }, [allItems]);
+
+  const reps = useMemo(() => [...new Set(allItems.map(x => x.sales_rep).filter(Boolean))].sort(), [allItems]);
+
+  const fmtKRW = (n) => {
+    if (!n) return '-';
+    const abs = Math.abs(n);
+    if (abs >= 100000000) return (abs / 100000000).toFixed(1) + '억';
+    if (abs >= 10000) return Math.round(abs / 10000).toLocaleString() + '만';
+    return n.toLocaleString();
+  };
+
+  const handleExport = async () => {
+    const XLSX = await import('xlsx');
+    const ws_data = [
+      ['고객명', '담당자', '지역', '대상제품', '상태', '잠재금액', '실제금액', '메모', '시작일', '업데이트'],
+      ...filtered.map(x => [
+        x.account_name, x.sales_rep, x.region, x.target_product, x.status,
+        x.potential_amount || 0, x.actual_amount || 0, x.notes, x.started_at, x.updated_at,
+      ]),
+    ];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(ws_data);
+    ws['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 30 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Cross-Selling');
+    XLSX.writeFile(wb, `cross_selling_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  if (allItems.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div className="card-title" style={{ margin: 0 }}>🔗 Cross-Selling 전사 현황</div>
+        <button className="btn btn-ghost btn-sm" onClick={handleExport} style={{ fontSize: 11 }}>
+          📥 Excel 다운로드
+        </button>
+      </div>
+
+      {/* 상태별 요약 */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        {CS_STATUSES.map(s => (
+          <div key={s} style={{
+            padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+            background: filterStatus === s ? CS_STATUS_COLOR[s] : 'var(--bg2)',
+            color: filterStatus === s ? '#fff' : 'var(--text2)',
+            border: `1.5px solid ${CS_STATUS_COLOR[s]}`,
+            cursor: 'pointer',
+          }} onClick={() => setFilterStatus(prev => prev === s ? '' : s)}>
+            {s} {byStatus[s]}건
+          </div>
+        ))}
+        <select value={filterRep} onChange={e => setFilterRep(e.target.value)}
+          style={{ fontSize: 11, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'inherit' }}>
+          <option value="">전체 담당자</option>
+          {reps.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+
+      {/* 품목별 집계 */}
+      {byProduct.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>품목별 파이프라인</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {byProduct.slice(0, 8).map(([prod, data]) => {
+              const target = (csTargets || []).find(t => t.product === prod && t.year === new Date().getFullYear());
+              const rate = target?.target_amount ? Math.round((data.actual / target.target_amount) * 100) : null;
+              return (
+                <div key={prod} style={{ padding: '6px 10px', borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', minWidth: 100 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text)', marginBottom: 3 }}>{prod}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)' }}>{data.count}건 · 잠재 {fmtKRW(data.potential)}</div>
+                  {data.actual > 0 && <div style={{ fontSize: 10, color: '#22c55e' }}>수주 {fmtKRW(data.actual)}</div>}
+                  {rate !== null && <div style={{ fontSize: 10, color: rate >= 100 ? '#22c55e' : '#f59e0b' }}>목표대비 {rate}%</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 목록 */}
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
+        건별 목록 ({filtered.length}건)
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: 'var(--bg2)' }}>
+              {['고객명', '담당자', '대상제품', '상태', '잠재금액', '수주금액', '메모'].map(h => (
+                <th key={h} style={{ padding: '5px 8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontWeight: 600, color: 'var(--text2)', whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((x, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ padding: '5px 8px' }}>{x.account_name}</td>
+                <td style={{ padding: '5px 8px', color: 'var(--text3)' }}>{x.sales_rep}</td>
+                <td style={{ padding: '5px 8px' }}>{x.target_product || '-'}</td>
+                <td style={{ padding: '5px 8px' }}>
+                  <span style={{ padding: '2px 6px', borderRadius: 10, fontSize: 10, background: `${CS_STATUS_COLOR[x.status]}22`, color: CS_STATUS_COLOR[x.status], fontWeight: 600 }}>
+                    {x.status}
+                  </span>
+                </td>
+                <td style={{ padding: '5px 8px', textAlign: 'right' }}>{fmtKRW(Number(x.potential_amount) || 0)}</td>
+                <td style={{ padding: '5px 8px', textAlign: 'right', color: '#22c55e' }}>{x.actual_amount ? fmtKRW(Number(x.actual_amount)) : '-'}</td>
+                <td style={{ padding: '5px 8px', color: 'var(--text3)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.notes || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /**
  * v3.34 — 📊 보고서 인사이트 카드 (Loss Reason / Activity ROI / FCST 정확도 / Health Score)
  *   영업본부 명세서(CRM_보완_개발_명세_v1.md) P0~P2 항목을 한 카드에 통합
@@ -618,6 +781,145 @@ function YtdProgressBadge({ ytdTarget, ytdActual, shortage, surplus, progressPct
 }
 
 /**
+ * v3.49 — 📊 고객유형별 수주 분석
+ * 유형별 고객수·수주액·비중 (2025년 / 2026년 H1)
+ */
+function BusinessTypeAnalysisCard({ accounts, orders }) {
+  const TYPES = ['OEM', 'Private', 'Multiple', 'Single', '입찰', '가격민감'];
+  const TYPE_LABELS = {
+    OEM: 'OEM', Private: 'Private Label', Multiple: 'Multi order',
+    Single: 'Single order', '입찰': '입찰고객', '가격민감': '가격민감',
+  };
+
+  const analysis = useMemo(() => {
+    const validOrders = filterValidOrders(orders);
+    const activeAccounts = accounts.filter(a => a.customer_category !== 'inactive');
+
+    const typeMap = {};
+    activeAccounts.forEach(a => { typeMap[a.id] = a.business_type || '미분류'; });
+
+    const o2025 = validOrders.filter(o => o.order_date?.startsWith('2025'));
+    const o2026h1 = validOrders.filter(o => {
+      const ym = o.order_date?.slice(0, 7);
+      return ym >= '2026-01' && ym <= '2026-06';
+    });
+
+    const calc = (ordList) => {
+      const stats = {};
+      ordList.forEach(o => {
+        const t = typeMap[o.account_id] || '미분류';
+        if (!stats[t]) stats[t] = { amount: 0, ids: new Set() };
+        stats[t].amount += o.order_amount || 0;
+        stats[t].ids.add(o.account_id);
+      });
+      const total = Object.values(stats).reduce((s, v) => s + v.amount, 0);
+      return { stats, total };
+    };
+
+    const r2025 = calc(o2025);
+    const r2026 = calc(o2026h1);
+
+    // 표시 순서: 지정 6종 + 미분류
+    const rows = [...TYPES, '미분류'].map(t => ({
+      key: t,
+      label: TYPE_LABELS[t] || t,
+      a25: r2025.stats[t]?.amount || 0,
+      c25: r2025.stats[t]?.ids.size || 0,
+      a26: r2026.stats[t]?.amount || 0,
+      c26: r2026.stats[t]?.ids.size || 0,
+    })).filter(r => r.a25 > 0 || r.a26 > 0);
+
+    return { rows, total25: r2025.total, total26: r2026.total };
+  }, [accounts, orders]);
+
+  const [open, setOpen] = useState(true);
+
+  const fmt = (n) => {
+    if (!n) return '-';
+    if (n >= 100000000) return (n / 100000000).toFixed(1) + '억';
+    return Math.round(n / 10000).toLocaleString() + '만';
+  };
+  const pct = (a, t) => t ? (a / t * 100).toFixed(1) + '%' : '-';
+  const bar = (a, t) => t ? Math.round(a / t * 100) : 0;
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: open ? 12 : 0, cursor: 'pointer' }}
+        onClick={() => setOpen(o => !o)}>
+        <h3 style={{ margin: 0, fontSize: 14 }}>📊 고객유형별 수주 분석</h3>
+        <span style={{ fontSize: 12, color: 'var(--text3)' }}>{open ? '▲' : '▼'}</span>
+      </div>
+      {open && (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table" style={{ fontSize: 12, minWidth: 640 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg3)' }}>
+                <th rowSpan={2} style={{ minWidth: 100 }}>유형</th>
+                <th colSpan={3} style={{ textAlign: 'center', borderLeft: '2px solid var(--border)' }}>2025년 (연간)</th>
+                <th colSpan={3} style={{ textAlign: 'center', borderLeft: '2px solid var(--accent)' }}>2026년 상반기</th>
+              </tr>
+              <tr style={{ background: 'var(--bg2)', fontSize: 11 }}>
+                <th style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>고객수</th>
+                <th style={{ textAlign: 'right' }}>수주액</th>
+                <th style={{ textAlign: 'right', minWidth: 110 }}>비중</th>
+                <th style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)' }}>고객수</th>
+                <th style={{ textAlign: 'right' }}>수주액</th>
+                <th style={{ textAlign: 'right', minWidth: 110 }}>비중</th>
+              </tr>
+            </thead>
+            <tbody>
+              {analysis.rows.map(r => (
+                <tr key={r.key}>
+                  <td style={{ fontWeight: 600 }}>{r.label}</td>
+                  <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>{r.c25 || '-'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: r.a25 ? 600 : 400 }}>{fmt(r.a25)}</td>
+                  <td style={{ minWidth: 110 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <div style={{ flex: 1, height: 8, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden' }}>
+                        <div style={{ width: bar(r.a25, analysis.total25) + '%', height: '100%', background: 'var(--accent)', borderRadius: 4 }} />
+                      </div>
+                      <span style={{ fontSize: 11, minWidth: 36, textAlign: 'right', color: 'var(--text2)' }}>{pct(r.a25, analysis.total25)}</span>
+                    </div>
+                  </td>
+                  <td style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)' }}>{r.c26 || '-'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: r.a26 ? 600 : 400 }}>{fmt(r.a26)}</td>
+                  <td style={{ minWidth: 110 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <div style={{ flex: 1, height: 8, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden' }}>
+                        <div style={{ width: bar(r.a26, analysis.total26) + '%', height: '100%', background: 'var(--green)', borderRadius: 4 }} />
+                      </div>
+                      <span style={{ fontSize: 11, minWidth: 36, textAlign: 'right', color: 'var(--text2)' }}>{pct(r.a26, analysis.total26)}</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ fontWeight: 700, background: 'var(--bg3)', borderTop: '2px solid var(--accent)' }}>
+                <td>합계</td>
+                <td style={{ textAlign: 'right', borderLeft: '2px solid var(--border)' }}>
+                  {analysis.rows.reduce((s, r) => s + r.c25, 0) || '-'}
+                </td>
+                <td style={{ textAlign: 'right' }}>{fmt(analysis.total25)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text3)', fontSize: 11 }}>100%</td>
+                <td style={{ textAlign: 'right', borderLeft: '2px solid var(--accent)' }}>
+                  {analysis.rows.reduce((s, r) => s + r.c26, 0) || '-'}
+                </td>
+                <td style={{ textAlign: 'right' }}>{fmt(analysis.total26)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text3)', fontSize: 11 }}>100%</td>
+              </tr>
+            </tfoot>
+          </table>
+          <p style={{ fontSize: 10, color: 'var(--text4)', marginTop: 6 }}>
+            * 고객수 = 해당 기간 실제 수주 발생 고객 기준 · 수주액 = ProMES 임포트 기준 · 미분류 = 유형 미설정 고객
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * v3.37 — 📊 수주현황 분석 (Excel 수주현황_분석 형태)
  * 고객별 연간계획 / YTD계획 / YTD실적 / 전년YTD / 계획대비 / 전년대비
  * 섹션: 해외 계획고객 / 해외신규기타 / 국내 계획고객 / 국내기타신규 / BPU
@@ -832,7 +1134,7 @@ function OrderAnalysisCard({ accounts, businessPlans, orders }) {
 
 export default function Dashboard() {
   const accountCtx = useAccount();
-  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders: ordersAll, businessPlans, forecasts, contracts, saveAccount, showToast, appSettings, teamMembers, t } = accountCtx;
+  const { visibleAccounts, activityLogs, openIssues, alarms, setEditingAccount, setCurrentTab, accounts, orders: ordersAll, businessPlans, forecasts, contracts, saveAccount, showToast, appSettings, teamMembers, csTargets, t } = accountCtx;
 
   // v3.18: 단일 집계 함수 (lib/aggregation.js) 사용
   const orders = useMemo(() => filterValidOrders(ordersAll), [ordersAll]);
@@ -1485,6 +1787,12 @@ export default function Dashboard() {
         orders={orders}
       />
 
+      {/* v3.49: 📊 고객유형별 수주 분석 (OEM / Private Label / Multi / Single / 입찰 / 가격민감) */}
+      <BusinessTypeAnalysisCard
+        accounts={accounts}
+        orders={orders}
+      />
+
       {/* v3.34: 📊 보고서 인사이트 카드 (Loss Reason / Activity ROI / FCST 정확도 / Health Score) */}
       {isAdmin && (
         <ReportInsightsCard
@@ -1495,6 +1803,14 @@ export default function Dashboard() {
           forecasts={forecasts}
           setEditingAccount={setEditingAccount}
           isAdmin={isAdmin}
+        />
+      )}
+
+      {/* v3.53 M7: 🔗 Cross-Selling 전사 현황 */}
+      {isAdmin && (
+        <CrossSellingOverviewCard
+          accounts={accounts}
+          csTargets={csTargets}
         />
       )}
 

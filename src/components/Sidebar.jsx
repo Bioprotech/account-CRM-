@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { key: 'teamCommon', icon: '👥',  labelKey: 'menu.teamCommon' },
   { key: 'tenders',     icon: '🏛️', labelKey: 'menu.tenders' },
   { key: 'competitors', icon: '🏷',  labelKey: 'menu.competitors' },
+  { key: 'reportNew',  icon: '📄',  labelKey: 'menu.reportNew', adminOnly: true },
   { key: 'typeguide',  icon: '📖',  labelKey: 'menu.typeguide' },
   { key: 'changelog',  icon: '📝',  labelKey: 'menu.changelog' },
   { key: 'settings',   icon: '⚙️', labelKey: 'menu.settings', adminOnly: true },

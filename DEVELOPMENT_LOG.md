@@ -1,7 +1,81 @@
 # Account CRM 개발 이력
 
 > 이 문서는 Account CRM의 개발 과정을 자동으로 기록합니다.
-> 최종 업데이트: 2026-10-25
+> 최종 업데이트: 2026-10-26
+
+---
+
+## 2026-10-26 — v3.53 Phase 2+4: 월별 미달 원인 (M5) · CS 전사 현황 (M7) · 신규 보고서 (M8)
+
+> **상태**: 빌드 완료 (`index-B7BL3CoQ.js`) — 배포 대기
+
+### Stage 1: firebase.js — 신규 컬렉션 + CRUD 함수
+
+| 추가 항목 | 내용 |
+|---|---|
+| `GAP_REASONS_COL` | `gap_reasons` Firestore 컬렉션 상수 |
+| `CS_TARGETS_COL` | `cs_targets` Firestore 컬렉션 상수 |
+| `subscribeGapReasons()` | gap_reasons 실시간 구독 |
+| `saveGapReason(data)` | gap_reasons setDoc |
+| `deleteGapReason(id)` | gap_reasons deleteDoc |
+| `subscribeCSTargets()` | cs_targets 실시간 구독 |
+| `saveCSTarget(data)` | cs_targets setDoc |
+| `deleteCSTarget(id)` | cs_targets deleteDoc |
+
+### Stage 2: AccountContext.jsx — 상태·CRUD 핸들러·context value
+
+| 항목 | 내용 |
+|---|---|
+| import | 6개 firebase 함수 추가 |
+| state | `gapReasons`, `csTargets` useState |
+| useEffect | `unsub14`, `unsub15` 구독 + cleanup |
+| handler | `saveGapReason`, `removeGapReason`, `saveCSTarget`, `removeCSTarget` useCallback |
+| context value | `gapReasons, saveGapReason, removeGapReason, csTargets, saveCSTarget, removeCSTarget` 노출 |
+
+### Stage 3: GapAnalysis.jsx — M5 월별 미달 현황 섹션
+
+| 변경 | 내용 |
+|---|---|
+| `GAP_REASON_OPTIONS` 상수 | 10개 원인 선택지 |
+| `monthlyGap` useMemo | 월별 목표/실적/달성률 계산 (1~현재월) |
+| `gapForAccount` useMemo | 현재 고객의 gap_reasons 필터링 |
+| `handleSaveGapReason` | 원인+상세 저장 (미작성 시 alert 검증) |
+| M5 UI 섹션 | 월별 카드(클릭=미달월만 선택 가능) → 원인 드롭다운 + 상세 textarea → 저장/삭제 → 기록 목록 |
+
+### Stage 4: Dashboard.jsx — M7 Cross-Selling 전사 현황
+
+| 변경 | 내용 |
+|---|---|
+| `CrossSellingOverviewCard` | 신규 함수형 컴포넌트 (ReportInsightsCard 앞에 선언) |
+| 상태별 요약 | 5개 상태 필터 칩 + 담당자 필터 드롭다운 |
+| 품목별 파이프라인 | 잠재금액 내림차순, csTargets 목표대비 달성률 표시 |
+| 건별 목록 테이블 | 고객명/담당자/대상제품/상태/잠재금액/수주금액/메모 |
+| Excel 다운로드 | `xlsx` 동적 import, 필터 적용 데이터 export |
+| context | `csTargets` 구독 추가 |
+
+### Stage 5: ReportNew.jsx — M8 신규 월간 보고서
+
+| 섹션 | 내용 |
+|---|---|
+| 1. 이달 수주 현황 | 목표/실적/달성률/건수 (사업계획 customer 타입) |
+| 2. 이달 매출 현황 | 목표/실적/달성률/건수 (사업계획 team_sales 타입) |
+| 3. 팀별 수주 현황 | 해외영업/영업지원/국내영업 × 목표/실적/달성률 |
+| 4. 담당자별 수주 현황 | classifyForRepView() 사용, getValidSalesReps() |
+| 5. 미달 고객 & 원인 분석 | gapReasons 매칭, 미작성 시 ⚠️ 담당자 미작성 |
+| 6. 지역별 수주 현황 | 7개 지역 + 국내, 실적 내림차순 |
+| 7. Cross-Selling 현황 | cs 전체/진행중/수주완료, 상위 5건 진행 목록 |
+| 8. 다음달 FCST | forecasts 합계 vs 다음달 목표 |
+| 9. 이달 TASK 현황 | teamTasks 완료/미완료, 미완료 상위 8건 |
+| 10. 경영진 총평 & 다음달 계획 | appSettings exec_summary / next_month_plan, 미작성 시 ⚠️ |
+
+### Stage 6: 라우팅 + 메뉴 + i18n
+
+| 파일 | 변경 |
+|---|---|
+| `Sidebar.jsx` | `reportNew` 메뉴 추가 (competitors 다음, adminOnly: true) |
+| `App.jsx` | `import ReportNew` + `case 'reportNew': return <ReportNew />` |
+| `i18n.js` | `menu.reportNew` KO: '신규 보고서' / EN: 'New Report' |
+| `changelog.js` | v3.53 항목 최상단 추가 |
 
 ---
 

@@ -3,16 +3,37 @@
 > **새 Claude Code 세션 시작 시 이 문서를 먼저 읽으세요.**
 > 빠른 컨텍스트 회복용. 작업 규칙은 `CLAUDE.md`, 상세 이력은 `DEVELOPMENT_LOG.md` 참조.
 
-**최종 갱신**: 2026-10-25 (v3.52 배포 완료 — Phase 1 라이브)
+**최종 갱신**: 2026-10-26 (v3.53 빌드 완료 — 배포 대기)
 
 ---
 
 ## 🎯 현재 상태
 
 - **운영 버전(라이브)**: v3.52 (E1 입찰태그·현황판 · M6 TeamProjects · M2 원인분석 — 2026-10-25 배포)
-- **빌드 파일**: index-aSwYRHGy.js
+- **빌드 완료(미배포)**: v3.53 (`index-B7BL3CoQ.js`) — 사용자 배포 컨펌 대기
 - **GitHub**: https://github.com/Bioprotech/account-CRM-.git
 - **Firebase 프로젝트**: bioprotech-crm
+
+---
+
+## 🆕 v3.53 변경 (2026-10-26 — Phase 2+4, 빌드 완료 미배포)
+
+### M5: 월별 미달 현황 (GapAnalysis.jsx)
+- `firebase.js` — `gap_reasons` 컬렉션 CRUD 6함수 추가
+- `AccountContext.jsx` — gapReasons state, CRUD 핸들러, context value 노출
+- `GapAnalysis.jsx` — 고객 현황 카드 GAP 분석 탭 하단에 월별 달성률 카드 (미달 월 클릭 → 원인 선택 + 상세 입력 필수 → 저장)
+
+### M7: Cross-Selling 전사 현황 (Dashboard.jsx)
+- `firebase.js` — `cs_targets` 컬렉션 CRUD 6함수 추가
+- `AccountContext.jsx` — csTargets state, 핸들러, context value
+- `Dashboard.jsx` — `CrossSellingOverviewCard` 신규 컴포넌트 (상태 필터, 품목별 집계, 건별 목록, Excel export)
+
+### M8: 신규 월간 보고서 (ReportNew.jsx)
+- `src/views/ReportNew.jsx` — **신규 파일** 10섹션 자동 조립 보고서
+- `Sidebar.jsx` — 📄 신규 보고서 메뉴 추가 (관리자 전용)
+- `App.jsx` — ReportNew 라우팅
+- `i18n.js` — menu.reportNew KO/EN
+- `changelog.js` — v3.53 항목 추가
 
 ---
 
@@ -37,18 +58,11 @@
 
 ---
 
-## 📋 다음 할 일 (Phase 2, 3, 4)
-
-### Phase 2 (다음 세션)
-- **M4**: 전략 분석 노트 (5 테마 × 4 블록), 새 컬렉션 `strategy_notes`
-- **M5**: 목표 미달 매트릭스 — 지역×고객×월, 드롭다운+필수상세입력, `gap_reasons` 컬렉션
-- **M7**: Cross-Selling 전사 뷰 — 기존 CrossSelling.jsx 데이터 집계, `cs_targets` 컬렉션
+## 📋 다음 할 일 (Phase 3)
 
 ### Phase 3
 - **M1**: DT2(수정) 시트 파서 → Settings.jsx import → `type: 'product_customer'`; ProductReport.jsx 확장
-
-### Phase 4 (데이터 축적 후)
-- **M8**: 신규 ReportNew.jsx (10섹션) 생성; 기존 Report.jsx 유지
+- **M4**: (선택) 전략 분석 노트 — 추후 결정
 
 ---
 

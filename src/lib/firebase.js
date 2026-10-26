@@ -35,6 +35,8 @@ const AUDIT_LOG_COL = 'import_audit_logs'; // v3.18 — Import 시점 raw 합계
 const COMPETITORS_COL = 'competitors';     // v3.41 — 경쟁사 가격 정보
 const TEAM_ACTIVITIES_COL = 'team_activities'; // v3.31 — 팀 공통 활동/이슈 (고객 단위 X)
 const TEAM_PROJECTS_COL = 'team_projects';     // v3.31 — 공통 프로젝트 (고객 가로지르는 지속성 PJT + KPI)
+const GAP_REASONS_COL = 'gap_reasons';         // v3.53 M5 — 월별 목표 미달 원인 기록
+const CS_TARGETS_COL = 'cs_targets';           // v3.53 M7 — Cross-Selling 연간 품목별 목표
 
 let db = null;
 export let FIREBASE_ENABLED = false;
@@ -478,6 +480,46 @@ export async function saveCompetitor(data) {
 export async function deleteCompetitor(id) {
   if (!FIREBASE_ENABLED) return;
   await deleteDoc(doc(db, COMPETITORS_COL, id));
+}
+
+// ── Gap Reasons (v3.53 M5) ───────────────────────────────────────────────────
+export function subscribeGapReasons(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  return onSnapshot(
+    collection(db, GAP_REASONS_COL),
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] gap_reasons onSnapshot 오류:', err)
+  );
+}
+
+export async function saveGapReason(data) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, GAP_REASONS_COL, data.id), data);
+}
+
+export async function deleteGapReason(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, GAP_REASONS_COL, id));
+}
+
+// ── CS Targets (v3.53 M7) ────────────────────────────────────────────────────
+export function subscribeCSTargets(callback) {
+  if (!FIREBASE_ENABLED) return () => {};
+  return onSnapshot(
+    collection(db, CS_TARGETS_COL),
+    (snap) => callback(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
+    (err) => console.error('[Firebase] cs_targets onSnapshot 오류:', err)
+  );
+}
+
+export async function saveCSTarget(data) {
+  if (!FIREBASE_ENABLED) return;
+  await setDoc(doc(db, CS_TARGETS_COL, data.id), data);
+}
+
+export async function deleteCSTarget(id) {
+  if (!FIREBASE_ENABLED) return;
+  await deleteDoc(doc(db, CS_TARGETS_COL, id));
 }
 
 /**

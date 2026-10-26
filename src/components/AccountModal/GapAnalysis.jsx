@@ -4,6 +4,11 @@ import { GAP_CAUSES, OPPORTUNITY_TYPES, BUDGET_CYCLES, PRODUCTS } from '../../li
 import { today, genId } from '../../lib/utils';
 import CauseCountermeasure from '../CauseCountermeasure';
 
+const GAP_REASON_OPTIONS = [
+  '고객 예산 삭감', '경쟁사 저가 수주', '납기 문제', '품질 클레임', '담당자 변경',
+  '결재 지연', '재고 과다', '시장 수요 감소', '담당자 활동 부족', '기타',
+];
+
 /* ── 금액 포맷 ── */
 function fmtKRW(n) {
   if (!n) return '-';
@@ -17,9 +22,11 @@ function fmtKRW(n) {
 const PROB_OPTIONS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
 export default function GapAnalysis({ draft, update }) {
-  const { businessPlans, orders, t, te } = useAccount();
+  const { businessPlans, orders, gapReasons, saveGapReason, removeGapReason, t, te } = useAccount();
   const [oppForm, setOppForm] = useState(null);
   const [histFilter, setHistFilter] = useState({ ym: '', cause: '' });
+  const [selectedGapMonth, setSelectedGapMonth] = useState(null);
+  const [gapReasonForm, setGapReasonForm] = useState({ reason: '', detail: '' });
 
   const gap = draft.gap_analysis || {};
 
@@ -63,6 +70,55 @@ export default function GapAnalysis({ draft, update }) {
       achieveRate: ytdTarget > 0 ? Math.round((ytdActual / ytdTarget) * 100) : 0,
     };
   }, [businessPlans, orders, draft.id, draft.company_name]);
+
+  /* ── M5: 월별 목표/실적 계산 ── */
+  const monthlyGap = useMemo(() => {
+    const year = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    const name = (draft.company_name || '').toLowerCase().trim();
+    if (!name) return [];
+
+    const plans = businessPlans.filter(p =>
+      p.year === year && (p.type === 'customer' || !p.type) &&
+      (p.account_id === draft.id || (p.customer_name || '').toLowerCase().trim() === name)
+    );
+
+    const result = [];
+    for (let m = 1; m <= currentMonth; m++) {
+      const mk = String(m).padStart(2, '0');
+      const target = plans.reduce((s, p) => s + (p.targets?.[mk] || 0), 0);
+      const actual = orders
+        .filter(o => o.order_date?.startsWith(`${year}-${mk}`) &&
+          (o.account_id === draft.id || (o.customer_name || '').toLowerCase().trim() === name))
+        .reduce((s, o) => s + (o.order_amount || 0), 0);
+      result.push({ month: m, mk, target, actual, gap: actual - target, rate: target > 0 ? Math.round((actual / target) * 100) : null });
+    }
+    return result;
+  }, [businessPlans, orders, draft.id, draft.company_name]);
+
+  const gapForAccount = useMemo(() =>
+    gapReasons.filter(r => r.account_id === draft.id),
+    [gapReasons, draft.id]
+  );
+
+  const handleSaveGapReason = async () => {
+    if (!selectedGapMonth) return;
+    if (!gapReasonForm.reason) { alert('원인을 선택하세요.'); return; }
+    if (!gapReasonForm.detail.trim()) { alert('상세 내용을 입력하세요.'); return; }
+    const year = new Date().getFullYear();
+    const id = `${draft.id}_${year}_${selectedGapMonth.mk}`;
+    await saveGapReason({
+      id,
+      account_id: draft.id,
+      year,
+      month: selectedGapMonth.month,
+      reason: gapReasonForm.reason,
+      detail: gapReasonForm.detail.trim(),
+      recorded_at: today(),
+    });
+    setSelectedGapMonth(null);
+    setGapReasonForm({ reason: '', detail: '' });
+  };
 
   /* ── 원인 토글 ── */
   const toggleCause = (key) => {
@@ -614,6 +670,108 @@ export default function GapAnalysis({ draft, update }) {
           </button>
         )}
       </div>
+
+      {/* ── M5: 월별 목표 미달 현황 ── */}
+      {monthlyGap.length > 0 && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className="card-title">📅 월별 미달 현황</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+            {monthlyGap.map(m => {
+              const isMiss = m.target > 0 && m.actual < m.target;
+              const isSelected = selectedGapMonth?.mk === m.mk;
+              const existingReason = gapForAccount.find(r => r.month === m.month && r.year === new Date().getFullYear());
+              return (
+                <div
+                  key={m.mk}
+                  onClick={() => {
+                    if (!isMiss) return;
+                    setSelectedGapMonth(isSelected ? null : m);
+                    setGapReasonForm(existingReason
+                      ? { reason: existingReason.reason, detail: existingReason.detail }
+                      : { reason: '', detail: '' }
+                    );
+                  }}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                    padding: '6px 8px', borderRadius: 8, cursor: isMiss ? 'pointer' : 'default',
+                    border: isSelected ? '2px solid var(--accent)' : `1.5px solid ${isMiss ? '#ef4444' : 'var(--border)'}`,
+                    background: isSelected ? 'rgba(46,125,50,.08)' : isMiss ? 'rgba(239,68,68,.05)' : 'var(--bg2)',
+                    minWidth: 52,
+                  }}
+                >
+                  <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>{m.month}월</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: isMiss ? '#ef4444' : 'var(--green)' }}>
+                    {m.rate !== null ? `${m.rate}%` : '-'}
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text3)' }}>{fmtKRW(m.actual)}</div>
+                  {existingReason && (
+                    <div style={{ fontSize: 8, color: 'var(--accent)', marginTop: 2 }}>✔기록</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 8 }}>
+            ※ 빨간 막대(미달 월) 클릭 → 원인 기록
+          </div>
+
+          {selectedGapMonth && (
+            <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>
+                {selectedGapMonth.month}월 미달 원인 ({fmtKRW(selectedGapMonth.target)} 목표 → {fmtKRW(selectedGapMonth.actual)} 실적, {selectedGapMonth.rate}%)
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>원인 선택 *</div>
+                <select
+                  value={gapReasonForm.reason}
+                  onChange={e => setGapReasonForm(prev => ({ ...prev, reason: e.target.value }))}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, fontFamily: 'inherit' }}
+                >
+                  <option value="">-- 원인 선택 --</option>
+                  {GAP_REASON_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>상세 내용 * (필수)</div>
+                <textarea
+                  value={gapReasonForm.detail}
+                  onChange={e => setGapReasonForm(prev => ({ ...prev, detail: e.target.value }))}
+                  placeholder="구체적인 미달 원인과 경위를 기재하세요..."
+                  rows={3}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setSelectedGapMonth(null); setGapReasonForm({ reason: '', detail: '' }); }}>취소</button>
+                {gapForAccount.find(r => r.month === selectedGapMonth.month && r.year === new Date().getFullYear()) && (
+                  <button className="btn btn-danger btn-sm"
+                    onClick={() => {
+                      const id = `${draft.id}_${new Date().getFullYear()}_${selectedGapMonth.mk}`;
+                      removeGapReason(id);
+                      setSelectedGapMonth(null);
+                    }}>삭제</button>
+                )}
+                <button className="btn btn-primary btn-sm" onClick={handleSaveGapReason}>저장</button>
+              </div>
+            </div>
+          )}
+
+          {gapForAccount.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, color: 'var(--text2)' }}>기록된 원인</div>
+              {gapForAccount.sort((a, b) => a.month - b.month).map(r => (
+                <div key={r.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', flexShrink: 0, paddingTop: 2 }}>{r.month}월</div>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)' }}>{r.reason}</span>
+                    <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{r.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── 마지막 업데이트 ── */}
       {gap.last_updated && (

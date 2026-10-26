@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { FIREBASE_ENABLED, subscribeAccounts, saveAccountToFirestore, deleteAccountFromFirestore, subscribeActivityLogs, saveActivityLog, deleteActivityLog, subscribeOrders, saveOrder as fbSaveOrder, deleteOrder as fbDeleteOrder, batchSaveOrders, subscribeSales, saveSale as fbSaveSale, deleteSale as fbDeleteSale, batchSaveSales, subscribeContracts, saveContract as fbSaveContract, deleteContract as fbDeleteContract, subscribeForecasts, saveForecast as fbSaveForecast, deleteForecast as fbDeleteForecast, subscribeBusinessPlans, batchSaveBusinessPlans, deleteBusinessPlan as fbDeletePlan, uploadAllData, clearAllData, subscribeSettings, saveSetting, subscribeTeamTasks, saveTeamTask as fbSaveTask, deleteTeamTask as fbDeleteTask, subscribePipelineCustomers, deleteOrdersBySource, deleteSalesBySource, subscribeImportAuditLogs, saveImportAuditLog as fbSaveAuditLog, deleteImportAuditLog as fbDeleteAuditLog, subscribeTeamActivities, saveTeamActivity as fbSaveTeamActivity, deleteTeamActivity as fbDeleteTeamActivity, subscribeTeamProjects, saveTeamProject as fbSaveTeamProject, deleteTeamProject as fbDeleteTeamProject,
-  subscribeCompetitors, saveCompetitor as fbSaveCompetitor, deleteCompetitor as fbDeleteCompetitor } from '../lib/firebase';
+  subscribeCompetitors, saveCompetitor as fbSaveCompetitor, deleteCompetitor as fbDeleteCompetitor,
+  subscribeGapReasons, saveGapReason as fbSaveGapReason, deleteGapReason as fbDeleteGapReason,
+  subscribeCSTargets, saveCSTarget as fbSaveCSTarget, deleteCSTarget as fbDeleteCSTarget } from '../lib/firebase';
 import { getSnapshot as fetchSnapshot } from '../lib/snapshots';
 import { STORAGE_KEY, AUTH_KEY, DEFAULT_TEAM_MEMBERS, TEAM_STORAGE_KEY } from '../lib/constants';
 import { computeIntelligenceScore, getFilteredAccounts, daysSince } from '../lib/utils';
@@ -110,6 +112,8 @@ export default function AccountProvider({ children }) {
   const [teamProjects, setTeamProjects] = useState([]);        // v3.31 — 공통 프로젝트
   const [importAuditLogs, setImportAuditLogs] = useState([]);  // v3.18 — Import 시점 raw 합계 원장
   const [competitors, setCompetitors] = useState([]);          // v3.41 — 경쟁사 가격 정보
+  const [gapReasons, setGapReasons] = useState([]);            // v3.53 M5 — 월별 목표 미달 원인
+  const [csTargets, setCSTargets] = useState([]);              // v3.53 M7 — CS 연간 목표
   const [pipelineCustomers, setPipelineCustomers] = useState([]);  // Phase C v3.2 (read-only)
   const [fbStatus, setFbStatus] = useState(FIREBASE_ENABLED ? 'connecting' : 'disabled');
 
@@ -144,8 +148,10 @@ export default function AccountProvider({ children }) {
     const unsub11 = subscribeTeamActivities((data) => setTeamActivities(data));
     const unsub12 = subscribeTeamProjects((data) => setTeamProjects(data));
     const unsub13 = subscribeCompetitors((data) => setCompetitors(data));
+    const unsub14 = subscribeGapReasons((data) => setGapReasons(data));
+    const unsub15 = subscribeCSTargets((data) => setCSTargets(data));
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); };
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub14(); unsub15(); };
   }, []);
 
   // v3.4: 대용량 localStorage 백업 완전 제거 — Firebase가 원본 소스로 충분
@@ -1035,6 +1041,50 @@ export default function AccountProvider({ children }) {
     return result;
   }, [accounts, contracts, orders, activityLogs, businessPlans, forecasts]);
 
+  /* ── M5: Gap Reasons CRUD (v3.53) ── */
+  const saveGapReason = useCallback(async (item) => {
+    setGapReasons(prev => {
+      const idx = prev.findIndex(x => x.id === item.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = item; return next; }
+      return [...prev, item];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveGapReason(item); }
+      catch (e) { console.error('gap_reason 저장 실패:', e); showToast('저장 실패', 'error'); }
+    }
+    showToast('저장 완료', 'success');
+  }, []);
+
+  const removeGapReason = useCallback(async (id) => {
+    setGapReasons(prev => prev.filter(x => x.id !== id));
+    if (FIREBASE_ENABLED) {
+      try { await fbDeleteGapReason(id); }
+      catch (e) { console.error('gap_reason 삭제 실패:', e); }
+    }
+  }, []);
+
+  /* ── M7: CS Targets CRUD (v3.53) ── */
+  const saveCSTarget = useCallback(async (item) => {
+    setCSTargets(prev => {
+      const idx = prev.findIndex(x => x.id === item.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = item; return next; }
+      return [...prev, item];
+    });
+    if (FIREBASE_ENABLED) {
+      try { await fbSaveCSTarget(item); }
+      catch (e) { console.error('cs_target 저장 실패:', e); showToast('저장 실패', 'error'); }
+    }
+    showToast('저장 완료', 'success');
+  }, []);
+
+  const removeCSTarget = useCallback(async (id) => {
+    setCSTargets(prev => prev.filter(x => x.id !== id));
+    if (FIREBASE_ENABLED) {
+      try { await fbDeleteCSTarget(id); }
+      catch (e) { console.error('cs_target 삭제 실패:', e); }
+    }
+  }, []);
+
   /* ── Snapshot 복원 ── */
   const restoreSnapshot = useCallback(async (snapshotId) => {
     const snap = await fetchSnapshot(snapshotId);
@@ -1098,6 +1148,8 @@ export default function AccountProvider({ children }) {
     saveTeamActivity, removeTeamActivity,
     saveTeamProject, removeTeamProject,
     saveImportAuditLog, removeImportAuditLog,
+    gapReasons, saveGapReason, removeGapReason,
+    csTargets, saveCSTarget, removeCSTarget,
     toast, showToast,
     fbStatus,
     teamMembers, saveTeamMembers,
